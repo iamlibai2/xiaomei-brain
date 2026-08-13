@@ -125,14 +125,15 @@ export function MainShell() {
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (event.repeat || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
-      if (event.key.toLowerCase() === "n" && !event.shiftKey) {
+      const code = event.code;
+      if (code === "KeyN" && !event.shiftKey) {
         if (document.querySelector('[aria-modal="true"]')) return;
         event.preventDefault();
         setSurface("chat");
         void newSession();
         return;
       }
-      if (event.key.toLowerCase() === "m" && !event.shiftKey) {
+      if (code === "KeyM" && !event.shiftKey) {
         if (document.querySelector('[aria-modal="true"]')) return;
         event.preventDefault();
         window.dispatchEvent(new CustomEvent("xiaomei:voice-control", {
@@ -140,13 +141,19 @@ export function MainShell() {
         }));
         return;
       }
-      if (event.key.toLowerCase() === "m" && event.shiftKey) {
+      if (code === "KeyM" && event.shiftKey) {
         if (document.querySelector('[aria-modal="true"]')) return;
         event.preventDefault();
         window.dispatchEvent(new CustomEvent("xiaomei:model-context-toggle"));
         return;
       }
-      if (event.key.toLowerCase() !== "b") return;
+      if (code === "KeyE" && event.shiftKey) {
+        if (document.querySelector('[aria-modal="true"]')) return;
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent("xiaomei:execution-analysis-toggle"));
+        return;
+      }
+      if (code !== "KeyB") return;
       event.preventDefault();
       if (event.shiftKey) {
         window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-toggle"));
@@ -154,8 +161,10 @@ export function MainShell() {
         setLeftSidebarCollapsed((collapsed) => !collapsed);
       }
     };
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
+    // Capture before editors and input widgets can consume application-level
+    // shortcuts. KeyboardEvent.code also stays stable under Chinese IMEs.
+    window.addEventListener("keydown", handleShortcut, true);
+    return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [newSession]);
 
   return (

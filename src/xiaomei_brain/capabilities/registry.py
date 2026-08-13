@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import math
 import re
 import shutil
+import threading
 from typing import Any, Iterable
 
 from .loader import CapabilityManifestLoader
@@ -17,6 +20,8 @@ from .models import (
     CapabilityStatus,
     CapabilityView,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,8 @@ class CapabilityRegistry:
         self._runtime_probes = dict(runtime_probes or {})
         loaded = list(definitions) if definitions is not None else CapabilityManifestLoader().load()
         self._definitions = {definition.id: definition for definition in loaded}
+        self._discovery_lock = threading.Lock()
+        self._discovery_entries: list[dict[str, Any]] | None = None
         self._apply_activation_policy()
 
     def list(self, *, person_id: str = "") -> list[CapabilityView]:
@@ -101,41 +108,117 @@ class CapabilityRegistry:
         return [view.to_dict(include_technical=include_technical) for view in self.list(person_id=person_id)]
 
     def resolve(self, query: str, *, limit: int = 3, person_id: str = "") -> list[CapabilityView]:
-        """Return capabilities lexically relevant to one task description.
-
-        Skill and Tool retrieval remain embedding based.  This inexpensive
-        resolver only decides which user-facing capability facts are useful
-        to expose in the current prompt.
-        """
-        normalized_query = self._normalized_text(query)
-        if not normalized_query:
-            return []
-        query_terms = self._terms(normalized_query)
-        skill_names = self._load_skill_names()
-        ranked: list[tuple[int, str, CapabilityView]] = []
-        for definition in self._definitions.values():
-            searchable = self._normalized_text(" ".join([
-                definition.id,
-                definition.name,
-                definition.summary,
-                definition.category,
-                *definition.examples,
-                *(outcome.name for outcome in definition.outcomes),
-                *(outcome.description for outcome in definition.outcomes),
-            ]))
-            score = sum(
-                3 if term in searchable and len(term) > 2 else 1
-                for term in query_terms
-                if term in searchable
+        """Return capabilities semantically relevant to one task description."""
+        return [
+            item["view"]
+            for item in self.discover(
+                query,
+                limit=limit,
+                person_id=person_id,
+                min_score=0.50,
             )
-            if score:
-                ranked.append((score, definition.id, self._build_view(
-                    definition,
-                    person_id=person_id,
-                    _skill_names=skill_names,
-                )))
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return [item[2] for item in ranked[:max(1, limit)]]
+        ]
+
+    def discover(
+        self,
+        query: str,
+        *,
+        limit: int = 3,
+        person_id: str = "",
+        min_score: float | None = 0.50,
+    ) -> list[dict[str, Any]]:
+        """Search capability outcomes through the shared embedding service.
+
+        Capability discovery deliberately has no lexical fallback.  A nearest
+        two-character overlap such as ``file`` must not silently become a
+        platform route such as Feishu Office when semantic retrieval is down.
+        """
+        normalized = self._normalized_text(query)
+        if not normalized:
+            return []
+        try:
+            entries = self._ensure_discovery_entries()
+            from xiaomei_brain.base.shared_embedder import SharedEmbedder
+            query_vector = SharedEmbedder.get_or_create().embed(normalized)
+        except Exception:
+            logger.warning("[Capability] semantic discovery unavailable", exc_info=True)
+            return []
+
+        best: dict[str, tuple[float, dict[str, Any]]] = {}
+        for entry in entries:
+            score = self._cosine_similarity(query_vector, entry["vector"])
+            if min_score is not None and score < min_score:
+                continue
+            current = best.get(entry["capability_id"])
+            if current is None or score > current[0]:
+                best[entry["capability_id"]] = (score, entry)
+        ranked = sorted(best.values(), key=lambda item: (-item[0], item[1]["capability_id"]))
+        skill_names = self._load_skill_names()
+        result: list[dict[str, Any]] = []
+        for score, entry in ranked[:max(1, int(limit or 1))]:
+            definition = self._definitions[entry["capability_id"]]
+            result.append({
+                "view": self._build_view(definition, person_id=person_id, _skill_names=skill_names),
+                "outcome_id": entry["outcome_id"],
+                "score": round(score, 4),
+            })
+        return result
+
+    def _ensure_discovery_entries(self) -> list[dict[str, Any]]:
+        if self._discovery_entries is not None:
+            return self._discovery_entries
+        with self._discovery_lock:
+            if self._discovery_entries is not None:
+                return self._discovery_entries
+            pending: list[dict[str, Any]] = []
+            texts: list[str] = []
+            for definition in self._definitions.values():
+                for outcome in definition.outcomes:
+                    descriptor = "\n".join([
+                        f"Capability: {definition.name} ({definition.id})",
+                        f"Category: {definition.category}",
+                        f"Purpose: {definition.summary}",
+                        "Aliases: " + "；".join(definition.aliases),
+                        f"Outcome: {outcome.name}",
+                        f"Outcome purpose: {outcome.description}",
+                    ])
+                    search_texts = [descriptor]
+                    search_texts.extend(
+                        f"{alias} {outcome.name}: {outcome.description}"
+                        for alias in definition.aliases
+                    )
+                    search_texts.extend(
+                        f"{definition.name} {outcome.name}: {example}"
+                        for example in (outcome.examples or definition.examples)
+                    )
+                    # Boundaries are intentionally excluded from positive
+                    # vectors. Embeddings do not model negation reliably, so
+                    # "not for PPT" can otherwise make an HTML capability
+                    # rank higher for a PPT request.
+                    for text in search_texts:
+                        pending.append({
+                            "capability_id": definition.id,
+                            "outcome_id": outcome.id,
+                            "text": text,
+                        })
+                        texts.append(text)
+            from xiaomei_brain.base.shared_embedder import SharedEmbedder
+            vectors = SharedEmbedder.get_or_create().embed_batch(texts) if texts else []
+            for entry, vector in zip(pending, vectors):
+                entry["vector"] = vector
+            self._discovery_entries = pending
+            return self._discovery_entries
+
+    @staticmethod
+    def _cosine_similarity(left: list[float], right: list[float]) -> float:
+        if not left or not right or len(left) != len(right):
+            return -1.0
+        dot = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(value * value for value in left))
+        right_norm = math.sqrt(sum(value * value for value in right))
+        if not left_norm or not right_norm:
+            return -1.0
+        return dot / (left_norm * right_norm)
 
     def select_execution_components(
         self,
@@ -151,29 +234,25 @@ class CapabilityRegistry:
         """
         tool_names: list[str] = []
         skill_names: list[str] = []
-        query_terms = self._terms(self._normalized_text(query))
-        for view in self.resolve(query, limit=limit, person_id=person_id):
+        selected_count = 0
+        for match in self.discover(
+            query,
+            limit=max(limit, len(self._definitions)),
+            person_id=person_id,
+        ):
+            view = match["view"]
             if view.status not in {CapabilityStatus.READY, CapabilityStatus.DEGRADED}:
                 continue
+            if selected_count >= limit:
+                break
+            selected_count += 1
             definition = self._definitions.get(view.id)
             if definition is None:
                 continue
-
-            outcome_scores: list[tuple[int, Any]] = []
-            for outcome in definition.outcomes:
-                searchable = self._normalized_text(
-                    f"{outcome.id} {outcome.name} {outcome.description}"
-                )
-                score = sum(1 for term in query_terms if term in searchable)
-                outcome_scores.append((score, outcome))
-            best_score = max((score for score, _ in outcome_scores), default=0)
-            if best_score:
-                selected_outcomes = [
-                    outcome for score, outcome in outcome_scores
-                    if score == best_score
-                ]
-            else:
-                selected_outcomes = list(definition.outcomes)
+            selected_outcomes = [
+                outcome for outcome in definition.outcomes
+                if outcome.id == match["outcome_id"]
+            ]
 
             component_ids = {
                 component_id
@@ -217,32 +296,31 @@ class CapabilityRegistry:
         person_id: str = "",
         limit: int = 1,
     ) -> dict[str, Any]:
-        """Pin dependencies and return the exact Capability selection facts."""
-        selected_capabilities = [
-            {"id": view.id, "name": view.name, "status": view.status.value}
-            for view in self.resolve(query, limit=limit, person_id=person_id)
-            if view.status in {CapabilityStatus.READY, CapabilityStatus.DEGRADED}
-        ]
-        tool_names, skill_names = self.select_execution_components(
+        """Return semantic Capability summaries without silently routing work.
+
+        Dependencies are activated only after explicit discovery or an
+        explicitly selected Skill.  Prefetch is informative and reversible.
+        """
+        candidates = self.discover(
             query,
-            limit=limit,
+            limit=max(limit, len(self._definitions)),
             person_id=person_id,
         )
-        for skill_name in skill_names:
-            if self._skill_loader is None:
-                break
-            skill = self._skill_loader.view_skill(skill_name)
-            if skill:
-                for tool_name in skill.get("tool_bindings", []):
-                    if tool_name not in tool_names:
-                        tool_names.append(tool_name)
-        pin = getattr(self._dynamic_tool_loader, "pin_required_tools", None)
-        if callable(pin) and tool_names:
-            pin(scope_id, tool_names)
+        selected_capabilities = [
+            {
+                "id": match["view"].id,
+                "name": match["view"].name,
+                "status": match["view"].status.value,
+                "outcome_id": match["outcome_id"],
+                "score": match["score"],
+            }
+            for match in candidates
+            if match["view"].status in {CapabilityStatus.READY, CapabilityStatus.DEGRADED}
+        ][:max(1, limit)]
         return {
             "capabilities": selected_capabilities,
-            "tools": list(tool_names),
-            "skills": list(skill_names),
+            "tools": [],
+            "skills": [],
         }
 
     def build_context(self, query: str, *, limit: int = 3, person_id: str = "") -> str:
@@ -317,17 +395,6 @@ class CapabilityRegistry:
     @staticmethod
     def _normalized_text(value: str) -> str:
         return re.sub(r"\s+", " ", str(value or "").lower()).strip()
-
-    @staticmethod
-    def _terms(value: str) -> set[str]:
-        ascii_terms = set(re.findall(r"[a-z0-9][a-z0-9_.+-]{1,}", value))
-        chinese_runs = re.findall(r"[\u4e00-\u9fff]+", value)
-        chinese_terms = {
-            run[index:index + 2]
-            for run in chinese_runs
-            for index in range(max(0, len(run) - 1))
-        }
-        return ascii_terms | chinese_terms
 
     def _build_view(
         self,

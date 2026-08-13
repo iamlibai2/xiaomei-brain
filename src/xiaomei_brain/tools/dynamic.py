@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Core tools are the Agent's universal execution floor. Domain tools must be
 # discovered from the current task, activated by a Skill, or requested through
-# ``tool_search``. Keeping this set deliberately small prevents every repaired
+# ``discover``. Keeping this set deliberately small prevents every repaired
 # retrieval miss from becoming permanent prompt cost.
 _CORE_TOOL_NAMES = frozenset({
     "powershell",
@@ -49,15 +49,15 @@ _CORE_TOOL_NAMES = frozenset({
     "edit_file",
     "memory_search",
     "skill_view",
-    "tool_search",
+    "discover",
 })
 
-DEFAULT_TOP_K = 5
+DEFAULT_TOP_K = 3
 # Prefetch is a latency optimization, not the only discovery path. It must not
-# grow on every ReAct step; the model can call tool_search when something is
+# grow on every ReAct step; the model can call discover when something is
 # missing.
 STEP_GROWTH = 0
-MAX_DYNAMIC = 5
+MAX_DYNAMIC = 3
 MAX_TOOL_SEARCH_RESULTS = 8
 TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
@@ -67,6 +67,7 @@ TOOL_PROGRESS_MAX_CHARS = 1200
 # result above this distance is merely the nearest tool, not necessarily a
 # relevant one. Lexical matches remain eligible independently of this gate.
 MAX_SEMANTIC_L2_DISTANCE = 0.82
+_DISCOVERY_TOOL_NAMES = frozenset({"discover", "tool_search"})
 
 _MESSAGE_TRANSPORT_PREFIXES = (
     re.compile(r"^\s*距上条消息\s+\S+\s*"),
@@ -206,11 +207,12 @@ class DynamicToolLoader:
         self._top_k = top_k
         self._lance_db_path = Path(lance_db_path) if lance_db_path else None
         self._built = False
-        # Tools explicitly required by Skills are scoped by conversation. This
-        # lets a follow-up turn reuse a loaded Skill without leaking its tools
-        # into another Desktop/channel session.
+        # Deterministic dependencies and tools found by active discovery share
+        # one run lifetime, but retain separate provenance for tracing.
         self._required_tools_by_scope: dict[str, set[str]] = {}
+        self._discovered_tools_by_scope: dict[str, set[str]] = {}
         self._active_required_tools: set[str] = set()
+        self._active_discovered_tools: set[str] = set()
         self._disabled_names: set[str] = set()
 
         # 共享全局 embedding 单例
@@ -455,7 +457,12 @@ class DynamicToolLoader:
         normalized_scope = str(scope_id or "main")
         if reset:
             self._required_tools_by_scope[normalized_scope] = set()
+            self._discovered_tools_by_scope[normalized_scope] = set()
         self._active_required_tools = self._required_tools_by_scope.setdefault(
+            normalized_scope,
+            set(),
+        )
+        self._active_discovered_tools = self._discovered_tools_by_scope.setdefault(
             normalized_scope,
             set(),
         )
@@ -465,10 +472,25 @@ class DynamicToolLoader:
         self._disabled_names = {str(name).strip() for name in names if str(name).strip()}
         for required in self._required_tools_by_scope.values():
             required.difference_update(self._disabled_names)
+        for discovered in self._discovered_tools_by_scope.values():
+            discovered.difference_update(self._disabled_names)
         self._active_required_tools.difference_update(self._disabled_names)
+        self._active_discovered_tools.difference_update(self._disabled_names)
 
     def activate_required_tools(self, names: list[str]) -> tuple[list[str], list[str]]:
-        """Pin declared Skill dependencies for the remainder of this run."""
+        """Pin explicitly declared dependencies for the remainder of this run."""
+        return self._activate_tools(names, self._active_required_tools, "declared dependencies")
+
+    def activate_discovered_tools(self, names: list[str]) -> tuple[list[str], list[str]]:
+        """Pin tools found by explicit discovery for the remainder of this run."""
+        return self._activate_tools(names, self._active_discovered_tools, "discovered tools")
+
+    def _activate_tools(
+        self,
+        names: list[str],
+        target: set[str],
+        source: str,
+    ) -> tuple[list[str], list[str]]:
         registered = {
             tool.name for tool in self._registry.list_tools()
             if tool.name not in self._disabled_names
@@ -480,18 +502,20 @@ class DynamicToolLoader:
             if not normalized:
                 continue
             if normalized in registered:
-                self._active_required_tools.add(normalized)
+                target.add(normalized)
                 activated.append(normalized)
             else:
                 missing.append(normalized)
         if activated:
             logger.info(
-                "DynamicToolLoader: activated Skill dependencies: %s",
+                "DynamicToolLoader: activated %s: %s",
+                source,
                 ", ".join(activated),
             )
         if missing:
             logger.warning(
-                "DynamicToolLoader: Skill dependencies are not registered: %s",
+                "DynamicToolLoader: %s are not registered: %s",
+                source,
                 ", ".join(missing),
             )
         return activated, missing
@@ -553,6 +577,7 @@ class DynamicToolLoader:
             item for item in self._registry.list_tools()
             if item.name not in self._disabled_names
             and item.name not in excluded_names
+            and item.name not in _DISCOVERY_TOOL_NAMES
         ]
         if not all_tools or limit <= 0:
             return []
@@ -627,13 +652,13 @@ class DynamicToolLoader:
     def search_and_activate(self, query: str, limit: int = 5) -> dict[str, Any]:
         """Discover tools after model reasoning and expose them next step."""
         bounded_limit = max(1, min(int(limit or 5), MAX_TOOL_SEARCH_RESULTS))
-        excluded = _CORE_TOOL_NAMES | self._active_required_tools
+        excluded = _CORE_TOOL_NAMES | self._active_required_tools | self._active_discovered_tools
         candidates = self._rank_candidates(
             query,
             limit=bounded_limit,
             excluded_names=excluded,
         )
-        activated, missing = self.activate_required_tools(
+        activated, missing = self.activate_discovered_tools(
             [item.name for item in candidates]
         )
         return {
@@ -661,7 +686,7 @@ class DynamicToolLoader:
 
         返回：核心工具 + top_k 个最相关的动态工具。
         预取数量始终受 MAX_DYNAMIC 限制，不会随 ReAct 步数自动增长。
-        如果缺少工具，模型应调用 tool_search 主动发现。
+        如果缺少工具，模型应调用 discover 主动发现。
 
         Args:
             query: 用户意图文本（原始任务 + 工具返回摘要）
@@ -683,12 +708,19 @@ class DynamicToolLoader:
         # 分离核心工具
         core_tools = [t for t in all_tools if t.name in _CORE_TOOL_NAMES]
         required_names = set(self._active_required_tools)
+        discovered_names = set(self._active_discovered_tools)
         required_tools = [
             t for t in all_tools
             if t.name in required_names
             and t.name not in _CORE_TOOL_NAMES
         ]
-        always_included = _CORE_TOOL_NAMES | required_names
+        discovered_tools = [
+            t for t in all_tools
+            if t.name in discovered_names
+            and t.name not in _CORE_TOOL_NAMES
+            and t.name not in required_names
+        ]
+        always_included = _CORE_TOOL_NAMES | required_names | discovered_names
 
         selected = self._rank_candidates(
             query,
@@ -698,13 +730,13 @@ class DynamicToolLoader:
 
         logger.info(
             "DynamicToolLoader: %d fixed + %d prefetched = %d tools (top_k=%d, step=%d)",
-            len(core_tools) + len(required_tools),
+            len(core_tools) + len(required_tools) + len(discovered_tools),
             len(selected),
-            len(core_tools) + len(required_tools) + len(selected),
+            len(core_tools) + len(required_tools) + len(discovered_tools) + len(selected),
             k,
             step,
         )
-        return core_tools + required_tools + selected
+        return core_tools + required_tools + discovered_tools + selected
 
     def select_openai_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[dict[str, Any]]:
         """和 select_tools 一样，但返回 OpenAI function calling 格式。"""
@@ -724,7 +756,13 @@ class DynamicToolLoader:
             tool.name for tool in tools
             if tool.name in self._active_required_tools and tool.name not in _CORE_TOOL_NAMES
         ]
-        fixed = set(core) | set(required)
+        discovered = [
+            tool.name for tool in tools
+            if tool.name in self._active_discovered_tools
+            and tool.name not in _CORE_TOOL_NAMES
+            and tool.name not in self._active_required_tools
+        ]
+        fixed = set(core) | set(required) | set(discovered)
         schemas = []
         seen: set[str] = set()
         for item in tools:
@@ -744,6 +782,7 @@ class DynamicToolLoader:
             "query": str(query),
             "core": core,
             "required": required,
+            "discovered": discovered,
             "semantic": [item.name for item in tools if item.name not in fixed],
         }
 

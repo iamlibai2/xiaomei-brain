@@ -63,6 +63,8 @@ class CapabilityOutcome:
     name: str
     description: str = ""
     components: tuple[str, ...] = ()
+    examples: tuple[str, ...] = ()
+    boundaries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class CapabilityDefinition:
     components: tuple[CapabilityComponent, ...]
     requirements: tuple[CapabilityRequirement, ...] = ()
     examples: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+    boundaries: tuple[str, ...] = ()
     version: str = "1.0.0"
     source: str = "builtin"
 

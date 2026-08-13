@@ -10,6 +10,20 @@ examples:
   - 根据这些数据生成报价 Excel
   - 修改这份 Word 报告并输出正式版本
   - 阅读 PDF 并整理主要结论
+  - 把内容制作成正式的项目汇报 PPT
+  - 修改工作区里的 world.docx 文件
+aliases:
+  - Word
+  - DOCX
+  - Excel
+  - XLSX
+  - PowerPoint
+  - PPT
+  - PPTX
+  - PDF
+boundaries:
+  - 处理本地文件、上传附件和 Agent 工作区中的办公文件
+  - 不处理飞书云文档、飞书云盘或其他平台内的在线文档
 
 components:
   - id: plugin_document_io
@@ -104,16 +118,30 @@ outcomes:
   - id: word
     name: Word 文档
     description: 阅读、创建和修改 DOCX，支持企业模板、目录、分节和图表题注
+    examples:
+      - 生成一个 Word 建设方案
+      - 修改工作区里的 world.docx 文件
     components: [plugin_document_io, tool_read_document, tool_write_document, tool_manage_document_template, plugin_word, skill_word, writer_word, extractor_word]
   - id: spreadsheet
     name: Excel 表格
     description: 阅读、创建和修改 XLSX 工作簿
+    examples:
+      - 根据销售数据生成报价 Excel
+      - 检查 Excel 的缺失值
     components: [plugin_document_io, tool_read_document, tool_write_document, plugin_spreadsheet, skill_spreadsheet, writer_spreadsheet, extractor_spreadsheet]
   - id: presentation
     name: PowerPoint 演示文稿
     description: 阅读、创建和修改 PPTX 演示文稿
+    examples:
+      - 制作一份正式的项目汇报 PPT
+      - 修改已有 PowerPoint 演示文稿
+    boundaries:
+      - 交付物是 PPT 或 PPTX 文件，不是浏览器 HTML 交互页面
     components: [plugin_document_io, tool_read_document, tool_write_document, plugin_presentation, skill_presentation, writer_presentation, extractor_presentation]
   - id: pdf
     name: PDF 文档
     description: 阅读和生成 PDF 文档
+    examples:
+      - 阅读 PDF 并整理主要结论
+      - 生成正式 PDF 报告
     components: [plugin_document_io, tool_read_document, tool_write_document, plugin_pdf, skill_pdf, writer_pdf, extractor_pdf]

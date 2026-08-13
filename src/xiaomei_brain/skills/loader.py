@@ -275,6 +275,11 @@ class SkillLoader:
                 skills.append(skill)
                 seen.add(skill["name"])
         for skill in self.list_skills(query=query, top_k=top_k):
+            # Prefetch must stay conservative. Active ``discover`` still
+            # returns nearby candidates when no reliable Skill is found.
+            distance = skill.get("_distance")
+            if distance is not None and float(distance) > 0.82:
+                continue
             if skill["name"] not in seen:
                 skills.append(skill)
                 seen.add(skill["name"])
@@ -291,9 +296,9 @@ class SkillLoader:
             return "", selection
         lines = [
             "\n<技能>",
-            "在回复前先浏览以下技能。如果某个技能与当前任务相关或部分相关，"
+            "在回复前先浏览以下技能。如果某个技能与当前任务明确相关，"
             "你必须用 skill_view(技能名) 加载该技能并严格按其指示执行。"
-            "宁可多加载一个不需要的技能，也不要漏掉关键步骤、陷阱或既定工作流程。"
+            "不要因为它只是语义上的近邻就加载；不确定时使用 discover 主动搜索。"
             "技能包含针对特定任务的深入知识——API 端点、工具专用命令和经过验证的"
             "高效工作流程，优于通用方法。即使你觉得用基础工具就能处理，也先加载技能——"
             "因为技能定义了该任务在此环境中的正确做法。"

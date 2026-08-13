@@ -824,9 +824,14 @@ def test_tool_search_activates_deferred_schema_for_next_step(monkeypatch):
     result = search_tool.execute(query="query Workspace business records", limit=3)
     after = [tool.name for tool in loader.select_tools("inspect customers", top_k=0)]
 
-    assert before == ["shell", "tool_search"]
+    assert before == ["shell"]
     assert [item["name"] for item in result["activated"]] == ["workspace_record_query"]
-    assert after == ["shell", "tool_search", "workspace_record_query"]
+    assert after == ["shell", "workspace_record_query"]
+    _schemas, selection = loader.select_openai_tools_with_selection(
+        "inspect customers", top_k=0,
+    )
+    assert selection["required"] == []
+    assert selection["discovered"] == ["workspace_record_query"]
 
 
 # ── Fallback when _dynamic_loader is None ──────────────────────

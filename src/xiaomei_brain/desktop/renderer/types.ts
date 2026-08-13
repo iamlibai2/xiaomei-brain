@@ -554,11 +554,28 @@ export interface ExecutionSelection {
     description?: string;
     source?: "capability" | "semantic" | string;
   }>;
+  discovery?: {
+    prefetch?: {
+      capabilities?: Array<Record<string, unknown>>;
+      skills?: Array<Record<string, unknown>>;
+    };
+    active?: {
+      query?: string;
+      capabilities?: Array<Record<string, unknown>>;
+      nearby_capabilities?: Array<Record<string, unknown>>;
+      skills?: Array<Record<string, unknown>>;
+      nearby_skills?: Array<Record<string, unknown>>;
+      loaded_skill?: Record<string, unknown> | null;
+      activated_tools?: Array<Record<string, unknown>>;
+      missing_tools?: string[];
+    } | null;
+  };
   tools?: {
     step?: number;
     query?: string;
     core?: string[];
     required?: string[];
+    discovered?: string[];
     semantic?: string[];
   };
 }

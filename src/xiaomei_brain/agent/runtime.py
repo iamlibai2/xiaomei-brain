@@ -115,6 +115,7 @@ class AgentRuntimeFactory:
             "memory_extractor",
             "_procedure_memory",
             "_skill_loader",
+            "_capability_registry",
             "identity_mgr",
             "people_service",
             "workspace_service",

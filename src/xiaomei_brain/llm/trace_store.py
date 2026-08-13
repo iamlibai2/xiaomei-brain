@@ -289,6 +289,25 @@ class ModelTraceStore:
         capability = value.get("capability") if isinstance(value.get("capability"), dict) else {}
         tools = value.get("tools") if isinstance(value.get("tools"), dict) else {}
         skills = value.get("skills") if isinstance(value.get("skills"), list) else []
+        discovery = value.get("discovery") if isinstance(value.get("discovery"), dict) else {}
+        active = discovery.get("active") if isinstance(discovery.get("active"), dict) else None
+        active_summary = None
+        if active is not None:
+            loaded_skill = active.get("loaded_skill")
+            active_summary = {
+                "query": active.get("query", ""),
+                "capabilities": active.get("capabilities", []),
+                "nearby_capabilities": active.get("nearby_capabilities", []),
+                "skills": active.get("skills", []),
+                "nearby_skills": active.get("nearby_skills", []),
+                "loaded_skill": (
+                    {"name": loaded_skill.get("name", "")}
+                    if isinstance(loaded_skill, dict)
+                    else None
+                ),
+                "activated_tools": active.get("activated_tools", []),
+                "missing_tools": active.get("missing_tools", []),
+            }
         return {
             "step": int(value.get("step") or 0),
             "capability": {
@@ -297,10 +316,15 @@ class ModelTraceStore:
                 "skills": capability.get("skills", []),
             },
             "skills": skills,
+            "discovery": {
+                "prefetch": discovery.get("prefetch", {}),
+                "active": active_summary,
+            },
             "tools": {
                 "step": int(tools.get("step") or value.get("step") or 0),
                 "core": tools.get("core", []),
                 "required": tools.get("required", []),
+                "discovered": tools.get("discovered", []),
                 "semantic": tools.get("semantic", []),
             },
         }

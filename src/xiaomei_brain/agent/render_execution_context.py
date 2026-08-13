@@ -33,13 +33,17 @@ _EXPLICIT_FILE_REFERENCE_LIMIT = 8
 _EXPLICIT_FILE_REFERENCE_RE = re.compile(
     r"(?<![\w./\\-])([^\s\"'<>|:*?]+(?:[./\\][^\s\"'<>|:*?]+)*\.[A-Za-z0-9]{1,16})(?![\w.])"
 )
-_TOOL_DISCOVERY_PROMPT = """<tool_discovery>
+_TOOL_DISCOVERY_PROMPT = """<ability_discovery>
 Only the universal core tools and a small set of likely tools are visible initially.
-If the current tools cannot perform a required action, call tool_search with a
-specific description of that missing action. The discovered tool schemas become
-available on the next reasoning step. Do not claim a capability is unavailable
-before searching for it.
-</tool_discovery>"""
+If the visible resources cannot perform a required action, call discover with a
+specific description of the result or missing action. It searches Capabilities,
+Skills and Tools together. Discovered tool schemas become available on the next
+reasoning step, and one unambiguous Skill may be loaded immediately. Do not claim
+an ability is unavailable before searching for it. The discover tool itself is
+always part of the universal core. Never infer that discover is unavailable from
+an earlier assistant reply or from the absence of a domain tool. If the user
+explicitly asks you to discover available abilities, call discover.
+</ability_discovery>"""
 
 
 def render_execution_context(agent: Any, user_input: str) -> str:
@@ -86,26 +90,26 @@ def prepare_execution_selection(
         "tools": [],
         "skills": [],
     }
-    capability_registry = getattr(agent, "_capability_registry", None)
-    prepare = getattr(capability_registry, "prepare_execution_selection_details", None)
-    if callable(prepare):
-        capability_selection = prepare(
-            selection_query,
-            scope_id=agent.session_id,
-            person_id=agent.user_id,
-        )
-        if dynamic_loader:
-            dynamic_loader.begin_run(agent.session_id)
+    discovery_service = getattr(agent, "_discovery_service", None)
+    begin_discovery_run = getattr(discovery_service, "begin_run", None)
+    if callable(begin_discovery_run):
+        begin_discovery_run()
+    prefetch = getattr(discovery_service, "prefetch", None)
+    discovery_prefetch: dict[str, Any] = {"capabilities": [], "skills": []}
+    if callable(prefetch):
+        discovery_prefetch = prefetch(selection_query, person_id=agent.user_id)
+        capability_selection["capabilities"] = discovery_prefetch["capabilities"]
     else:
-        legacy_prepare = getattr(capability_registry, "prepare_execution_selection", None)
-        if callable(legacy_prepare):
-            capability_selection["skills"] = legacy_prepare(
+        capability_registry = getattr(agent, "_capability_registry", None)
+        prepare = getattr(capability_registry, "prepare_execution_selection_details", None)
+        if callable(prepare):
+            capability_selection = prepare(
                 selection_query,
                 scope_id=agent.session_id,
                 person_id=agent.user_id,
             )
-            if dynamic_loader:
-                dynamic_loader.begin_run(agent.session_id)
+    if dynamic_loader:
+        dynamic_loader.begin_run(agent.session_id)
 
     skill_prompt = ""
     skill_selection: list[dict[str, Any]] = []
@@ -116,18 +120,23 @@ def prepare_execution_selection(
             skill_prompt, skill_selection = detailed_builder(
                 skill_loader,
                 selection_query,
-                required_names=capability_selection["skills"],
+                required_names=[],
             )
         else:
             skill_prompt = skill_loader.build_skill_index_prompt(
                 selection_query,
-                required_names=capability_selection["skills"],
+                required_names=[],
             )
+    discovery_prefetch["skills"] = list(skill_selection)
 
     agent._execution_selection_base = {
         "query": selection_query,
         "capability": capability_selection,
         "skills": skill_selection,
+        "discovery": {
+            "prefetch": discovery_prefetch,
+            "active": getattr(discovery_service, "last_discovery", None),
+        },
     }
 
     execution_prompts = [skill_prompt]
@@ -156,6 +165,10 @@ def current_execution_selection(
 ) -> dict[str, Any]:
     """Build the inspectable selection snapshot for one ReAct model call."""
     snapshot = dict(getattr(agent, "_execution_selection_base", {}) or {})
+    discovery = dict(snapshot.get("discovery") or {})
+    service = getattr(agent, "_discovery_service", None)
+    discovery["active"] = getattr(service, "last_discovery", None)
+    snapshot["discovery"] = discovery
     snapshot["step"] = int(step)
     if tools:
         snapshot["tools"] = dict(tools)

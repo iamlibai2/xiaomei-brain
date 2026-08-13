@@ -41,6 +41,17 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
         "execution_selection": {
             "step": 0,
             "skills": [{"name": "document-writing", "source": "semantic"}],
+            "discovery": {
+                "prefetch": {"skills": [{"name": "document-writing"}]},
+                "active": {
+                    "query": "write a report",
+                    "loaded_skill": {
+                        "name": "document-writing",
+                        "content": "must not be copied into trace summaries",
+                    },
+                    "activated_tools": [{"name": "write_document"}],
+                },
+            },
             "tools": {"core": ["read"], "required": [], "semantic": ["write"]},
         },
         "request": {
@@ -76,6 +87,9 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
     assert listed["items"][0]["output_tokens"] == 3
     assert listed["items"][0]["total_tokens"] == 12
     assert listed["items"][0]["execution_selection"]["skills"][0]["name"] == "document-writing"
+    active = listed["items"][0]["execution_selection"]["discovery"]["active"]
+    assert active["loaded_skill"] == {"name": "document-writing"}
+    assert "content" not in active["loaded_skill"]
     assert "query" not in listed["items"][0]["execution_selection"]
     assert [event[0] for event in events] == ["model.trace.created", "model.trace.updated"]
 

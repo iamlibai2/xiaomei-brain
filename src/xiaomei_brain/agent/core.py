@@ -189,6 +189,7 @@ class Agent:
         self.memory_scope_id: str = "global"
         self.shared_conversation: bool = False
         self._dynamic_loader: Any = None      # DynamicToolLoader, set by agent_manager
+        self._discovery_service: Any = None   # Unified Capability/Skill/Tool discovery
         self._skill_loader: Any = None
         self._capability_registry: Any = None
         self.user_display_name: str = "这位用户"  # 当前用户的显示名，identity 绑定后设置
@@ -566,7 +567,7 @@ class Agent:
                     openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
                 else:
                     openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
-                    tool_selection = {"step": step, "core": [], "required": [], "semantic": []}
+                    tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}
 
                 all_messages = list(messages) + self.messages[_pre_count:]
 
@@ -1352,7 +1353,7 @@ class Agent:
                 openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
-                tool_selection = {"step": step, "core": [], "required": [], "semantic": []}
+                tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}
             if openai_tools and excluded_tool_names:
                 openai_tools = [
                     tool_spec for tool_spec in openai_tools

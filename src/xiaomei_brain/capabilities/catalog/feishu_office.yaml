@@ -9,6 +9,14 @@ examples:
   - 查看我今天的飞书日程并找出时间冲突
   - 创建一份飞书项目周报并把链接发给我
   - 汇总这张飞书多维表格中的本周销售数据
+aliases:
+  - Lark
+  - 飞书文档
+  - 飞书云盘
+  - 飞书多维表格
+boundaries:
+  - 仅处理明确位于飞书或 Lark 平台中的消息、日历、云文档和企业数据
+  - 不处理本地 Word、普通文件或 Agent 工作区文件
 
 components:
   - id: feishu_runtime

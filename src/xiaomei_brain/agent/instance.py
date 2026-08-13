@@ -59,6 +59,7 @@ class AgentInstance:
     # Persistent Agent (created once, reused)
     _agent: Any = field(default=None, init=False, repr=False)
     _capability_registry: Any = field(default=None, init=False, repr=False)
+    _discovery_service: Any = field(default=None, init=False, repr=False)
     _capability_package_service: Any = field(default=None, init=False, repr=False)
     _capability_runtimes: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _process_template_registry: Any = field(default=None, init=False, repr=False)
@@ -194,6 +195,7 @@ class AgentInstance:
         self._agent._dynamic_loader = getattr(self, "_dynamic_loader", None)
         self._agent._skill_loader = getattr(self, "_skill_loader", None)
         self._agent._capability_registry = self._capability_registry
+        self._agent._discovery_service = getattr(self, "_discovery_service", None)
         return self._agent
 
     def chat(

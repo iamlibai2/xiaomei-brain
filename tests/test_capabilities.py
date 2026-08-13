@@ -256,7 +256,7 @@ def test_capability_resolver_exposes_only_task_relevant_business_facts():
     assert "analyze_data" not in context
 
 
-def test_capability_selection_pins_outcome_tools_and_required_skill():
+def test_capability_prefetch_does_not_pin_outcome_dependencies():
     registry = _document_runtime()
     dynamic = _DynamicLoader()
     registry.bind_dynamic_tool_loader(dynamic)
@@ -267,11 +267,8 @@ def test_capability_selection_pins_outcome_tools_and_required_skill():
         person_id="person-1",
     )
 
-    assert "presentation-documents" in skills
-    assert dynamic.pinned[0] == "desktop-session"
-    assert "read_document" in dynamic.pinned[1]
-    assert "write_document" in dynamic.pinned[1]
-    assert "manage_document_template" not in dynamic.pinned[1]
+    assert skills == []
+    assert not hasattr(dynamic, "pinned")
 
     details = registry.prepare_execution_selection_details(
         "制作一份项目汇报 PPT",
@@ -279,7 +276,8 @@ def test_capability_selection_pins_outcome_tools_and_required_skill():
         person_id="person-1",
     )
     assert details["capabilities"][0]["id"] == "office_documents"
-    assert "presentation-documents" in details["skills"]
+    assert details["skills"] == []
+    assert details["tools"] == []
 
 
 def test_agent_can_inspect_business_capabilities_without_technical_leakage():

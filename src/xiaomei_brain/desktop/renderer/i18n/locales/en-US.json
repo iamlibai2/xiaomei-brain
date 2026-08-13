@@ -518,11 +518,22 @@
       "loadFailed": "Unable to load execution analysis",
       "internalTurn": "Internal execution",
       "turn": "Turn objective",
-      "capabilities": "Capability selection",
-      "capabilitiesHint": "Deterministic dependencies supplied by capability manifests",
-      "capabilityDependencies": "Dependencies",
-      "skills": "Skill candidates",
-      "skillsHint": "Candidate summaries only; full content is loaded through skill_view",
+      "prefetch": "Prefetch",
+      "prefetchHint": "Relevant candidates found automatically before execution; this does not mean they were called",
+      "prefetchedCapabilities": "Capabilities",
+      "prefetchedSkills": "Skills",
+      "prefetchedTools": "Tools",
+      "noPrefetch": "No reliable prefetch result for this turn",
+      "activeDiscovery": "Active discovery",
+      "activeDiscoveryHint": "Only results loaded after the model explicitly called discover",
+      "discoverNotCalled": "discover was not called in this turn",
+      "discoverResult": "discover results",
+      "discoveredCapabilities": "Capabilities",
+      "discoveredSkills": "Skills",
+      "discoveredTools": "Tools",
+      "discoveredStepTools": "Discovered tools",
+      "noMatch": "No reliable match was activated",
+      "loadedSkill": "Loaded full Skill: {{name}}",
       "steps": "Execution steps",
       "stepsHint": "Tools visible to each LLM call",
       "pathTitle": "Execution path",
@@ -979,7 +990,7 @@
 ,    "systemUi": { "title": "System settings", "subtitle": "These preferences affect only this Desktop, not any Agent.", "behavior": "Startup and window", "openAtLogin": "Open at login", "openAtLoginHint": "Start xiaomei-brain Desktop after signing in.", "unavailable": "Unavailable on this system", "closeBehavior": "When closing the window", "closeHint": "Exit Desktop or keep it running in a minimized window.", "exit": "Exit Desktop", "minimize": "Minimize window", "experience": "Interface and notifications", "notifications": "Windows notifications", "notificationsHint": "Show Agent message notifications when Desktop is minimized or unfocused.", "messageSounds": "Message sounds", "messageSoundsHint": "Play one subtle sound when an Agent finishes a reply.", "messageSoundNone": "None", "messageSoundSoft": "Soft chime", "messageSoundCrisp": "Crisp tone", "messageSoundBubble": "Bubble pop", "language": "Language", "languageHint": "Change the Desktop interface language.", "rightSidebar": "Open right sidebar by default", "rightSidebarHint": "Show Agent activity and status when entering a conversation.", "update": "Automatic updates", "updateHint": "Current version v{{version}}. The installed app checks once after startup.", "updateLoading": "Loading update status…", "updateDevelopment": "Development builds do not contact the update service. Verify with an NSIS install.", "updateChecking": "Checking for a new version…", "updateAvailable": "Version v{{version}} is available and downloading in the background.", "updateDownloading": "Downloading update", "updateDownloadingPercent": "Downloading update {{percent}}%", "updateDownloaded": "v{{version}} is ready. Restart Desktop to install it.", "updateCurrent": "You are on the latest version, v{{version}}.", "updateError": "Update check failed", "updatePackagedOnly": "Installed app only", "updateDownload": "Download update", "updateRestart": "Restart and install", "updateCheck": "Check for updates", "updateAvailableTitle": "Update available", "updateCurrentVersion": "Current version", "updateAvailableVersion": "Available version", "updatePreparing": "Preparing background download…", "updateUpgrade": "Upgrade now", "updateNotes": "Release notes", "updateState": { "checking": "Checking", "downloading": "Downloading" }, "directories": "Directories and diagnostics", "configDirectory": "Desktop configuration", "logDirectory": "Desktop logs", "open": "Open directory", "viewLog": "View log", "hideLog": "Hide log", "emptyLog": "The log is currently empty.", "saved": "Settings saved", "failed": "Failed to save settings", "loading": "Loading Desktop settings…", "chinese": "Chinese (Simplified)" }
     ,"fontUi": { "title": "Message font", "hint": "Changes only Agent replies, not the composer or settings.", "default": "Default", "pianpian": "PianPian", "wanweiwei": "Wo Ai Wan Wei Wei", "honglei": "HongLei ZhuoShu", "ozcaramel": "OZ Caramel" }
     ,"appearanceUi": { "title": "Appearance", "description": "Choose how Desktop looks", "light": "Light", "dark": "Dark", "system": "System", "accountSettings": "Account management", "lockDesktop": "Lock Desktop", "signOut": "Sign out", "close": "Close" }
-    ,"shortcutUi": { "title": "Keyboard shortcuts", "description": "Use the keyboard for common actions.", "search": "Unified search", "leftSidebar": "Toggle left sidebar", "rightSidebar": "Toggle right sidebar", "voice": "Start or stop live voice", "modelContext": "Toggle model context comparison", "maximize": "Maximize or restore window" }
+    ,"shortcutUi": { "title": "Keyboard shortcuts", "description": "Use the keyboard for common actions.", "search": "Unified search", "leftSidebar": "Toggle left sidebar", "rightSidebar": "Toggle right sidebar", "voice": "Start or stop live voice", "modelContext": "Toggle model context comparison", "executionAnalysis": "Toggle execution analysis", "maximize": "Maximize or restore window" }
     ,"visualize": { "loading": "Loading visualization…", "tooLarge": "The visualization exceeds 1 MB and cannot run in the conversation", "runtimeError": "The visualization failed to run", "expand": "Expand center area", "fullscreen": "Enter fullscreen", "exitFullscreen": "Exit fullscreen", "previewTitle": "Visualization: {{name}}" }
     ,"stageUi": { "title": "Presentation stage", "loading": "Preparing presentation content…", "emptyArtifact": "The artifact is empty and cannot be presented", "unsupported": "This file can be included in a presentation, but it does not have an embedded renderer yet.", "previous": "Previous item", "next": "Next item" }
     ,"videoPlayer": { "title": "Video player", "fullscreen": "Play fullscreen", "failed": "Video playback failed" }

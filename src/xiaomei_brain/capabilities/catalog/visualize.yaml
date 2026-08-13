@@ -10,6 +10,13 @@ examples:
   - 用动画解释陀螺为什么不会立刻倒下
   - 把这个数据库结构展示成可探索的关系图
   - 做一个可调参数的贷款计算器
+aliases:
+  - 交互可视化
+  - HTML 可视化
+  - 浏览器交互图表
+boundaries:
+  - 输出可在对话中直接操作的 HTML 图表、图解、模拟器和界面原型
+  - 不用于制作 PowerPoint、Word、Excel 或 PDF 办公文件
 
 components:
   - id: plugin_visualize
@@ -47,6 +54,11 @@ outcomes:
     description: 调节参数并立即观察结果、运动或方案变化
     components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]
   - id: previews
-    name: 方案预览
-    description: 在对话中探索界面、流程和信息结构方案
+    name: 交互界面预览
+    description: 在浏览器式 HTML 页面中探索界面、流程和信息结构方案
+    examples:
+      - 生成一个可以直接操作的 HTML 界面原型
+      - 在对话中预览交互式产品方案
+    boundaries:
+      - 不生成 PPT 或 PPTX 文件
     components: [plugin_visualize, skill_visualize, tool_write_visualization, tool_present_artifacts]

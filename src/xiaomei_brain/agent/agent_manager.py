@@ -515,19 +515,26 @@ class AgentManager:
         if dynamic_cfg.get("enabled", True):
             from xiaomei_brain.tools.dynamic import (
                 DynamicToolLoader,
-                create_tool_search_tool,
                 set_active_loader,
             )
-            top_k = dynamic_cfg.get("top_k", 5)
+            from xiaomei_brain.discovery import DiscoveryService, create_discover_tool
+            top_k = dynamic_cfg.get("top_k", 3)
             lance_path = os.path.join(self._agent_dir(agent.id), "memory", "lancedb")
             boot_section("工具索引")
             loader = DynamicToolLoader(tools, top_k=top_k, lance_db_path=lance_path)
-            if tools.get("tool_search") is None:
-                tools.register(create_tool_search_tool(loader))
             loader.build_index()
+            discovery_service = DiscoveryService(
+                capability_registry=capability_registry,
+                skill_loader=skill_loader,
+                dynamic_tool_loader=loader,
+                tool_registry=tools,
+            )
+            if tools.get("discover") is None:
+                tools.register(create_discover_tool(discovery_service))
             total_tools = len(tools.list_tools())
             boot_line("向量索引", "OK", f"{total_tools} 个工具")
             agent._dynamic_loader = loader
+            agent._discovery_service = discovery_service
             set_active_loader(loader)
 
         capability_registry.bind_dynamic_tool_loader(

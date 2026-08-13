@@ -127,11 +127,27 @@ class CapabilityManifestLoader:
                 name=outcome_name,
                 description=str(item.get("description") or "").strip(),
                 components=refs,
+                examples=tuple(
+                    str(value).strip()
+                    for value in item.get("examples", [])
+                    if str(value).strip()
+                ),
+                boundaries=tuple(
+                    str(value).strip()
+                    for value in item.get("boundaries", [])
+                    if str(value).strip()
+                ),
             ))
 
         examples_raw = raw.get("examples", [])
         if not isinstance(examples_raw, list):
             raise ValueError("examples 必须是数组")
+        aliases_raw = raw.get("aliases", [])
+        if not isinstance(aliases_raw, list):
+            raise ValueError("aliases 必须是数组")
+        boundaries_raw = raw.get("boundaries", [])
+        if not isinstance(boundaries_raw, list):
+            raise ValueError("boundaries 必须是数组")
 
         requirements_raw = raw.get("requirements", {})
         if requirements_raw is None:
@@ -190,6 +206,8 @@ class CapabilityManifestLoader:
             components=tuple(components),
             requirements=tuple(requirements),
             examples=tuple(str(value).strip() for value in examples_raw if str(value).strip()),
+            aliases=tuple(str(value).strip() for value in aliases_raw if str(value).strip()),
+            boundaries=tuple(str(value).strip() for value in boundaries_raw if str(value).strip()),
             version=str(raw.get("version") or "1.0.0"),
             source=str(raw.get("source") or source),
         )

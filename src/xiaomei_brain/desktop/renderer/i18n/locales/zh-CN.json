@@ -518,11 +518,22 @@
       "loadFailed": "无法读取执行分析",
       "internalTurn": "内部执行",
       "turn": "本轮目标",
-      "capabilities": "能力选择",
-      "capabilitiesHint": "能力清单提供的确定性依赖",
-      "capabilityDependencies": "带入依赖",
-      "skills": "Skill 候选",
-      "skillsHint": "只展示候选摘要，完整内容由 skill_view 按需加载",
+      "prefetch": "轮前预取",
+      "prefetchHint": "执行前根据当前请求自动找到的相关候选，不代表已经调用",
+      "prefetchedCapabilities": "能力",
+      "prefetchedSkills": "Skill",
+      "prefetchedTools": "工具",
+      "noPrefetch": "本轮没有可靠的预取结果",
+      "activeDiscovery": "主动发现",
+      "activeDiscoveryHint": "仅展示模型主动调用 discover 后加载的结果",
+      "discoverNotCalled": "本轮未调用 discover",
+      "discoverResult": "discover 加载结果",
+      "discoveredCapabilities": "能力",
+      "discoveredSkills": "Skill",
+      "discoveredTools": "工具",
+      "discoveredStepTools": "已发现工具",
+      "noMatch": "没有激活可靠匹配",
+      "loadedSkill": "已加载完整 Skill：{{name}}",
       "steps": "执行步骤",
       "stepsHint": "每次 LLM 调用实际可见的工具",
       "pathTitle": "执行路径",
@@ -979,7 +990,7 @@
 ,    "systemUi": { "title": "系统设置", "subtitle": "这些设置只影响当前 Desktop，不会修改任何 Agent。", "behavior": "启动与窗口", "openAtLogin": "开机启动", "openAtLoginHint": "登录 Windows 后自动启动 xiaomei-brain Desktop。", "unavailable": "当前系统不可用", "closeBehavior": "关闭窗口时", "closeHint": "选择点击关闭按钮后退出 Desktop，或仅最小化窗口。", "exit": "退出 Desktop", "minimize": "最小化窗口", "experience": "界面与通知", "notifications": "Windows 通知", "notificationsHint": "Desktop 最小化或失焦时，显示 Agent 的新消息通知。", "messageSounds": "消息提示音", "messageSoundsHint": "Agent 完成回复时播放一次轻提示音。", "messageSoundNone": "无", "messageSoundSoft": "柔和双音", "messageSoundCrisp": "清脆单音", "messageSoundBubble": "气泡音", "language": "语言", "languageHint": "切换 Desktop 界面语言。", "rightSidebar": "默认打开右侧栏", "rightSidebarHint": "进入会话时默认展示 Agent 的动态和状态。", "update": "自动更新", "updateHint": "当前版本 v{{version}}。安装版启动后会自动检查一次更新。", "updateLoading": "正在读取更新状态…", "updateDevelopment": "开发版不连接更新服务，请在 NSIS 安装版中验证。", "updateChecking": "正在检查新版本…", "updateAvailable": "发现新版本 v{{version}}，正在后台下载。", "updateDownloading": "正在下载更新", "updateDownloadingPercent": "正在下载更新 {{percent}}%", "updateDownloaded": "v{{version}} 已下载，重启 Desktop 后安装。", "updateCurrent": "当前已是最新版本 v{{version}}。", "updateError": "检查更新失败", "updatePackagedOnly": "仅安装版", "updateDownload": "下载更新", "updateRestart": "重启并安装", "updateCheck": "检查更新", "updateAvailableTitle": "发现新版本", "updateCurrentVersion": "当前版本", "updateAvailableVersion": "可升级版本", "updatePreparing": "正在准备后台下载…", "updateUpgrade": "进行升级", "updateNotes": "版本说明", "updateState": { "checking": "检查中", "downloading": "下载中" }, "directories": "目录与诊断", "configDirectory": "Desktop 配置目录", "logDirectory": "Desktop 日志目录", "open": "打开目录", "viewLog": "查看日志", "hideLog": "收起日志", "emptyLog": "日志文件目前为空。", "saved": "设置已保存", "failed": "保存设置失败", "loading": "正在读取 Desktop 设置…", "chinese": "简体中文" }
     ,"fontUi": { "title": "消息字体", "hint": "只改变 Agent 回复的显示字体，不影响输入框和设置界面。", "default": "默认", "pianpian": "翩翩体-简", "wanweiwei": "我爱万伟伟手写体", "honglei": "鸿雷拙书简体", "ozcaramel": "OZ焦糖体" }
     ,"appearanceUi": { "title": "外观", "description": "选择 Desktop 的显示外观", "light": "浅色", "dark": "深色", "system": "跟随系统", "accountSettings": "账户管理", "lockDesktop": "锁屏", "signOut": "退出当前用户", "close": "关闭" }
-    ,"shortcutUi": { "title": "快捷键", "description": "使用键盘快速完成常用操作。", "search": "统一搜索", "leftSidebar": "打开或关闭左侧栏", "rightSidebar": "打开或关闭右侧栏", "voice": "开始或停止实时语音", "modelContext": "打开或关闭模型上下文对照", "maximize": "最大化或还原窗口" }
+    ,"shortcutUi": { "title": "快捷键", "description": "使用键盘快速完成常用操作。", "search": "统一搜索", "leftSidebar": "打开或关闭左侧栏", "rightSidebar": "打开或关闭右侧栏", "voice": "开始或停止实时语音", "modelContext": "打开或关闭模型上下文对照", "executionAnalysis": "打开或关闭执行分析", "maximize": "最大化或还原窗口" }
     ,"visualize": { "loading": "正在加载可视化…", "tooLarge": "可视化内容超过 1 MB，无法在对话中运行", "runtimeError": "可视化运行失败", "expand": "扩大中央区域", "fullscreen": "全屏显示", "exitFullscreen": "退出全屏", "previewTitle": "可视化：{{name}}" }
     ,"stageUi": { "title": "演示台", "loading": "正在准备演示内容…", "emptyArtifact": "产物内容为空，无法展示", "unsupported": "此文件可作为演示资料，但当前还没有内嵌演示渲染器。", "previous": "上一项", "next": "下一项" }
     ,"videoPlayer": { "title": "视频播放器", "fullscreen": "全屏播放", "failed": "视频播放失败" }

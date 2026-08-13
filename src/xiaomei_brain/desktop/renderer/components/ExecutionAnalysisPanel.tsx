@@ -94,9 +94,17 @@ export function ExecutionAnalysisPanel({ onClose }: { onClose: () => void }) {
 
 function TurnExecution({ turn }: { turn: ExecutionTurn }) {
   const { t } = useTranslation();
-  const firstSelection = turn.records.find((record) => record.execution_selection)?.execution_selection;
-  const capability = firstSelection?.capability || {};
-  const skills = uniqueSkills(turn.records.flatMap((record) => record.execution_selection?.skills || []));
+  const orderedRecords = orderExecutionRecords(turn.records);
+  const firstRecord = orderedRecords.find((record) => executionStepOf(record) === 0)
+    || orderedRecords.find((record) => record.execution_selection);
+  const firstSelection = firstRecord?.execution_selection;
+  const skills = uniqueSkills(firstSelection?.skills || []);
+  const prefetch = firstSelection?.discovery?.prefetch;
+  const prefetchedTools = firstSelection?.tools?.semantic || [];
+  const activeDiscovery = [...orderedRecords]
+    .reverse()
+    .find((record) => record.execution_selection?.discovery?.active)
+    ?.execution_selection?.discovery?.active;
   const calls = unique(turn.records.flatMap((record) => record.tool_call_names || []));
   return (
     <>
@@ -105,15 +113,14 @@ function TurnExecution({ turn }: { turn: ExecutionTurn }) {
         <span className={`trace-status is-${turn.status}`}>{t(`modelTrace.status.${turn.status}`)}</span>
       </header>
       <div className="execution-analysis-content">
-        <AnalysisSection title={t("executionAnalysis.capabilities")} hint={t("executionAnalysis.capabilitiesHint")}>
-          <ChipList values={unique((capability.capabilities || []).map((item) => item.name || item.id))} empty={t("executionAnalysis.noneSelected")} />
-          {(capability.tools || []).length || (capability.skills || []).length ? <div className="execution-analysis-dependencies"><span>{t("executionAnalysis.capabilityDependencies")}</span><ChipList values={unique([...(capability.skills || []), ...(capability.tools || [])])} empty="" /></div> : null}
+        <AnalysisSection title={t("executionAnalysis.prefetch")} hint={t("executionAnalysis.prefetchHint")}>
+          <PrefetchDetails prefetch={prefetch} skills={skills} tools={prefetchedTools} />
         </AnalysisSection>
-        <AnalysisSection title={t("executionAnalysis.skills")} hint={t("executionAnalysis.skillsHint")}>
-          {skills.length ? <div className="execution-analysis-skill-list">{skills.map((skill) => <article key={skill.name}><strong>{skill.name}</strong><span>{t(`executionAnalysis.source.${skill.source || "semantic"}`)}</span><p>{skill.description || t("executionAnalysis.noDescription")}</p></article>)}</div> : <p className="execution-analysis-muted">{t("executionAnalysis.noneSelected")}</p>}
+        <AnalysisSection title={t("executionAnalysis.activeDiscovery")} hint={t("executionAnalysis.activeDiscoveryHint")}>
+          <ActiveDiscoveryDetails active={activeDiscovery} />
         </AnalysisSection>
         <AnalysisSection title={t("executionAnalysis.steps")} hint={t("executionAnalysis.stepsHint")}>
-          <div className="execution-analysis-steps">{[...turn.records].reverse().map((record, index) => <ExecutionStep key={record.id} record={record} index={index + 1} />)}</div>
+          <div className="execution-analysis-steps">{orderedRecords.map((record, index) => <ExecutionStep key={record.id} record={record} index={executionStepOf(record) + 1 || index + 1} />)}</div>
         </AnalysisSection>
         <AnalysisSection title={t("executionAnalysis.actualCalls")} hint={t("executionAnalysis.actualCallsHint")}>
           <ChipList values={calls} empty={t("executionAnalysis.noCalls")} emphasis />
@@ -123,13 +130,57 @@ function TurnExecution({ turn }: { turn: ExecutionTurn }) {
   );
 }
 
+function PrefetchDetails({ prefetch, skills, tools }: {
+  prefetch?: NonNullable<ExecutionSelection["discovery"]>["prefetch"];
+  skills: NonNullable<ExecutionSelection["skills"]>;
+  tools: string[];
+}) {
+  const { t } = useTranslation();
+  const capabilities = namesOf(prefetch?.capabilities);
+  const skillNames = namesOf(prefetch?.skills);
+  if (!capabilities.length && !skillNames.length && !tools.length) {
+    return <p className="execution-analysis-muted">{t("executionAnalysis.noPrefetch")}</p>;
+  }
+  return <div className="execution-analysis-dependencies">
+    {capabilities.length ? <><span>{t("executionAnalysis.prefetchedCapabilities")}</span><ChipList values={capabilities} empty="" /></> : null}
+    {skills.length ? <><span>{t("executionAnalysis.prefetchedSkills")}</span><div className="execution-analysis-skill-list">{skills.map((skill) => <article key={skill.name}><strong>{skill.name}</strong><span>{t(`executionAnalysis.source.${skill.source || "semantic"}`)}</span><p>{skill.description || t("executionAnalysis.noDescription")}</p></article>)}</div></> : null}
+    {tools.length ? <><span>{t("executionAnalysis.prefetchedTools")}</span><ChipList values={tools} empty="" /></> : null}
+  </div>;
+}
+
+function ActiveDiscoveryDetails({ active }: {
+  active?: NonNullable<ExecutionSelection["discovery"]>["active"];
+}) {
+  const { t } = useTranslation();
+  const capabilities = namesOf(active?.capabilities);
+  const skills = active?.skills || [];
+  const tools = namesOf(active?.activated_tools);
+  const loadedSkill = fieldOf(active?.loaded_skill, "name");
+  if (!active) {
+    return <p className="execution-analysis-muted">{t("executionAnalysis.discoverNotCalled")}</p>;
+  }
+  return <div className="execution-analysis-dependencies">
+    <span>{t("executionAnalysis.discoveredCapabilities")}</span>
+    <ChipList values={capabilities} empty={t("executionAnalysis.noMatch")} emphasis />
+    <span>{t("executionAnalysis.discoveredSkills")}</span>
+    {skills.length ? <div className="execution-analysis-skill-list">{skills.map((skill) => {
+      const name = fieldOf(skill, "name");
+      return <article key={name}><strong>{name}</strong><p>{fieldOf(skill, "description") || t("executionAnalysis.noDescription")}</p></article>;
+    })}</div> : <p className="execution-analysis-muted">{t("executionAnalysis.noMatch")}</p>}
+    <span>{t("executionAnalysis.discoveredTools")}</span>
+    <ChipList values={tools} empty={t("executionAnalysis.noMatch")} emphasis />
+    {loadedSkill ? <p className="execution-analysis-muted">{t("executionAnalysis.loadedSkill", { name: loadedSkill })}</p> : null}
+  </div>;
+}
+
 function ExecutionStep({ record, index }: { record: ModelTraceSummary; index: number }) {
   const { t } = useTranslation();
   const tools = record.execution_selection?.tools;
   const semantic = tools?.semantic || [];
   const required = tools?.required || [];
+  const discovered = tools?.discovered || [];
   const core = tools?.core || [];
-  return <article><header><b>{index}</b><strong>{record.tool_call_names?.length ? t("executionAnalysis.called", { names: record.tool_call_names.join(", ") }) : t("executionAnalysis.responded")}</strong><time>{formatTime(record.created_at)}</time></header><div><ToolGroup label={t("executionAnalysis.coreTools")} values={core} /><ToolGroup label={t("executionAnalysis.requiredTools")} values={required} /><ToolGroup label={t("executionAnalysis.semanticTools")} values={semantic} /></div>{!tools ? <p>{t("executionAnalysis.legacyRecord")}</p> : null}</article>;
+  return <article><header><b>{index}</b><strong>{record.tool_call_names?.length ? t("executionAnalysis.called", { names: record.tool_call_names.join(", ") }) : t("executionAnalysis.responded")}</strong><time>{formatTime(record.created_at)}</time></header><div><ToolGroup label={t("executionAnalysis.coreTools")} values={core} /><ToolGroup label={t("executionAnalysis.requiredTools")} values={required} /><ToolGroup label={t("executionAnalysis.discoveredStepTools")} values={discovered} /><ToolGroup label={t("executionAnalysis.semanticTools")} values={semantic} /></div>{!tools ? <p>{t("executionAnalysis.legacyRecord")}</p> : null}</article>;
 }
 
 function AnalysisSection({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
@@ -137,8 +188,12 @@ function AnalysisSection({ title, hint, children }: { title: string; hint: strin
 }
 function ToolGroup({ label, values }: { label: string; values: string[] }) { return values.length ? <div className="execution-analysis-tool-group"><span>{label}</span><ChipList values={values} empty="" /></div> : null; }
 function ChipList({ values, empty, emphasis = false }: { values: string[]; empty: string; emphasis?: boolean }) { return values.length ? <div className={`execution-analysis-chips${emphasis ? " is-emphasis" : ""}`}>{values.map((value) => <code key={value}>{value}</code>)}</div> : <p className="execution-analysis-muted">{empty}</p>; }
+function executionStepOf(record: ModelTraceSummary): number { const value = record.execution_selection?.step ?? record.execution_selection?.tools?.step; return typeof value === "number" && Number.isFinite(value) ? value : -1; }
+function orderExecutionRecords(records: ModelTraceSummary[]): ModelTraceSummary[] { return [...records].sort((left, right) => { const stepDifference = executionStepOf(left) - executionStepOf(right); return stepDifference || left.created_at - right.created_at; }); }
 function groupByTurn(records: ModelTraceSummary[]): ExecutionTurn[] { const groups = new Map<string, ExecutionTurn>(); records.forEach((record) => { const id = record.turn_id || record.id; const group = groups.get(id) || { id, prompt: record.prompt_preview || "", createdAt: record.created_at, status: record.status, records: [] }; group.records.push(record); group.prompt ||= record.prompt_preview || ""; group.createdAt = Math.min(group.createdAt, record.created_at); if (record.status === "running" || (record.status === "failed" && group.status !== "running")) group.status = record.status; groups.set(id, group); }); return [...groups.values()]; }
 function unique(values: string[]): string[] { return [...new Set(values.filter(Boolean))]; }
 function uniqueSkills(values: NonNullable<ExecutionSelection["skills"]>): NonNullable<ExecutionSelection["skills"]> { const result = new Map<string, NonNullable<ExecutionSelection["skills"]>[number]>(); values.forEach((item) => { if (item.name && !result.has(item.name)) result.set(item.name, item); }); return [...result.values()]; }
+function fieldOf(value: Record<string, unknown> | null | undefined, key: string): string { const result = value?.[key]; return typeof result === "string" ? result : ""; }
+function namesOf(values: Array<Record<string, unknown>> | undefined): string[] { return (values || []).map((item) => fieldOf(item, "name") || fieldOf(item, "id")).filter(Boolean); }
 function cleanPrompt(value: string): string { return String(value || "").replace(/^\[[\d\s:/.-]+]\s*/, "").trim(); }
 function formatTime(value: number): string { return value ? new Date(value * 1000).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"; }
