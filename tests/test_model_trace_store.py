@@ -38,6 +38,11 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
         "turn_id": "turn-a",
         "category": "conversation",
         "stream": True,
+        "execution_selection": {
+            "step": 0,
+            "skills": [{"name": "document-writing", "source": "semantic"}],
+            "tools": {"core": ["read"], "required": [], "semantic": ["write"]},
+        },
         "request": {
             "messages": [
                 {"role": "system", "content": "You are an Agent."},
@@ -70,6 +75,8 @@ def test_trace_store_records_request_response_and_filters(tmp_path) -> None:
     assert listed["items"][0]["input_tokens"] == 9
     assert listed["items"][0]["output_tokens"] == 3
     assert listed["items"][0]["total_tokens"] == 12
+    assert listed["items"][0]["execution_selection"]["skills"][0]["name"] == "document-writing"
+    assert "query" not in listed["items"][0]["execution_selection"]
     assert [event[0] for event in events] == ["model.trace.created", "model.trace.updated"]
 
 

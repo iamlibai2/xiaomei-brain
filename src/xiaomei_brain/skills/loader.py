@@ -253,6 +253,20 @@ class SkillLoader:
 
         embed(query) → LanceDB 语义召回 → 格式化 <available_skills> 块。
         """
+        prompt, _selection = self.build_skill_index_prompt_with_selection(
+            query,
+            top_k=top_k,
+            required_names=required_names,
+        )
+        return prompt
+
+    def build_skill_index_prompt_with_selection(
+        self,
+        query: str,
+        top_k: int = 3,
+        required_names: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Build the Skill index and return the exact candidates used."""
         skills: list[dict[str, Any]] = []
         seen: set[str] = set()
         for name in required_names or ():
@@ -264,8 +278,17 @@ class SkillLoader:
             if skill["name"] not in seen:
                 skills.append(skill)
                 seen.add(skill["name"])
+        required = {str(name) for name in (required_names or ())}
+        selection = [
+            {
+                "name": str(skill.get("name") or ""),
+                "description": str(skill.get("description") or "")[:300],
+                "source": "capability" if str(skill.get("name") or "") in required else "semantic",
+            }
+            for skill in skills
+        ]
         if not skills:
-            return ""
+            return "", selection
         lines = [
             "\n<技能>",
             "在回复前先浏览以下技能。如果某个技能与当前任务相关或部分相关，"
@@ -288,4 +311,4 @@ class SkillLoader:
             "使用 skill_view(name) 加载技能完整内容。",
             "</技能>",
         ])
-        return "\n".join(lines)
+        return "\n".join(lines), selection

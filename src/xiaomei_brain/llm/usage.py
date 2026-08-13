@@ -18,6 +18,12 @@ class UsageContext:
     category: str = "other"
 
 
+_CURRENT_EXECUTION_TRACE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "xiaomei_execution_trace",
+    default=None,
+)
+
+
 @dataclass(frozen=True)
 class LLMUsageRecord:
     provider: str
@@ -48,6 +54,12 @@ _CURRENT_USAGE_CONTEXT: ContextVar[UsageContext] = ContextVar(
 
 def current_usage_context() -> UsageContext:
     return _CURRENT_USAGE_CONTEXT.get()
+
+
+def current_execution_trace() -> dict[str, Any] | None:
+    """Return selection evidence attached to the current LLM request."""
+    value = _CURRENT_EXECUTION_TRACE.get()
+    return dict(value) if isinstance(value, dict) else None
 
 
 _TAG_PATTERNS = {
@@ -219,3 +231,13 @@ def usage_context(
         yield
     finally:
         _CURRENT_USAGE_CONTEXT.reset(token)
+
+
+@contextmanager
+def execution_trace_context(value: dict[str, Any] | None) -> Iterator[None]:
+    """Attach execution-selection evidence to exactly one model request."""
+    token = _CURRENT_EXECUTION_TRACE.set(dict(value) if isinstance(value, dict) else None)
+    try:
+        yield
+    finally:
+        _CURRENT_EXECUTION_TRACE.reset(token)

@@ -28,6 +28,7 @@ from xiaomei_brain.tools.registry import (
 from xiaomei_brain.agent.render_execution_context import (
     inject_memory_policy,
     prepare_execution_selection,
+    current_execution_selection,
     render_step_selection_context,
 )
 from xiaomei_brain.agent.message_utils import (
@@ -562,9 +563,10 @@ class Agent:
                         _accumulated_context,
                         _selection_progress,
                     )
-                    openai_tools = self._dynamic_loader.select_openai_tools(selection_context, step=step)
+                    openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
                 else:
                     openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
+                    tool_selection = {"step": step, "core": [], "required": [], "semantic": []}
 
                 all_messages = list(messages) + self.messages[_pre_count:]
 
@@ -585,11 +587,13 @@ class Agent:
                 _print("💭 思考中...")
 
                 # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
-                gen = self._call_llm(all_messages, openai_tools)
-                stream_chunks: list[str] = []
-                for chunk in gen:
-                    stream_chunks.append(chunk)
-                    yield chunk
+                from xiaomei_brain.llm.usage import execution_trace_context
+                with execution_trace_context(current_execution_selection(self, step, tool_selection)):
+                    gen = self._call_llm(all_messages, openai_tools)
+                    stream_chunks: list[str] = []
+                    for chunk in gen:
+                        stream_chunks.append(chunk)
+                        yield chunk
                 response = self.llm._last_stream_response
 
                 # 流式输出期间可能已被 Ctrl+C 取消
@@ -1345,9 +1349,10 @@ class Agent:
                     _accumulated_context,
                     _selection_progress,
                 )
-                openai_tools = self._dynamic_loader.select_openai_tools(selection_context, step=step)
+                openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
+                tool_selection = {"step": step, "core": [], "required": [], "semantic": []}
             if openai_tools and excluded_tool_names:
                 openai_tools = [
                     tool_spec for tool_spec in openai_tools
@@ -1362,8 +1367,10 @@ class Agent:
             if not quiet:
                 print("💭 思考中...", flush=True)
 
-            with self._llm_usage_scope(self._internal_usage_category(label)):
-                response = self.llm.chat(messages=all_messages, tools=openai_tools)
+            from xiaomei_brain.llm.usage import execution_trace_context
+            with execution_trace_context(current_execution_selection(self, step, tool_selection)):
+                with self._llm_usage_scope(self._internal_usage_category(label)):
+                    response = self.llm.chat(messages=all_messages, tools=openai_tools)
 
             if response.reasoning and reasoning_collector is not None:
                 reasoning_collector.append(response.reasoning)

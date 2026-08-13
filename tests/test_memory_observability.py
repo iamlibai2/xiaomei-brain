@@ -28,7 +28,25 @@ def test_memory_reference_projection_is_bounded_and_safe() -> None:
         "memory_type": "common",
         "tags": ["产品方向", "desktop"],
         "created_at": 123.5,
+        "memory_layer": "long_term",
+        "memory_scope": "person",
     }]
+
+
+def test_memory_reference_projection_marks_short_term_agent_memory() -> None:
+    references = build_memory_references([{
+        "id": 4,
+        "content": "The Agent learned to avoid over-designing settings.",
+        "formation_source": "turn_batch_review",
+        "kind": "self_insight",
+        "scope_type": "agent",
+        "created_at": 20,
+        "memory_layer": "short_term",
+    }])
+
+    assert references[0]["id"] == "m0:4"
+    assert references[0]["memory_layer"] == "short_term"
+    assert references[0]["memory_scope"] == "agent"
 
 
 def test_person_memory_projection_is_bounded_and_omits_internal_fields() -> None:

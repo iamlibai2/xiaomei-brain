@@ -75,6 +75,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
             action: () => window.dispatchEvent(new CustomEvent("xiaomei:model-context-toggle")),
             disabled: !activeAgent,
           },
+          {
+            label: t("menu.executionAnalysis"),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:execution-analysis-open")),
+            disabled: !activeAgent,
+          },
         ],
       },
       { separator: true, label: "" },

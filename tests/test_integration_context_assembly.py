@@ -29,6 +29,9 @@ def _make_mock_agent(messages=None, conversation_db=None, **kwargs):
     agent.user_display_name = kwargs.get("user_display_name", "Test User")
     agent.identity_mgr = kwargs.get("identity_mgr", None)
     agent.agent_id = kwargs.get("agent_id", "test")
+    agent.active_project_id = kwargs.get("active_project_id", "")
+    agent.project_context = kwargs.get("project_context", None)
+    agent.process_service = kwargs.get("process_service", None)
     return agent
 
 
@@ -383,6 +386,14 @@ def test_build_context_captures_exact_recalled_memory_projection(
     mock_si.memory.dag_summaries = []
 
     def populate_memory_window(self_image, **_kwargs):
+        self_image.memory.short_term_memories = [{
+            "id": 4,
+            "content": "博士近期希望先完善独立 Agent",
+            "formation_source": "turn_batch_review",
+            "kind": "preference_signal",
+            "scope_type": "person",
+            "created_at": 120.0,
+        }]
         self_image.memory.recalled_memories = [{
             "id": 9,
             "content": "李白希望优先完善独立 Agent",
@@ -398,12 +409,23 @@ def test_build_context_captures_exact_recalled_memory_projection(
     build_context(agent, "接下来做什么", self_image=mock_si)
 
     assert agent.current_memory_references == [{
+        "id": "m0:4",
+        "summary": "博士近期希望先完善独立 Agent",
+        "source": "turn_batch_review",
+        "memory_type": "preference_signal",
+        "tags": [],
+        "created_at": 120.0,
+        "memory_layer": "short_term",
+        "memory_scope": "person",
+    }, {
         "id": "9",
         "summary": "李白希望优先完善独立 Agent",
         "source": "immediate",
         "memory_type": "common",
         "tags": ["产品方向"],
         "created_at": 123.0,
+        "memory_layer": "long_term",
+        "memory_scope": "person",
     }]
 
 

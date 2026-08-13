@@ -7,6 +7,7 @@ import { registerEmbodimentCommand } from "../embodiment/command-registry";
 import { WorkspacesPage } from "./workspaces/WorkspacesPage";
 import { useCoreStore } from "../store";
 import { ModelContextDialog } from "./ModelContextDialog";
+import { ExecutionAnalysisPanel } from "./ExecutionAnalysisPanel";
 import { MusicPlayer } from "./music-player/MusicPlayer";
 import { MediaLibraryDialog } from "./music-player/MediaLibraryDialog";
 import { VideoPlayer } from "./media-player/VideoPlayer";
@@ -16,7 +17,8 @@ export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
-  const [modelContextOpen, setModelContextOpen] = useState(false);
+  const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | null>(null);
+  const modelContextOpen = analysisPanel === "model-context";
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const newSession = useCoreStore((state) => state.newSession);
 
@@ -89,24 +91,34 @@ export function MainShell() {
   useEffect(() => {
     const openComparison = () => {
       setSurface("chat");
-      setModelContextOpen(true);
+      setAnalysisPanel("model-context");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
-    const toggleComparison = () => setModelContextOpen((open) => {
-      if (!open) {
+    const toggleComparison = () => setAnalysisPanel((current) => {
+      if (current !== "model-context") {
         setSurface("chat");
         window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
       }
-      return !open;
+      return current === "model-context" ? null : "model-context";
     });
-    const closeComparison = () => setModelContextOpen(false);
+    const closeComparison = () => setAnalysisPanel(null);
+    const openExecution = () => {
+      setSurface("chat");
+      setAnalysisPanel("execution");
+      window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+    };
+    const toggleExecution = () => setAnalysisPanel((current) => current === "execution" ? null : "execution");
     window.addEventListener("xiaomei:model-context-open", openComparison);
     window.addEventListener("xiaomei:model-context-toggle", toggleComparison);
     window.addEventListener("xiaomei:model-context-close", closeComparison);
+    window.addEventListener("xiaomei:execution-analysis-open", openExecution);
+    window.addEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
     return () => {
       window.removeEventListener("xiaomei:model-context-open", openComparison);
       window.removeEventListener("xiaomei:model-context-toggle", toggleComparison);
       window.removeEventListener("xiaomei:model-context-close", closeComparison);
+      window.removeEventListener("xiaomei:execution-analysis-open", openExecution);
+      window.removeEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
     };
   }, []);
 
@@ -147,9 +159,9 @@ export function MainShell() {
   }, [newSession]);
 
   return (
-    <div className={`main-shell${modelContextOpen ? " has-model-context" : ""}`}>
+    <div className={`main-shell${analysisPanel ? " has-analysis-panel" : ""}`}>
       <ConversationList
-        collapsed={leftSidebarCollapsed || modelContextOpen}
+        collapsed={leftSidebarCollapsed || Boolean(analysisPanel)}
         onCollapsedChange={setLeftSidebarCollapsed}
         surface={surface}
         onOpenChat={() => setSurface("chat")}
@@ -164,13 +176,18 @@ export function MainShell() {
         />
       ) : (
         <HomePage
-          leftSidebarCollapsed={leftSidebarCollapsed || modelContextOpen}
+          leftSidebarCollapsed={leftSidebarCollapsed || Boolean(analysisPanel)}
           onLeftSidebarCollapsedChange={setLeftSidebarCollapsed}
         />
       )}
       {modelContextOpen && (
         <div className="model-context-dock">
-          <ModelContextDialog embedded onClose={() => setModelContextOpen(false)} />
+          <ModelContextDialog embedded onClose={() => setAnalysisPanel(null)} />
+        </div>
+      )}
+      {analysisPanel === "execution" && (
+        <div className="model-context-dock">
+          <ExecutionAnalysisPanel onClose={() => setAnalysisPanel(null)} />
         </div>
       )}
       </div>

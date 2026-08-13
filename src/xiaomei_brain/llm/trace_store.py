@@ -266,6 +266,9 @@ class ModelTraceStore:
             "session_id": record.get("session_id", ""),
             "turn_id": record.get("turn_id", ""),
             "category": record.get("category", "other"),
+            "execution_selection": ModelTraceStore._execution_summary(
+                record.get("execution_selection")
+            ),
             "message_count": len(messages) + (1 if top_level_system not in (None, "", []) else 0),
             "tool_count": len(tools),
             "tool_call_count": len(response_tool_calls),
@@ -276,6 +279,30 @@ class ModelTraceStore:
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
             "latency_ms": float(record.get("latency_ms") or 0.0),
             "error": record.get("error", ""),
+        }
+
+    @staticmethod
+    def _execution_summary(value: Any) -> dict[str, Any] | None:
+        """Keep list responses compact while retaining execution provenance."""
+        if not isinstance(value, dict):
+            return None
+        capability = value.get("capability") if isinstance(value.get("capability"), dict) else {}
+        tools = value.get("tools") if isinstance(value.get("tools"), dict) else {}
+        skills = value.get("skills") if isinstance(value.get("skills"), list) else []
+        return {
+            "step": int(value.get("step") or 0),
+            "capability": {
+                "capabilities": capability.get("capabilities", []),
+                "tools": capability.get("tools", []),
+                "skills": capability.get("skills", []),
+            },
+            "skills": skills,
+            "tools": {
+                "step": int(tools.get("step") or value.get("step") or 0),
+                "core": tools.get("core", []),
+                "required": tools.get("required", []),
+                "semantic": tools.get("semantic", []),
+            },
         }
 
     @staticmethod

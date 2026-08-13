@@ -114,15 +114,29 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
 
         # ── 4. 按 type 分拣，三段式输出 ─────────────────
         import time as _time
-        experiences = [m for m in all_memories if m.get("type") == "experience"]
-        knowledges = [m for m in all_memories if m.get("type") == "knowledge"]
-        skills = [m for m in all_memories if m.get("type") == "skill"]
+        # Memory types have expanded beyond the original experience / knowledge /
+        # skill trio.  Never count a recalled memory without returning its content:
+        # an empty-looking successful result encourages the model to retry the same
+        # search with slightly different wording.
+        visible = [m for m in all_memories if str(m.get("content") or "").strip()]
+        experiences = [m for m in visible if m.get("type") == "experience"][:5]
+        knowledges = [m for m in visible if m.get("type") == "knowledge"][:5]
+        skills = [m for m in visible if m.get("type") == "skill"][:5]
+        others = [
+            m for m in visible
+            if m.get("type") not in {"experience", "knowledge", "skill"}
+        ][:5]
+        displayed = experiences + knowledges + skills + others
 
-        lines = [f"「{query}」相关的记忆（共 {len(all_memories)} 条）：\n"]
+        if not displayed:
+            logger.info("[MemorySearch] Recalled memories contained no displayable content")
+            return f"没有找到与「{query}」相关的记忆。"
+
+        lines = [f"「{query}」相关的记忆（共 {len(displayed)} 条）：\n"]
 
         if experiences:
             lines.append("### 相关经验")
-            for m in experiences[:5]:
+            for m in experiences:
                 ts = m.get("created_at", 0)
                 date_str = _time.strftime("%Y-%m-%d", _time.localtime(ts)) if ts else "?"
                 lines.append(f"- {date_str}: {m.get('content', '')[:200]}")
@@ -130,18 +144,25 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
 
         if knowledges:
             lines.append("### 我知道什么")
-            for m in knowledges[:5]:
+            for m in knowledges:
                 lines.append(f"- {m.get('content', '')[:300]}")
             lines.append("")
 
         if skills:
             lines.append("### 我会怎么做")
-            for m in skills[:5]:
+            for m in skills:
                 conf = m.get("confidence")
                 if conf is not None:
                     lines.append(f"- {m.get('content', '')[:200]} (confidence={conf:.2f})")
                 else:
                     lines.append(f"- {m.get('content', '')[:200]}")
+            lines.append("")
+
+        if others:
+            lines.append("### 其他相关记忆")
+            for m in others:
+                mem_type = str(m.get("type") or "未分类")
+                lines.append(f"- [{mem_type}] {str(m.get('content') or '')[:300]}")
             lines.append("")
 
         # 清理内部字段

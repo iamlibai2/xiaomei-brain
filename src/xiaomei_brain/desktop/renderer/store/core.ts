@@ -382,6 +382,8 @@ function memoryReferences(value: unknown): MemoryReference[] {
         ? item.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 5)
         : [],
       createdAt: typeof item.created_at === "number" ? item.created_at : 0,
+      memoryLayer: item.memory_layer === "short_term" ? "short_term" : "long_term",
+      memoryScope: item.memory_scope === "agent" ? "agent" : "person",
     }];
   }).slice(0, 8);
 }
@@ -911,6 +913,8 @@ export interface MemoryReference {
   memoryType: string;
   tags: string[];
   createdAt: number;
+  memoryLayer: "short_term" | "long_term";
+  memoryScope: "agent" | "person";
 }
 
 export interface PersonMemorySnapshot extends MemoryReference {

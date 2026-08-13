@@ -538,6 +538,29 @@ export interface ModelTraceSummary {
   total_tokens: number;
   latency_ms: number;
   error: string;
+  execution_selection?: ExecutionSelection | null;
+}
+
+export interface ExecutionSelection {
+  query?: string;
+  step?: number;
+  capability?: {
+    capabilities?: Array<{ id: string; name: string; status?: string }>;
+    tools?: string[];
+    skills?: string[];
+  };
+  skills?: Array<{
+    name: string;
+    description?: string;
+    source?: "capability" | "semantic" | string;
+  }>;
+  tools?: {
+    step?: number;
+    query?: string;
+    core?: string[];
+    required?: string[];
+    semantic?: string[];
+  };
 }
 
 export interface ModelTraceRecord extends ModelTraceSummary {

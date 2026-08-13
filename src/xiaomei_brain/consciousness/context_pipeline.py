@@ -275,8 +275,15 @@ def build_context(
         # can then explain the recall without running a second, different
         # retrieval after the turn has completed.
         from xiaomei_brain.memory.observability import build_memory_references
+        referenced_memories = [
+            {**memory, "memory_layer": "short_term"}
+            for memory in (getattr(self_image.memory, "short_term_memories", []) or [])
+        ] + [
+            {**memory, "memory_layer": "long_term"}
+            for memory in (getattr(self_image.memory, "recalled_memories", []) or [])
+        ]
         agent.current_memory_references = build_memory_references(
-            getattr(self_image.memory, "recalled_memories", []) or [],
+            referenced_memories,
         )
         user_id = getattr(agent, 'user_id', '')
         self_image.current_user_name = getattr(agent, 'user_display_name', '')

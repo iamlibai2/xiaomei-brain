@@ -176,6 +176,30 @@ def test_execution_renderer_injects_selected_skill():
     assert "document-writing" in prepared[0]["content"]
 
 
+def test_execution_renderer_exposes_selection_snapshot():
+    from xiaomei_brain.agent.render_execution_context import (
+        current_execution_selection,
+        prepare_execution_selection,
+    )
+
+    agent = Agent(llm=object(), tools=ToolRegistry())
+    agent.session_id = "session-1"
+    agent.user_id = "person-1"
+    prepare_execution_selection(agent, [
+        {"role": "system", "content": "consciousness"},
+        {"role": "user", "content": "write a report"},
+    ])
+
+    snapshot = current_execution_selection(agent, 2, {
+        "core": ["read"],
+        "required": ["write_document"],
+        "semantic": ["present_artifact"],
+    })
+
+    assert snapshot["step"] == 2
+    assert snapshot["tools"]["required"] == ["write_document"]
+
+
 def test_focused_workspace_does_not_expand_a_keyword_rule_kit(monkeypatch):
     tool_names = (
         "get_current_workspace",

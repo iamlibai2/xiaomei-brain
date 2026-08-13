@@ -81,25 +81,54 @@ def prepare_execution_selection(
     if dynamic_loader:
         dynamic_loader.begin_run(agent.session_id, reset=True)
 
-    required_skills: list[str] = []
+    capability_selection: dict[str, Any] = {
+        "capabilities": [],
+        "tools": [],
+        "skills": [],
+    }
     capability_registry = getattr(agent, "_capability_registry", None)
-    prepare = getattr(capability_registry, "prepare_execution_selection", None)
+    prepare = getattr(capability_registry, "prepare_execution_selection_details", None)
     if callable(prepare):
-        required_skills = prepare(
+        capability_selection = prepare(
             selection_query,
             scope_id=agent.session_id,
             person_id=agent.user_id,
         )
         if dynamic_loader:
             dynamic_loader.begin_run(agent.session_id)
+    else:
+        legacy_prepare = getattr(capability_registry, "prepare_execution_selection", None)
+        if callable(legacy_prepare):
+            capability_selection["skills"] = legacy_prepare(
+                selection_query,
+                scope_id=agent.session_id,
+                person_id=agent.user_id,
+            )
+            if dynamic_loader:
+                dynamic_loader.begin_run(agent.session_id)
 
     skill_prompt = ""
+    skill_selection: list[dict[str, Any]] = []
     skill_loader = getattr(agent, "_skill_loader", None)
     if skill_loader:
-        skill_prompt = skill_loader.build_skill_index_prompt(
-            selection_query,
-            required_names=required_skills,
-        )
+        detailed_builder = getattr(type(skill_loader), "build_skill_index_prompt_with_selection", None)
+        if callable(detailed_builder):
+            skill_prompt, skill_selection = detailed_builder(
+                skill_loader,
+                selection_query,
+                required_names=capability_selection["skills"],
+            )
+        else:
+            skill_prompt = skill_loader.build_skill_index_prompt(
+                selection_query,
+                required_names=capability_selection["skills"],
+            )
+
+    agent._execution_selection_base = {
+        "query": selection_query,
+        "capability": capability_selection,
+        "skills": skill_selection,
+    }
 
     execution_prompts = [skill_prompt]
     if dynamic_loader:
@@ -118,6 +147,19 @@ def render_step_selection_context(
     """Refresh mutable execution facts when choosing tools for a ReAct step."""
     query = build_step_tool_selection_context(original_intent, progress)
     return _with_runtime_context(agent, query)
+
+
+def current_execution_selection(
+    agent: Any,
+    step: int,
+    tools: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the inspectable selection snapshot for one ReAct model call."""
+    snapshot = dict(getattr(agent, "_execution_selection_base", {}) or {})
+    snapshot["step"] = int(step)
+    if tools:
+        snapshot["tools"] = dict(tools)
+    return snapshot
 
 
 def inject_memory_policy(

@@ -202,6 +202,27 @@ class CapabilityRegistry:
         limit: int = 1,
     ) -> list[str]:
         """Pin Capability and Skill dependencies for one scoped ReAct run."""
+        return self.prepare_execution_selection_details(
+            query,
+            scope_id=scope_id,
+            person_id=person_id,
+            limit=limit,
+        )["skills"]
+
+    def prepare_execution_selection_details(
+        self,
+        query: str,
+        *,
+        scope_id: str,
+        person_id: str = "",
+        limit: int = 1,
+    ) -> dict[str, Any]:
+        """Pin dependencies and return the exact Capability selection facts."""
+        selected_capabilities = [
+            {"id": view.id, "name": view.name, "status": view.status.value}
+            for view in self.resolve(query, limit=limit, person_id=person_id)
+            if view.status in {CapabilityStatus.READY, CapabilityStatus.DEGRADED}
+        ]
         tool_names, skill_names = self.select_execution_components(
             query,
             limit=limit,
@@ -218,7 +239,11 @@ class CapabilityRegistry:
         pin = getattr(self._dynamic_tool_loader, "pin_required_tools", None)
         if callable(pin) and tool_names:
             pin(scope_id, tool_names)
-        return skill_names
+        return {
+            "capabilities": selected_capabilities,
+            "tools": list(tool_names),
+            "skills": list(skill_names),
+        }
 
     def build_context(self, query: str, *, limit: int = 3, person_id: str = "") -> str:
         """Build a compact runtime-truth block for the current conversation."""

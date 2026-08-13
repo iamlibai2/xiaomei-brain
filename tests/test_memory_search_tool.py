@@ -12,6 +12,9 @@ class _Memory:
         self.calls.append({"query": query, "user_id": user_id, "top_k": top_k})
         return []
 
+    def get_relation_chain(self, memory_id: int, depth: int):
+        return []
+
 
 def test_memory_search_uses_current_person_scope():
     memory = _Memory()
@@ -52,3 +55,34 @@ def test_memory_search_falls_back_to_runtime_memory_scope():
 
     assert memory.calls[0]["user_id"] == "person-background"
     assert memory.calls[0]["top_k"] == 3
+
+
+def test_memory_search_displays_extended_memory_types():
+    memory = _Memory()
+    memory.recall = lambda query, *, user_id, top_k: [
+        {"id": 1, "type": "common", "content": "world.docx 是之前使用的 world 文件", "score": 0.9},
+        {"id": 2, "type": "preference_signal", "content": "博士喜欢简洁表达", "score": 0.8},
+    ]
+    agent = SimpleNamespace(longterm_memory=memory, memory_scope_id="person-1", user_id="global")
+
+    result = create_memory_search_tools(agent)[0].execute(query="world 文件")
+
+    assert "共 2 条" in result
+    assert "world.docx 是之前使用的 world 文件" in result
+    assert "博士喜欢简洁表达" in result
+    assert "[common]" in result
+    assert "[preference_signal]" in result
+
+
+def test_memory_search_does_not_report_empty_content_as_results():
+    memory = _Memory()
+    memory.recall = lambda query, *, user_id, top_k: [
+        {"id": 1, "type": "common", "content": "", "score": 0.9},
+        {"id": 2, "type": "future_type", "content": "   ", "score": 0.8},
+    ]
+    agent = SimpleNamespace(longterm_memory=memory, memory_scope_id="person-1", user_id="global")
+
+    result = create_memory_search_tools(agent)[0].execute(query="world 文件")
+
+    assert result == "没有找到与「world 文件」相关的记忆。"
+    assert "共 2 条" not in result

@@ -374,7 +374,12 @@ function MemoryPanel({
               <article key={`${memory.id || "memory"}-${index}`}>
                 <strong>{memory.summary}</strong>
                 <span>
-                  {memory.source ? memorySourceName(memory.source) : t("rightSidebarUi.longTermMemory")}
+                  {memory.memoryScope === "agent"
+                    ? t("rightSidebarUi.agentSelfMemory")
+                    : (memory.memoryLayer === "short_term"
+                      ? t("rightSidebarUi.shortTermMemory")
+                      : t("rightSidebarUi.longTermMemoryLabel"))}
+                  {memory.source ? ` · ${memorySourceName(memory.source)}` : ""}
                   {memory.createdAt > 0
                     ? ` · ${new Date(memory.createdAt * 1000).toLocaleString()}`
                     : ""}
@@ -592,7 +597,12 @@ function ContextPanel({
               <article key={`${memory.id || "memory"}-${index}`}>
                 <strong>{memory.summary}</strong>
                 <span>
-                  {memory.source ? memorySourceName(memory.source) : t("rightSidebarUi.longTermMemory")}
+                  {memory.memoryScope === "agent"
+                    ? t("rightSidebarUi.agentSelfMemory")
+                    : (memory.memoryLayer === "short_term"
+                      ? t("rightSidebarUi.shortTermMemory")
+                      : t("rightSidebarUi.longTermMemoryLabel"))}
+                  {memory.source ? ` · ${memorySourceName(memory.source)}` : ""}
                   {memory.createdAt > 0
                     ? ` · ${new Date(memory.createdAt * 1000).toLocaleString()}`
                     : ""}

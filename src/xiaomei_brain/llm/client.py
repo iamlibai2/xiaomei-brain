@@ -697,7 +697,7 @@ class LLMClient:
         if not callable(callback):
             return ""
         try:
-            from .usage import current_usage_context
+            from .usage import current_execution_trace, current_usage_context
             context = current_usage_context()
             return str(callback("begin", {
                 "provider": self.provider,
@@ -707,6 +707,7 @@ class LLMClient:
                 "session_id": context.session_id,
                 "turn_id": context.turn_id,
                 "category": context.category,
+                "execution_selection": current_execution_trace(),
                 # This is the provider-specific payload after message and tool
                 # conversion, i.e. the exact JSON body sent over HTTP.
                 "request": payload,

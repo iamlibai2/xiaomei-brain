@@ -24,26 +24,43 @@ def build_memory_references(
         content = _clean_text(memory.get("content"), 280)
         if not content:
             continue
-        memory_id = str(memory.get("id") or "").strip()
-        identity = memory_id or content
+        memory_layer = (
+            "short_term" if memory.get("memory_layer") == "short_term" else "long_term"
+        )
+        raw_id = str(memory.get("id") or "").strip()
+        memory_id = f"m0:{raw_id}" if memory_layer == "short_term" else raw_id
+        identity = f"{memory_layer}:{memory_id or _normalized_text(content)}"
         if identity in seen:
             continue
         seen.add(identity)
         references.append({
             "id": memory_id,
             "summary": content,
-            "source": _clean_text(memory.get("source"), 40),
-            "memory_type": _clean_text(memory.get("type"), 40),
+            "source": _clean_text(
+                memory.get("source") or memory.get("formation_source"), 40,
+            ),
+            "memory_type": _clean_text(memory.get("type") or memory.get("kind"), 40),
             "tags": [
                 cleaned
                 for tag in (memory.get("tags") or [])
                 if (cleaned := _clean_text(tag, 40))
             ][:5],
             "created_at": _number(memory.get("created_at")),
+            "memory_layer": memory_layer,
+            "memory_scope": (
+                "agent"
+                if memory.get("memory_scope") == "agent"
+                or memory.get("scope_type") == "agent"
+                else "person"
+            ),
         })
         if len(references) >= max(1, limit):
             break
     return references
+
+
+def _normalized_text(value: Any) -> str:
+    return "".join(str(value or "").strip().lower().split())
 
 
 def list_person_memory_views(

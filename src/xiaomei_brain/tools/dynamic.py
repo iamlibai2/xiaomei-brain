@@ -708,23 +708,44 @@ class DynamicToolLoader:
 
     def select_openai_tools(self, query: str, top_k: int | None = None, step: int = 0) -> list[dict[str, Any]]:
         """和 select_tools 一样，但返回 OpenAI function calling 格式。"""
+        schemas, _selection = self.select_openai_tools_with_selection(query, top_k, step)
+        return schemas
+
+    def select_openai_tools_with_selection(
+        self,
+        query: str,
+        top_k: int | None = None,
+        step: int = 0,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Return schemas together with their stable selection provenance."""
         tools = self.select_tools(query, top_k, step)
-        result = []
-        seen = set()
-        for t in tools:
-            if t.name in seen:
-                logger.warning("DynamicToolLoader: duplicate tool '%s', skipping", t.name)
+        core = [tool.name for tool in tools if tool.name in _CORE_TOOL_NAMES]
+        required = [
+            tool.name for tool in tools
+            if tool.name in self._active_required_tools and tool.name not in _CORE_TOOL_NAMES
+        ]
+        fixed = set(core) | set(required)
+        schemas = []
+        seen: set[str] = set()
+        for item in tools:
+            if item.name in seen:
                 continue
-            seen.add(t.name)
-            result.append({
+            seen.add(item.name)
+            schemas.append({
                 "type": "function",
                 "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
+                    "name": item.name,
+                    "description": item.description,
+                    "parameters": item.parameters,
                 },
             })
-        return result
+        return schemas, {
+            "step": int(step),
+            "query": str(query),
+            "core": core,
+            "required": required,
+            "semantic": [item.name for item in tools if item.name not in fixed],
+        }
 
 
 def create_tool_search_tool(loader: DynamicToolLoader) -> Tool:
