@@ -104,7 +104,9 @@ def prepare_execution_selection(
         and staged.get("person_id") == getattr(agent, "user_id", "")
     )
     if staged_is_current:
-        selection_query = str(staged.get("query") or "")
+        # Preserve SelectionQuery primary/context boundaries for weighted
+        # Capability, Skill and Tool embedding.
+        selection_query = staged.get("query") or ""
     else:
         selection_query = build_tool_selection_context(
             messages,

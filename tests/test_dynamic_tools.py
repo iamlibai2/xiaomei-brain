@@ -114,16 +114,19 @@ def test_tool_selection_context_is_bounded():
     assert "Recent user context" not in context
 
 
-def test_step_selection_context_excludes_tool_progress():
-    original = "Current user request:\n分析销售数据并生成图表"
+def test_step_selection_context_promotes_human_steering():
+    from xiaomei_brain.base.selection_query import SelectionQuery
+
+    original = SelectionQuery("分析销售数据", "生成图表")
     context = build_step_tool_selection_context(
         original,
-        ["read_document: " + "old" * 500, "analyze_data: latest result"],
+        ["改成 PowerPoint 演示文稿"],
     )
 
-    assert context == original
-    assert "read_document" not in context
-    assert "analyze_data" not in context
+    assert isinstance(context, SelectionQuery)
+    assert context.primary == "改成 PowerPoint 演示文稿"
+    assert "分析销售数据" in context.context
+    assert "生成图表" in context.context
 
 
 def test_agent_refreshes_runtime_tool_context_after_first_step():

@@ -112,7 +112,8 @@ class SkillStorage(SQLiteStore):
     # ── Embedding ────────────────────────────────────────────────
 
     def _embed(self, text: str, *, source: str = "skill.search") -> list[float]:
-        return self._shared.embed(text, source=source)
+        from xiaomei_brain.base.selection_query import embed_selection_query
+        return embed_selection_query(self._shared, text, source=source)
 
     def _embed_batch(self, texts: list[str], *, source: str = "skill.index") -> list[list[float]]:
         return self._shared.embed_batch(texts, source=source)

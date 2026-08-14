@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.base.selection_query import SelectionQuery, embed_selection_query
+
 from .base import Tool, tool
 from .registry import ToolRegistry
 
@@ -119,7 +121,7 @@ def build_tool_selection_context(
     *,
     max_user_messages: int = TOOL_CONTEXT_USER_MESSAGES,
     max_chars: int = TOOL_CONTEXT_MAX_CHARS,
-) -> str:
+) -> SelectionQuery:
     """Build a bounded, user-led query for semantic tool retrieval.
 
     The current request remains primary. Only recent user messages are used as
@@ -155,32 +157,35 @@ def build_tool_selection_context(
     protected = "\n\n".join(protected_parts)
 
     if len(protected) >= max_chars:
-        return protected[:max_chars]
+        return SelectionQuery(protected[:max_chars])
     if not recent:
-        return protected
+        return SelectionQuery(protected)
 
     recent_text = "\n".join(text for text in reversed(recent))
     separator = "\n\n"
     remaining = max_chars - len(protected) - len(separator)
     if remaining <= 0:
-        return protected
+        return SelectionQuery(protected)
     # Preserve the beginnings of the most recent messages: they usually hold
     # the task verb and object omitted by short follow-ups such as "use this".
-    return f"{protected}{separator}{recent_text[:remaining]}".strip()
+    return SelectionQuery(protected, recent_text[:remaining])
 
 
 def build_step_tool_selection_context(
-    original_intent: str,
+    original_intent: str | SelectionQuery,
     progress: list[str],
-) -> str:
+) -> str | SelectionQuery:
     """Keep automatic retrieval anchored to the person's original intent.
 
-    Tool results belong to the ReAct message history. Serializing them back
-    into an embedding query adds paths, JSON keys and provider responses that
-    have no relation to the missing capability. ``progress`` remains in the
-    signature for existing callers, but is intentionally ignored.
+    Tool results belong to the ReAct message history and are never passed here.
+    A human steering message is a new primary intent, while the original turn
+    becomes its lower-weight context.
     """
-    del progress
+    if progress:
+        previous = str(original_intent or "").strip()
+        return SelectionQuery(str(progress[-1]).strip(), previous)
+    if isinstance(original_intent, SelectionQuery):
+        return original_intent
     return str(original_intent or "").strip()
 
 
@@ -648,7 +653,14 @@ class DynamicToolLoader:
         if table is not None:
             try:
                 if table.count_rows() > 0:
-                    query_vec = self._get_embedder().embed(query_text, source="tool.prefetch")
+                    embedding_query: str | SelectionQuery = (
+                        query if isinstance(query, SelectionQuery) else query_text
+                    )
+                    query_vec = embed_selection_query(
+                        self._get_embedder(),
+                        embedding_query,
+                        source="tool.prefetch",
+                    )
                     rows = table.search(query_vec).limit(
                         min(
                             len(all_tools) + len(excluded_names),

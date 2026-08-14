@@ -317,6 +317,9 @@ class Agent:
                 rendered.append(text)
         if not rendered:
             return query
+        from xiaomei_brain.base.selection_query import SelectionQuery
+        if isinstance(query, SelectionQuery):
+            return query.with_context("\n".join(rendered))
         return (
             f"{query}\n\nCurrent runtime context:\n"
             + "\n".join(rendered)
@@ -562,7 +565,7 @@ class Agent:
                     steer_context = "\n".join(
                         message.content for message in steer_messages
                     )
-                    _selection_progress.append(f"User steering: {steer_context}")
+                    _selection_progress.append(steer_context)
                     if self.on_steer_consumed is not None:
                         try:
                             self.on_steer_consumed(steer_messages)
@@ -828,9 +831,6 @@ class Agent:
                             tool_message["turn_id"] = self.turn_id
                         self.messages.append(tool_message)
 
-                        # 累积上下文供下步动态工具召回
-                        _selection_progress.append(f"{tc.name}: {str(result)[:500]}")
-
                         if tool_control.get("type") == "handoff":
                             handoff_message = str(tool_control.get("message", "")).strip()
                             break
@@ -925,9 +925,6 @@ class Agent:
                                     guarded_user["turn_id"] = self.turn_id
                                 self.messages.append(guarded_assistant)
                                 self.messages.append(guarded_user)
-                                _selection_progress.append(
-                                    "Completion guard: " + completion_guard.reason
-                                )
                                 logger.warning(
                                     "[Agent] Completion guard %s continued ReAct (%d/%d): %s",
                                     completion_guard.key,
@@ -1529,9 +1526,6 @@ class Agent:
                         "tool_call_id": tc.id,
                         "content": str(result),
                     })
-
-                    # 累积上下文供下步动态工具召回
-                    _selection_progress.append(f"{tc.name}: {str(result)[:500]}")
 
                     # Co-write to experience stream (internal tool exec)
                     if exp_stream:

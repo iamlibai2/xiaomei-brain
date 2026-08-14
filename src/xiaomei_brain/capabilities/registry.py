@@ -185,8 +185,10 @@ class CapabilityRegistry:
                 self.start_discovery_index_build()
                 return []
             entries = self._ensure_discovery_entries()
+            from xiaomei_brain.base.selection_query import embed_selection_query
             from xiaomei_brain.base.shared_embedder import SharedEmbedder
-            query_vector = SharedEmbedder.get_or_create().embed(
+            query_vector = embed_selection_query(
+                SharedEmbedder.get_or_create(),
                 normalized,
                 source="capability.discover",
             )
@@ -485,7 +487,8 @@ class CapabilityRegistry:
 
     @staticmethod
     def _normalized_text(value: str) -> str:
-        return re.sub(r"\s+", " ", str(value or "").lower()).strip()
+        from xiaomei_brain.base.selection_query import normalize_selection_query
+        return normalize_selection_query(value)
 
     def _build_view(
         self,
