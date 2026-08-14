@@ -8,6 +8,7 @@ import { WorkspacesPage } from "./workspaces/WorkspacesPage";
 import { useCoreStore } from "../store";
 import { ModelContextDialog } from "./ModelContextDialog";
 import { ExecutionAnalysisPanel } from "./ExecutionAnalysisPanel";
+import { PromptAnalysisPanel } from "./PromptAnalysisPanel";
 import { MusicPlayer } from "./music-player/MusicPlayer";
 import { MediaLibraryDialog } from "./music-player/MediaLibraryDialog";
 import { VideoPlayer } from "./media-player/VideoPlayer";
@@ -17,7 +18,7 @@ export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
-  const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | null>(null);
+  const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | "prompt" | null>(null);
   const modelContextOpen = analysisPanel === "model-context";
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const newSession = useCoreStore((state) => state.newSession);
@@ -108,17 +109,24 @@ export function MainShell() {
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
     const toggleExecution = () => setAnalysisPanel((current) => current === "execution" ? null : "execution");
+    const openPromptAnalysis = () => {
+      setSurface("chat");
+      setAnalysisPanel("prompt");
+      window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+    };
     window.addEventListener("xiaomei:model-context-open", openComparison);
     window.addEventListener("xiaomei:model-context-toggle", toggleComparison);
     window.addEventListener("xiaomei:model-context-close", closeComparison);
     window.addEventListener("xiaomei:execution-analysis-open", openExecution);
     window.addEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
+    window.addEventListener("xiaomei:prompt-analysis-open", openPromptAnalysis);
     return () => {
       window.removeEventListener("xiaomei:model-context-open", openComparison);
       window.removeEventListener("xiaomei:model-context-toggle", toggleComparison);
       window.removeEventListener("xiaomei:model-context-close", closeComparison);
       window.removeEventListener("xiaomei:execution-analysis-open", openExecution);
       window.removeEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
+      window.removeEventListener("xiaomei:prompt-analysis-open", openPromptAnalysis);
     };
   }, []);
 
@@ -197,6 +205,11 @@ export function MainShell() {
       {analysisPanel === "execution" && (
         <div className="model-context-dock">
           <ExecutionAnalysisPanel onClose={() => setAnalysisPanel(null)} />
+        </div>
+      )}
+      {analysisPanel === "prompt" && (
+        <div className="model-context-dock">
+          <PromptAnalysisPanel onClose={() => setAnalysisPanel(null)} />
         </div>
       )}
       </div>

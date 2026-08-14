@@ -13,6 +13,7 @@ import "./styles/menubar.css";
 import "./styles/usage.css";
 import "./styles/model-trace.css";
 import "./styles/execution-analysis.css";
+import "./styles/prompt-analysis.css";
 import "./styles/sidebar.css";
 import "./styles/home.css";
 import "./styles/terminal.css";

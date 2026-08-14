@@ -1364,6 +1364,33 @@ export function registerIpcHandlers(
     }
   });
 
+  ipcMain.handle("gateway:downloadArtifact", async (_event, args: {
+    agentId: string; sessionId: string; artifactId: string;
+  }) => {
+    const result = await fetchArtifact(args.agentId, args.sessionId, args.artifactId);
+    if (result.error) return { ok: false, error: result.error.message };
+    try {
+      const artifact = result.artifact;
+      const safeName = path.basename(artifact.name)
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || artifact.id;
+      const options = {
+        title: "保存文件",
+        defaultPath: path.join(app.getPath("downloads"), safeName),
+      };
+      const win = getWindow();
+      const selected = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+      if (selected.canceled || !selected.filePath) {
+        return { ok: false, canceled: true };
+      }
+      await fs.writeFile(selected.filePath, Buffer.from(artifact.dataBase64, "base64"));
+      return { ok: true, filePath: selected.filePath };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  });
+
   ipcMain.handle("gateway:respondEmbodimentCommand", async (_event, args: {
     agentId: string;
     commandId: string;

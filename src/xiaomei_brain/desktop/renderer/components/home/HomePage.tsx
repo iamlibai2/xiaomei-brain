@@ -1645,8 +1645,10 @@ function ArtifactCard({
   const [visualizationData, setVisualizationData] = useState("");
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const previewSupported = supportsArtifactPreview(artifact);
+  const isCapabilityPackage = artifact.name.toLowerCase().endsWith(".xmcap");
   const setDraft = useCoreStore((state) => state.setDraft);
 
   useEffect(() => {
@@ -1719,6 +1721,23 @@ function ArtifactCard({
       setError(String(reason));
     } finally {
       setPlaying(false);
+    }
+  };
+
+  const download = async () => {
+    if (!agentId || !sessionId || downloading) return;
+    setDownloading(true);
+    try {
+      const result = await window.gateway.downloadArtifact({
+        agentId, sessionId, artifactId: artifact.id,
+      });
+      if (!result.ok && !result.canceled) {
+        setError(result.error || t("home.downloadFailed"));
+      } else if (result.ok) {
+        setError("");
+      }
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -1816,11 +1835,15 @@ function ArtifactCard({
         <button
           type="button"
           className={`artifact-card artifact-${artifact.kind}`}
-          onClick={() => ["audio", "video"].includes(artifact.kind)
+          onClick={() => isCapabilityPackage
+            ? void download()
+            : ["audio", "video"].includes(artifact.kind)
             ? void playMedia()
             : previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
-          disabled={opening || playing}
-          title={error || `${["audio", "video"].includes(artifact.kind)
+          disabled={opening || playing || downloading}
+          title={error || `${isCapabilityPackage
+            ? t("home.download")
+            : ["audio", "video"].includes(artifact.kind)
             ? t("mediaPlayer.play")
             : previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
         >
@@ -1837,27 +1860,31 @@ function ArtifactCard({
             <span className="artifact-meta">
               {size} · {playing
                 ? t("mediaPlayer.loading")
+                : downloading ? t("home.downloading")
                 : opening ? t("home.opening")
+                  : isCapabilityPackage ? t("home.download")
                   : ["audio", "video"].includes(artifact.kind) ? t("mediaPlayer.play")
                     : previewSupported ? t("home.preview") : t("home.open")}
             </span>
             {error && <span className="artifact-error">{error}</span>}
           </span>
           <Icon
-            name={["audio", "video"].includes(artifact.kind) ? "play" : previewSupported ? "eye" : "external-link"}
+            name={isCapabilityPackage ? "download" : ["audio", "video"].includes(artifact.kind) ? "play" : previewSupported ? "eye" : "external-link"}
             size={16}
             className="artifact-open-icon"
           />
         </button>
-        <button
-          type="button"
-          className="artifact-present-button"
-          onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
-          title={t("visualize.fullscreen")}
-          aria-label={t("visualize.fullscreen")}
-        >
-          <Icon name="maximize" size={15} />
-        </button>
+        {!isCapabilityPackage && (
+          <button
+            type="button"
+            className="artifact-present-button"
+            onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
+            title={t("visualize.fullscreen")}
+            aria-label={t("visualize.fullscreen")}
+          >
+            <Icon name="maximize" size={15} />
+          </button>
+        )}
       </div>
       {artifact.kind === "video" && (
         <VideoPlayer variant="inline" artifactId={artifact.id} />

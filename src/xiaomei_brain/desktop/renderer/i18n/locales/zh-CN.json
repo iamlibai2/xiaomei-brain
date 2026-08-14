@@ -273,6 +273,9 @@
       "loadImage": "正在加载图片…",
       "artifactLabel": "Agent 产物",
       "opening": "正在打开",
+      "downloading": "正在保存",
+      "download": "下载",
+      "downloadFailed": "文件保存失败",
       "preview": "预览",
       "open": "打开",
       "openOriginal": "打开原文件"
@@ -370,6 +373,7 @@
       "tokenUsage": "模型用量",
       "modelContext": "模型上下文",
       "executionAnalysis": "执行分析",
+      "promptAnalysis": "提示词分析",
       "window": "窗口(W)",
       "reload": "重新加载",
       "close": "关闭窗口",
@@ -557,6 +561,45 @@
       "source": {
         "capability": "能力依赖",
         "semantic": "语义召回"
+      }
+    },
+    "promptAnalysis": {
+      "title": "提示词分析",
+      "subtitle": "检查每次 LLM 调用实际收到的 System 提示词，以及各区块为何出现",
+      "currentAgentSession": "当前 Agent：{{name}} · Session：{{session}}",
+      "currentSessionOnly": "仅当前会话",
+      "callCount": "{{count}} 次 LLM 调用",
+      "calls": "LLM 调用",
+      "sections": "提示词区块",
+      "section": "当前区块",
+      "empty": "还没有可分析的模型调用",
+      "selectHint": "选择一个提示词区块查看详情",
+      "loadFailed": "无法读取提示词分析",
+      "internalCall": "内部调用",
+      "estimatedTokens": "System Token（估算）",
+      "tokens": "本次 Token",
+      "percentage": "本次占比",
+      "previousTokens": "上次 Token",
+      "delta": "与上次相比",
+      "source": "源代码来源",
+      "reason": "本轮为什么出现",
+      "currentText": "本次真实文本",
+      "expandComparison": "放大并与上次文本对比",
+      "restoreLayout": "恢复三栏布局",
+      "previousText": "上次真实文本",
+      "notPresent": "本次调用没有这个区块",
+      "noPrevious": "没有可比较的上次文本",
+      "untagged": "未标记内容",
+      "injection": {
+        "always": "始终注入",
+        "conditional": "按条件注入",
+        "mixed": "混合来源"
+      },
+      "change": {
+        "added": "本次新增",
+        "removed": "本次消失",
+        "changed": "内容变化",
+        "unchanged": "没有变化"
       }
     },
     "agentDialog": {

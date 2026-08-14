@@ -1,0 +1,85 @@
+id: automatic_quotation
+name: 自动报价
+summary: 从历史报价沉淀企业报价事实，为新需求形成有证据、可计算、可追溯的报价
+category: productivity
+version: "0.1.0"
+source: xiaomei.automatic-quotation
+
+examples:
+  - 导入这些历史报价并建立自动报价工作空间
+  - 给华东机械报价 20 台 QY-80 离心泵，含税含运费
+  - 根据这个客户过去的价格，给出本次报价建议及依据
+  - 检查这份报价的税额、折扣和总价是否正确
+
+requirements:
+  tools:
+    - target: create_workspace
+      label: 建立持续经营的报价工作空间
+    - target: define_collection
+      label: 定义报价业务对象
+    - target: import_tabular_data
+      label: 导入表格报价数据
+    - target: record_observation
+      label: 保存来源事实
+    - target: upsert_business_record
+      label: 写入可追溯业务记录
+    - target: query_business_records
+      label: 查询历史价格证据
+    - target: read_workspace_asset
+      label: 读取历史报价资产
+    - target: write_document
+      label: 生成正式报价文件
+    - target: present_artifacts
+      label: 交付报价产物
+
+components:
+  - id: skill_historical_quotation_onboarding
+    kind: skill
+    target: historical-quotation-onboarding
+    label: 历史报价导入和业务结构发现方法
+    required: true
+  - id: skill_automatic_quotation
+    kind: skill
+    target: automatic-quotation
+    label: 历史报价整理与新报价方法
+    required: true
+  - id: plugin_automatic_quotation
+    kind: plugin
+    target: automatic_quotation
+    label: 报价规范化与精确计算工具
+    required: true
+  - id: tool_normalize_quotation_lines
+    kind: tool
+    target: normalize_quotation_lines
+    label: 规范化报价明细
+    required: true
+  - id: tool_calculate_quotation
+    kind: tool
+    target: calculate_quotation
+    label: 精确计算报价
+    required: true
+  - id: tool_summarize_price_evidence
+    kind: tool
+    target: summarize_price_evidence
+    label: 汇总历史价格证据
+    required: true
+
+outcomes:
+  - id: historical_quote_world
+    name: 可追溯的历史报价数据
+    description: 原始报价保留为资产，结构化记录可以回到文件、页码、工作表或单元格
+    components: [skill_historical_quotation_onboarding, plugin_automatic_quotation, tool_normalize_quotation_lines]
+  - id: evidence_based_quote
+    name: 有依据的新报价
+    description: 给出参考记录、价格区间、关键假设和需要确认的事项
+    components: [skill_automatic_quotation, tool_summarize_price_evidence]
+  - id: verified_quote_document
+    name: 可复核的正式报价
+    description: 金额由确定性工具计算，正式文件包含有效期、条款、假设与来源说明
+    components: [skill_automatic_quotation, tool_calculate_quotation]
+
+boundaries:
+  - 历史价格是证据，不自动等同于当前有效价格或企业规则
+  - 统计规律必须经人物确认后才能成为可执行报价规则
+  - 能力包不包含企业真实报价、客户数据、密码或账户凭据
+  - 缺少关键价格、税率、运费或交付条件时必须澄清，不能猜测

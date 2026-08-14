@@ -1,0 +1,6 @@
+name: capability_development
+version: "1.0.0"
+description: "让 Agent 在自己的 Workspace 中构建、校验并试用能力包"
+kind: bundle
+entry: adapter:register
+

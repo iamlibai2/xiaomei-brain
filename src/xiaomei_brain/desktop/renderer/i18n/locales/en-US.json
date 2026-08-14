@@ -273,6 +273,9 @@
       "loadImage": "Loading image…",
       "artifactLabel": "Agent artifact",
       "opening": "Opening",
+      "downloading": "Saving",
+      "download": "Download",
+      "downloadFailed": "Unable to save file",
       "preview": "Preview",
       "open": "Open",
       "openOriginal": "Open original file"
@@ -370,6 +373,7 @@
       "tokenUsage": "Model Usage",
       "modelContext": "Model Context",
       "executionAnalysis": "Execution Analysis",
+      "promptAnalysis": "Prompt Analysis",
       "window": "Window(W)",
       "reload": "Reload",
       "close": "Close Window",
@@ -557,6 +561,45 @@
       "source": {
         "capability": "Capability dependency",
         "semantic": "Semantic retrieval"
+      }
+    },
+    "promptAnalysis": {
+      "title": "Prompt analysis",
+      "subtitle": "Inspect the actual System prompt received by each LLM call and why every section appeared",
+      "currentAgentSession": "Current Agent: {{name}} · Session: {{session}}",
+      "currentSessionOnly": "Current conversation only",
+      "callCount": "{{count}} LLM calls",
+      "calls": "LLM calls",
+      "sections": "Prompt sections",
+      "section": "Selected section",
+      "empty": "No model calls available for analysis",
+      "selectHint": "Select a prompt section to inspect it",
+      "loadFailed": "Unable to load prompt analysis",
+      "internalCall": "Internal call",
+      "estimatedTokens": "System tokens (estimated)",
+      "tokens": "Current tokens",
+      "percentage": "Current share",
+      "previousTokens": "Previous tokens",
+      "delta": "Change",
+      "source": "Source code",
+      "reason": "Why it appeared",
+      "currentText": "Current actual text",
+      "expandComparison": "Expand and compare with previous text",
+      "restoreLayout": "Restore three-column layout",
+      "previousText": "Previous actual text",
+      "notPresent": "This section is absent from the current call",
+      "noPrevious": "No previous text is available",
+      "untagged": "Untagged content",
+      "injection": {
+        "always": "Always injected",
+        "conditional": "Conditional",
+        "mixed": "Mixed sources"
+      },
+      "change": {
+        "added": "Added",
+        "removed": "Removed",
+        "changed": "Changed",
+        "unchanged": "Unchanged"
       }
     },
     "agentDialog": {

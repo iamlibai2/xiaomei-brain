@@ -19,6 +19,45 @@ from xiaomei_brain.agent.render_execution_context import render_execution_contex
 
 logger = logging.getLogger(__name__)
 
+
+def _wait_for_dag_compaction_if_needed(agent: Any, max_tokens: int) -> None:
+    """Make an oversized previous Turn durable before building the next one.
+
+    The normal three-Turn scheduler still performs background compaction.  This
+    is only the pressure-path guard: if persisted unsummarized messages have
+    already reached the DAG threshold, reuse the same per-session compaction
+    lock and wait for the summary to be committed.  That closes the window in
+    which token trimming could retain only the new user message.
+    """
+
+    session_id = str(getattr(agent, "session_id", "") or "").strip()
+    status_getter = getattr(agent, "get_context_compaction_status", None)
+    compact = getattr(agent, "_auto_compact", None)
+    if not session_id or not callable(status_getter) or not callable(compact):
+        return
+
+    status = status_getter(session_id)
+    if not isinstance(status, dict) or not status.get("reached"):
+        return
+
+    logger.info(
+        "[ContextPipeline] 等待 DAG 上下文整理: session=%s messages=%s tokens=%s",
+        session_id,
+        status.get("message_count", 0),
+        status.get("message_tokens", 0),
+    )
+    compact(
+        session_id,
+        max_tokens=max_tokens,
+        messages=None,
+        active_turn_id=str(getattr(agent, "turn_id", "") or ""),
+        memory_scope_id=str(
+            getattr(agent, "memory_scope_id", "global") or "global"
+        ),
+        wait_for_existing=True,
+        raise_on_error=True,
+    )
+
 # ── 模式判定 ──────────────────────────────────────
 
 def determine_mode(
@@ -207,6 +246,12 @@ def build_context(
     logger.info("[ContextPipeline] ENTRY assemble=%s intent_ctx=%d", assemble, len(intent_context) if intent_context else 0)
     if not assemble:
         return list(agent.messages)
+
+    # A very large completed Turn can exceed the live prompt budget by itself.
+    # Ensure its existing DAG representation is ready before memory rendering
+    # and token trimming; otherwise a short follow-up such as "不错" would be
+    # sent with no preceding conversation at all.
+    _wait_for_dag_compaction_if_needed(agent, max_tokens)
 
     # 3. 决定模式（consciousness-aware）
     cs = consciousness_state or {}

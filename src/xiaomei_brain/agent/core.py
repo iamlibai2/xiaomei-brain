@@ -328,6 +328,8 @@ class Agent:
         *,
         active_turn_id: str | None = None,
         memory_scope_id: str | None = None,
+        wait_for_existing: bool = False,
+        raise_on_error: bool = False,
     ) -> dict[str, int] | None:
         """Delegate live-context policy to the turn-aware compactor.
 
@@ -340,7 +342,11 @@ class Agent:
                 lock = threading.Lock()
                 self._compact_locks[session_id] = lock
 
-        if not lock.acquire(blocking=False):
+        # Periodic background compaction remains non-blocking.  Context
+        # assembly may opt into waiting because sending a new Turn before an
+        # oversized previous Turn has a durable DAG summary would make the
+        # conversation appear to forget its immediately preceding history.
+        if not lock.acquire(blocking=wait_for_existing):
             return
 
         try:
@@ -408,6 +414,8 @@ class Agent:
         except Exception as e:
             import traceback
             logger.warning("[DAG] Auto compact failed: %s\n%s", e, traceback.format_exc())
+            if raise_on_error:
+                raise
         finally:
             lock.release()
 
@@ -1261,6 +1269,7 @@ class Agent:
                     writable_roots=self.tool_writable_roots,
                     read_only_roots=self.tool_read_only_roots,
                     execution_environment=self.tool_execution_environment,
+                    tool_registry=self.tools,
                     project_context=self.project_context,
                     project_service=getattr(self, "project_service", None),
                     workspace_service=getattr(self, "workspace_service", None),

@@ -1,0 +1,40 @@
+schema_version: 1
+package:
+  id: xiaomei.automatic-quotation
+  name: 自动报价
+  version: 0.1.0
+  description: 从历史报价中提取可追溯证据，规范化报价明细，完成精确计算并交付正式报价
+  publisher: xiaomei-brain
+  license: Apache-2.0
+capabilities:
+  - id: automatic_quotation
+    name: 自动报价
+    summary: 基于企业历史报价和已确认规则，为新需求形成有依据、可复核的正式报价
+permissions:
+  filesystem:
+    - 读取当前 Workspace 中由 Agent 授权的历史报价资产
+    - 在当前 Workspace 中保存结构化报价事实和生成的报价文件
+  network: []
+  process: []
+  secrets: []
+requirements:
+  xiaomei_brain: ">=0.1.0"
+  python: ">=3.11"
+  python_packages: []
+  node_packages: []
+  executables: []
+contents:
+  capabilities:
+    - capabilities/automatic_quotation.yaml
+  plugins:
+    - plugins/automatic_quotation/plugin.yaml
+    - plugins/automatic_quotation/adapter.py
+    - plugins/automatic_quotation/tool.py
+  processes:
+    - processes/quotation-delivery.yaml
+  skills:
+    - skills/historical-quotation-onboarding/SKILL.md
+    - skills/automatic-quotation/SKILL.md
+  resources:
+    - resources/field-aliases.yaml
+    - resources/quotation-template.md

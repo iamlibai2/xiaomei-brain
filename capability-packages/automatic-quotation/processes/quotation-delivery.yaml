@@ -1,0 +1,30 @@
+schema_version: 1
+id: quotation-delivery
+name: 正式报价交付标准
+description: 只约束正式报价最终必须留下可复核依据、确定性计算结果和报价文件，不限制 Agent 的思考及工作顺序。
+capability_ids: [automatic_quotation]
+project_types: [quotation.production]
+tags: [quotation, business, delivery]
+ordered: false
+stages:
+  - id: evidence
+    title: 报价依据
+    requirements:
+      - type: evidence
+        key: price_evidence_reviewed
+        equals: true
+        label: 已核对历史价格或已确认本次价格来源
+  - id: calculation
+    title: 金额核算
+    requirements:
+      - type: evidence
+        key: deterministic_calculation
+        equals: true
+        label: 已使用确定性工具计算税费、折扣、运费和总价
+  - id: delivery
+    title: 正式交付
+    requirements:
+      - type: asset
+        kind: document
+        role: deliverable
+        label: 正式报价文件

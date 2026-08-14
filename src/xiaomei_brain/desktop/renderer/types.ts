@@ -583,6 +583,32 @@ export interface ExecutionSelection {
 export interface ModelTraceRecord extends ModelTraceSummary {
   request: Record<string, unknown>;
   response?: Record<string, unknown> | null;
+  prompt_analysis?: PromptAnalysis;
+}
+
+export interface PromptAnalysisSection {
+  key: string;
+  text: string;
+  previous_text: string;
+  tokens: number;
+  previous_tokens: number;
+  delta_tokens: number;
+  percentage: number;
+  source: string;
+  symbol: string;
+  injection: "always" | "conditional" | "mixed";
+  reason: string;
+  present: boolean;
+  change: "added" | "removed" | "changed" | "unchanged";
+}
+
+export interface PromptAnalysis {
+  system_tokens: number;
+  previous_system_tokens: number;
+  delta_tokens: number;
+  previous_trace_id: string;
+  estimated: boolean;
+  sections: PromptAnalysisSection[];
 }
 
 export interface GatewayBridge {
@@ -632,6 +658,7 @@ export interface GatewayBridge {
   listArtifacts(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   listMemories(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   openArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; error?: string }>;
+  downloadArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<{ ok: boolean; canceled?: boolean; filePath?: string; error?: string }>;
   respondEmbodimentCommand(args: {
     agentId: string;
     commandId: string;

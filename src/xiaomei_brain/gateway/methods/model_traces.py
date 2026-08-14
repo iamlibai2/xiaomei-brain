@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from xiaomei_brain.llm.prompt_analysis import analyze_prompt_trace
+
 from ..protocol import ErrorCode, build_error, build_response
 
 
@@ -41,6 +43,10 @@ class ModelTraceMethods:
         record = store.get(trace_id)
         if record is None:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, "Model trace not found")
+        record["prompt_analysis"] = analyze_prompt_trace(
+            record,
+            store.get_previous(record),
+        )
         return build_response(req_id, result={"trace": record})
 
     def handle_clear(self, _conn_id: str, req_id: str, _params: dict) -> dict:

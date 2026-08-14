@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from xiaomei_brain.consciousness.context_pipeline import determine_mode, build_context
+from xiaomei_brain.consciousness.context_pipeline import (
+    _wait_for_dag_compaction_if_needed,
+    build_context,
+    determine_mode,
+)
 from xiaomei_brain.consciousness.memory_window import refresh_memory_window
 
 
@@ -134,6 +138,44 @@ def test_build_context_records_user_message():
     assert len(agent.messages) == 1
     assert agent.messages[0]["role"] == "user"
     assert "你好" in agent.messages[0]["content"]
+
+
+def test_context_pressure_waits_for_session_dag_before_rendering():
+    agent = MagicMock()
+    agent.session_id = "ws-large"
+    agent.turn_id = "turn-follow-up"
+    agent.memory_scope_id = "person-1"
+    agent.get_context_compaction_status.return_value = {
+        "reached": True,
+        "message_count": 95,
+        "message_tokens": 500000,
+    }
+
+    _wait_for_dag_compaction_if_needed(agent, 50000)
+
+    agent._auto_compact.assert_called_once_with(
+        "ws-large",
+        max_tokens=50000,
+        messages=None,
+        active_turn_id="turn-follow-up",
+        memory_scope_id="person-1",
+        wait_for_existing=True,
+        raise_on_error=True,
+    )
+
+
+def test_context_without_dag_pressure_does_not_wait():
+    agent = MagicMock()
+    agent.session_id = "ws-normal"
+    agent.get_context_compaction_status.return_value = {
+        "reached": False,
+        "message_count": 4,
+        "message_tokens": 300,
+    }
+
+    _wait_for_dag_compaction_if_needed(agent, 50000)
+
+    agent._auto_compact.assert_not_called()
 
 
 @patch("xiaomei_brain.consciousness.context_pipeline.inject_consciousness")

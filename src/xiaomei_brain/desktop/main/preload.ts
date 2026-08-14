@@ -35,6 +35,7 @@ const CHANNEL_MAP = {
     listArtifacts:   { invoke: "gateway:listArtifacts" },
     listMemories:    { invoke: "gateway:listMemories" },
     openArtifact:    { invoke: "gateway:openArtifact" },
+    downloadArtifact: { invoke: "gateway:downloadArtifact" },
     respondEmbodimentCommand: { invoke: "gateway:respondEmbodimentCommand" },
     abortMessage:    { invoke: "gateway:abortMessage" },
     continueMessage: { invoke: "gateway:continueMessage" },

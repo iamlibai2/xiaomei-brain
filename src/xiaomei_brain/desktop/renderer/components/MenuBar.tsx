@@ -80,6 +80,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
             action: () => window.dispatchEvent(new CustomEvent("xiaomei:execution-analysis-open")),
             disabled: !activeAgent,
           },
+          {
+            label: t("menu.promptAnalysis"),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:prompt-analysis-open")),
+            disabled: !activeAgent,
+          },
         ],
       },
       { separator: true, label: "" },

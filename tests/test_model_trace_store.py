@@ -109,12 +109,16 @@ def test_trace_store_counts_provider_top_level_system_message(tmp_path) -> None:
 
 def test_gateway_model_trace_methods(tmp_path) -> None:
     store = ModelTraceStore(tmp_path)
-    trace_id = store.begin({"model": "m", "request": {"messages": [], "tools": []}})
+    trace_id = store.begin({
+        "model": "m",
+        "request": {"messages": [{"role": "system", "content": "<身份>小美</身份>"}], "tools": []},
+    })
     methods = ModelTraceMethods(SimpleNamespace(model_trace_store=store))
 
     listed = methods.handle_list("conn", "req-list", {"limit": 10})
     assert listed["result"]["total"] == 1
     detail = methods.handle_get("conn", "req-get", {"trace_id": trace_id})
     assert detail["result"]["trace"]["id"] == trace_id
+    assert detail["result"]["trace"]["prompt_analysis"]["sections"][0]["key"] == "身份"
     cleared = methods.handle_clear("conn", "req-clear", {})
     assert cleared["result"]["removed"] == 1

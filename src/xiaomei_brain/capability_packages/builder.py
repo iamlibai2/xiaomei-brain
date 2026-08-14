@@ -17,13 +17,15 @@ from xiaomei_brain.capabilities.loader import CapabilityManifestLoader
 from .inspector import CHECKSUMS_PATH, MANIFEST_PATH, CapabilityPackageInspector
 from .models import CapabilityPackageManifest
 from .repository import CapabilityPackageError
+from .tool_contracts import CapabilityToolContractValidator
 
 
 class CapabilityPackageBuilder:
     """Export one declared capability source tree without bundling stray files."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, tool_registry: Any | None = None) -> None:
         self._inspector = CapabilityPackageInspector()
+        self._tool_registry = tool_registry
 
     def pack(
         self,
@@ -46,6 +48,11 @@ class CapabilityPackageBuilder:
 
         files = self._collect_files(source, manifest)
         self._validate_catalog(source, manifest)
+        tool_contracts: dict[str, Any] | None = None
+        if self._tool_registry is not None:
+            tool_contracts = CapabilityToolContractValidator(
+                self._tool_registry.list_tools()
+            ).validate(source, manifest)
         destination = self._destination(source, manifest, output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -91,13 +98,16 @@ class CapabilityPackageBuilder:
                 pass
             raise
 
-        return {
+        result = {
             "path": str(destination),
             "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
             "size": destination.stat().st_size,
             "package": manifest.package.model_dump(),
             "file_count": len(files) + 1,
         }
+        if tool_contracts is not None:
+            result["tool_contracts"] = tool_contracts
+        return result
 
     def _collect_files(
         self,

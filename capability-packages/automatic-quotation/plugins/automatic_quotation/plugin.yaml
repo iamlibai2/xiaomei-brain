@@ -1,0 +1,9 @@
+name: automatic_quotation
+version: "0.1.0"
+description: 报价明细规范化、历史价格证据汇总和精确金额计算
+kind: tool
+entry: adapter:register
+provides_tools:
+  - normalize_quotation_lines
+  - summarize_price_evidence
+  - calculate_quotation

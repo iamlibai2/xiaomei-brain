@@ -1,0 +1,16 @@
+schema_version: 1
+fields:
+  quotation_number: [报价单号, 报价编号, 编号, quote_no]
+  customer_name: [客户, 客户名称, 询价单位, 采购单位, buyer]
+  quoted_at: [报价日期, 日期, 制单日期, quote_date]
+  product_name: [产品, 产品名称, 品名, 物料名称, item_name]
+  specification: [规格, 型号, 规格型号, model, spec]
+  quantity: [数量, 数目, qty]
+  unit: [单位, 计量单位]
+  unit_price: [单价, 含税单价, 未税单价, price]
+  amount: [金额, 合价, 小计, line_total]
+  tax_rate: [税率, 增值税率, vat]
+  shipping_fee: [运费, 运输费, freight]
+  payment_terms: [付款方式, 付款条件, payment]
+  delivery_terms: [交货期, 交付条件, delivery]
+  validity: [有效期, 报价有效期, validity]

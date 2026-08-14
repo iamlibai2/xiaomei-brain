@@ -1,5 +1,7 @@
 """Regression tests for token- and Turn-aware DAG compaction."""
 
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -199,6 +201,40 @@ def test_agent_delegates_compaction_plan_to_dag():
 
     assert result is not None
     assert result["compact_turn_count"] == 1
+    assert [item["id"] for item in dag.compacted] == [1, 2]
+
+
+def test_foreground_compaction_waits_for_existing_session_job():
+    messages = [
+        _message(1, "user", "x" * 10000, "turn-1"),
+        _message(2, "assistant", "done", "turn-1"),
+        _message(3, "user", "不错", "turn-2"),
+    ]
+    agent, dag = _agent_with_messages(messages)
+    agent.turn_id = "turn-2"
+
+    session_lock = threading.Lock()
+    session_lock.acquire()
+    agent._compact_locks["session"] = session_lock
+    completed = threading.Event()
+
+    def run_compaction():
+        agent._auto_compact(
+            "session",
+            max_tokens=4000,
+            wait_for_existing=True,
+        )
+        completed.set()
+
+    worker = threading.Thread(target=run_compaction)
+    worker.start()
+    time.sleep(0.05)
+    assert completed.is_set() is False
+
+    session_lock.release()
+    worker.join(timeout=1)
+
+    assert completed.is_set() is True
     assert [item["id"] for item in dag.compacted] == [1, 2]
 
 

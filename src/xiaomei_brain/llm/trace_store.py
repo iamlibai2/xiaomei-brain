@@ -169,6 +169,25 @@ class ModelTraceStore:
         with self._lock:
             return self._read_path(self.directory / f"{safe_id}.json")
 
+    def get_previous(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the immediately preceding LLM call in the same session."""
+        created_at = float(record.get("created_at") or 0.0)
+        session_id = str(record.get("session_id") or "")
+        previous: dict[str, Any] | None = None
+        previous_at = -1.0
+        with self._lock:
+            for path in self.directory.glob("*.json"):
+                candidate = self._read_path(path)
+                if not candidate or candidate.get("id") == record.get("id"):
+                    continue
+                if session_id and str(candidate.get("session_id") or "") != session_id:
+                    continue
+                candidate_at = float(candidate.get("created_at") or 0.0)
+                if candidate_at < created_at and candidate_at > previous_at:
+                    previous = candidate
+                    previous_at = candidate_at
+        return previous
+
     def clear(self) -> int:
         count = 0
         with self._lock:
