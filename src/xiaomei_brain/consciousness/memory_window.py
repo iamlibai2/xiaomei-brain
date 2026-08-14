@@ -11,8 +11,10 @@ Usage:
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
@@ -23,6 +25,141 @@ from .attention import select_attention
 from ..memory.milestone import extract_milestones
 
 logger = logging.getLogger(__name__)
+
+# Latency experiment: keep attention selection/rendering active, but temporarily
+# disconnect attention text from vector encoding and semantic recall. Set this
+# back to True to restore narrative + common-memory attention channels.
+_ENABLE_ATTENTION_VECTOR_RECALL = False
+
+_SEMANTIC_PREP_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="memory-window",
+)
+
+
+def _semantic_memory_channels(
+    longterm: Any,
+    *,
+    user_id: str,
+    user_input: str,
+    attention_query: str,
+) -> dict[str, Any]:
+    """Prepare the three independent semantic memory channels together.
+
+    The current message and attention state are embedded in one batch.  The
+    resulting vectors are then reused by both the narrative and common-memory
+    indexes, avoiding repeated HTTP/model work while preserving every channel.
+    """
+    started = time.perf_counter()
+    result: dict[str, Any] = {
+        "narratives": [],
+        "user": [],
+        "attention": [],
+        "elapsed_ms": 0,
+    }
+    vector_attention_query = (
+        attention_query if _ENABLE_ATTENTION_VECTOR_RECALL else ""
+    )
+    embed_batch = getattr(longterm, "_embed_batch", None)
+    supports_preembedded = bool(
+        callable(embed_batch)
+        and hasattr(longterm, "_vector_recall")
+    )
+    vectors: dict[str, list[float]] = {}
+    if supports_preembedded:
+        texts = list(dict.fromkeys(
+            text for text in (user_input, vector_attention_query) if text
+        ))
+        try:
+            embedded = embed_batch(texts, source="memory.window.recall")
+            vectors = dict(zip(texts, embedded))
+            # Lazy table opening is not designed to race. Open each table once
+            # before the independent read queries fan out.
+            longterm._get_lance_table()
+            longterm._get_narrative_lance_table()
+        except Exception:
+            logger.warning(
+                "[MemoryWindow] 批量向量准备失败，回退到原召回路径",
+                exc_info=True,
+            )
+            vectors = {}
+            supports_preembedded = False
+
+    def narrative() -> list[dict]:
+        if not vector_attention_query:
+            return []
+        kwargs = {
+            "query": vector_attention_query,
+            "user_id": user_id,
+            "top_k": 5,
+        }
+        if supports_preembedded:
+            kwargs["_query_vector"] = vectors.get(vector_attention_query)
+        return longterm.search_narratives(**kwargs) or []
+
+    def current_input() -> list[dict]:
+        if not user_input:
+            return []
+        kwargs = {
+            "user_id": user_id,
+            "top_k": 20,
+            "mem_type": "common",
+        }
+        if supports_preembedded:
+            kwargs["_query_vector"] = vectors.get(user_input)
+        return longterm.recall(user_input, **kwargs) or []
+
+    def attention() -> list[dict]:
+        if (
+            not vector_attention_query
+            or vector_attention_query == "平静，等待中"
+        ):
+            return []
+        kwargs = {
+            "user_id": user_id,
+            "top_k": 20,
+            "mem_type": "common",
+        }
+        if supports_preembedded:
+            kwargs["_query_vector"] = vectors.get(vector_attention_query)
+        return longterm.recall(vector_attention_query, **kwargs) or []
+
+    jobs = {
+        "narratives": narrative,
+        "user": current_input,
+        "attention": attention,
+    }
+    if supports_preembedded:
+        # LanceDB reads target separate tables/vectors. SQLite writes remain
+        # protected by CoordinatedConnection's per-database transaction gate.
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="memory-recall") as pool:
+            futures = {
+                name: pool.submit(contextvars.copy_context().run, operation)
+                for name, operation in jobs.items()
+            }
+            for name, future in futures.items():
+                try:
+                    result[name] = future.result()
+                except Exception:
+                    logger.warning(
+                        "[MemoryWindow] %s 语义召回失败",
+                        name,
+                        exc_info=True,
+                    )
+    else:
+        # Test doubles and third-party memory stores keep their established
+        # single-threaded call contract.
+        for name, operation in jobs.items():
+            try:
+                result[name] = operation()
+            except Exception:
+                logger.warning(
+                    "[MemoryWindow] %s 语义召回失败",
+                    name,
+                    exc_info=True,
+                )
+    result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
+    return result
 
 
 def refresh_memory_window(
@@ -59,6 +196,8 @@ def refresh_memory_window(
     - experience_timeline: exp_stream.get_recent(limit=50) — 统一经验流
     - patterns:            search_by_tags(["pattern"]) — top-5 高置信度模式
     """
+    refresh_started = time.perf_counter()
+
     # ── 本地收集所有记忆，最后统一推入 ──
     narratives: list[dict] = []
     dag_summaries: list[dict] = []
@@ -73,6 +212,7 @@ def refresh_memory_window(
     experience: list[dict] = []
     experience_timeline: list[dict] = []
     patterns: list[dict] = []
+    semantic: dict[str, Any] = {}
 
     # 注意力选择：决定此刻意识关注什么
     attention_query, attention_snapshot = select_attention(
@@ -81,6 +221,17 @@ def refresh_memory_window(
         perception=si.perception,
         last_snapshot=getattr(si, "_last_attention_snapshot", None),
     )
+
+    semantic_future: Future[dict[str, Any]] | None = None
+    if longterm:
+        semantic_future = _SEMANTIC_PREP_EXECUTOR.submit(
+            contextvars.copy_context().run,
+            _semantic_memory_channels,
+            longterm,
+            user_id=user_id,
+            user_input=user_input or "",
+            attention_query=attention_query,
+        )
 
     # 第 0 层记忆先按确定性范围过滤，再按相关性和时效排序。
     if short_term:
@@ -94,17 +245,6 @@ def refresh_memory_window(
             ) or []
         except Exception as e:
             logger.warning("[MemoryWindow] 短期记忆召回失败: %s", e)
-
-    # ── 1. 叙事记忆 ──────────────────────────────────────
-    if longterm:
-        try:
-            narratives = longterm.search_narratives(
-                query=attention_query,
-                user_id=user_id,
-                top_k=5,
-            ) or []
-        except Exception as e:
-            logger.warning("[MemoryWindow] 叙事记忆获取失败: %s", e)
 
     # ── 2. DAG 摘要 ────────────────────────────────────
     if dag and session_id:
@@ -140,14 +280,14 @@ def refresh_memory_window(
     # ── 4. 召回记忆（双通道：user_input + attention_query，各自召回再合并）───
     if longterm:
         try:
+            semantic = semantic_future.result() if semantic_future else {}
+            narratives = list(semantic.get("narratives") or [])
             seen: set[str] = set()
             merged: list[dict] = []
 
             # 通道1：user_input 语义召回（匹配当前对话内容）
             if user_input:
-                similar_user = longterm.recall(
-                    user_input, user_id=user_id, top_k=20, mem_type="common",
-                ) or []
+                similar_user = list(semantic.get("user") or [])
                 similar_user = [m for m in similar_user if m.get("effective_strength", 0) >= 0.0]
                 similar_user.sort(key=lambda m: m.get("score", 0), reverse=True)
                 for m in similar_user[:8]:
@@ -160,9 +300,7 @@ def refresh_memory_window(
 
             # 通道2：attention_query 召回（匹配情绪/注意力状态）
             if attention_query and attention_query != "平静，等待中":
-                similar_attn = longterm.recall(
-                    attention_query, user_id=user_id, top_k=20, mem_type="common",
-                ) or []
+                similar_attn = list(semantic.get("attention") or [])
                 similar_attn = [m for m in similar_attn if m.get("effective_strength", 0) >= 0.0]
                 similar_attn.sort(key=lambda m: m.get("score", 0), reverse=True)
                 for m in similar_attn[:8]:
@@ -418,6 +556,11 @@ def refresh_memory_window(
         len(recent_dialog), len(cross_user_dialog), len(internal_narratives),
         len(project_map), len(experience),
         len(experience_timeline), len(patterns), len(milestones), _total,
+    )
+    logger.info(
+        "[MemoryWindow/Timing] semantic=%dms total=%dms",
+        int(semantic.get("elapsed_ms") or 0),
+        round((time.perf_counter() - refresh_started) * 1000),
     )
 
 

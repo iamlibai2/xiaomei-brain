@@ -7,9 +7,11 @@ Agent.context_compactor 统一负责。
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import copy
 import time as _time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from xiaomei_brain.agent.message_utils import estimate_content_tokens
@@ -19,6 +21,17 @@ from xiaomei_brain.consciousness.workspace.salience_profile import SalienceProfi
 from xiaomei_brain.agent.render_execution_context import render_execution_context
 
 logger = logging.getLogger(__name__)
+
+_EXECUTION_CONTEXT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="execution-context",
+)
+
+
+def _timed_execution_context(agent: Any, user_input: str) -> tuple[str, int]:
+    started = _time.perf_counter()
+    rendered = render_execution_context(agent, user_input)
+    return rendered, round((_time.perf_counter() - started) * 1000)
 
 
 def _project_self_image(self_image: Any) -> Any:
@@ -207,6 +220,8 @@ def _build_context_impl(
         images: 图片路径或 URL 列表（多模态输入）。
         force_mode: 强制指定模式（如 "legacy"），非空时跳过 determine_mode()。
     """
+    pipeline_started = _time.perf_counter()
+
     # 构建 content（纯文本 或 多模态数组）
     from xiaomei_brain.agent.message_utils import build_multimodal_content
 
@@ -342,7 +357,17 @@ def _build_context_impl(
 
     # 5. 刷新记忆窗口 + 生成 system prompt
     system_content = ""
+    memory_ms = 0
+    consciousness_ms = 0
+    execution_ms = 0
+    execution_wait_ms = 0
     if self_image is not None:
+        execution_future: Future[tuple[str, int]] = _EXECUTION_CONTEXT_EXECUTOR.submit(
+            contextvars.copy_context().run,
+            _timed_execution_context,
+            agent,
+            user_input,
+        )
         shared_self_image = self_image
         self_image = _project_self_image(self_image)
         # ── 统一路径：SelfImage + memory_window ──
@@ -353,6 +378,7 @@ def _build_context_impl(
         memory_scope_id = getattr(agent, "memory_scope_id", None)
         if not isinstance(memory_scope_id, str) or not memory_scope_id:
             memory_scope_id = getattr(agent, "user_id", "global")
+        memory_started = _time.perf_counter()
         refresh_memory_window(
             self_image,
             longterm=getattr(agent, "longterm_memory", None),
@@ -374,6 +400,7 @@ def _build_context_impl(
             recent_dialog_session_id=session_id,
             recent_dialog_user_id=None,
         )
+        memory_ms = round((_time.perf_counter() - memory_started) * 1000)
         # Persist the exact safe projection supplied to this answer. Desktop
         # can then explain the recall without running a second, different
         # retrieval after the turn has completed.
@@ -398,8 +425,16 @@ def _build_context_impl(
         # 传递上条用户消息的时间戳，供 _render_header 计算时差
         self_image._last_user_msg_time = getattr(agent, '_last_user_msg_time', None)
         profile = _load_salience_profile(agent)
+        consciousness_started = _time.perf_counter()
         system_content = inject_consciousness(self_image, mode=mode, user_input=user_input, profile=profile)
-        execution_context = render_execution_context(agent, user_input)
+        consciousness_ms = round((_time.perf_counter() - consciousness_started) * 1000)
+        execution_wait_started = _time.perf_counter()
+        try:
+            execution_context, execution_ms = execution_future.result()
+        except Exception:
+            logger.exception("[ContextPipeline] 执行上下文并行准备失败")
+            execution_context = ""
+        execution_wait_ms = round((_time.perf_counter() - execution_wait_started) * 1000)
         if execution_context:
             system_content += "\n\n" + execution_context
         # 记录当前消息的时间，供下次使用
@@ -410,6 +445,15 @@ def _build_context_impl(
         logger.info(
             "[ContextPipeline] 组装完成: mode=%s system_tokens=%d dag_summaries=%d",
             mode, estimate_content_tokens(system_content), dag_count,
+        )
+        logger.info(
+            "[ContextPipeline/Timing] memory=%dms consciousness=%dms "
+            "execution=%dms execution_wait=%dms elapsed=%dms",
+            memory_ms,
+            consciousness_ms,
+            execution_ms,
+            execution_wait_ms,
+            round((_time.perf_counter() - pipeline_started) * 1000),
         )
 
     # intent_context: 任务约束放入最后一条用户消息（优先于 system prompt）
@@ -461,6 +505,10 @@ def _build_context_impl(
     logger.info(
         "[ContextPipeline] 裁剪后: %d条消息, used=%d tokens",
         len(agent.messages), used,
+    )
+    logger.info(
+        "[ContextPipeline/Timing] ready_for_llm=%dms",
+        round((_time.perf_counter() - pipeline_started) * 1000),
     )
 
     # 8. 返回最终消息列表

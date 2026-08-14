@@ -139,6 +139,7 @@ class LongTermMemory(SQLiteStore):
                 existing_tables = []
             else:
                 self._lance_table = tbl
+                self._ensure_lance_vector_index(tbl, table_name="memories")
                 logger.info("LanceDB opened: %s", self._lance_dir)
                 return self._lance_table
 
@@ -154,7 +155,42 @@ class LongTermMemory(SQLiteStore):
 
         # Rebuild vectors from SQLite memories（fresh table or first run after brain.db copy）
         self._rebuild_memories_lancedb()
+        self._ensure_lance_vector_index(self._lance_table, table_name="memories")
         return self._lance_table
+
+    @staticmethod
+    def _ensure_lance_vector_index(table: Any, *, table_name: str) -> None:
+        """Ensure realtime recall uses LanceDB's durable cosine index."""
+        try:
+            row_count = int(table.count_rows())
+            if row_count < 256:
+                return
+
+            indices = table.list_indices()
+            if any("vector" in tuple(getattr(index, "columns", ()) or ()) for index in indices):
+                return
+
+            started = time.perf_counter()
+            table.create_index(
+                metric="cosine",
+                index_type="IVF_FLAT",
+                target_partition_size=256,
+                replace=False,
+            )
+            logger.info(
+                "[LanceDB] Created cosine vector index: table=%s rows=%d elapsed=%dms",
+                table_name,
+                row_count,
+                round((time.perf_counter() - started) * 1000),
+            )
+        except Exception as exc:
+            # Recall remains correct via flat scan if the installed LanceDB
+            # lacks index introspection or this index type.
+            logger.warning(
+                "[LanceDB] Failed to ensure vector index for %s: %s",
+                table_name,
+                exc,
+            )
 
     def _get_embedding_dim(self) -> int:
         """Get embedding dimension — remote first, local fallback."""
@@ -542,6 +578,8 @@ class LongTermMemory(SQLiteStore):
         top_k: int = 8,
         category: str | None = None,
         scene_tag: str | None = None,
+        *,
+        _query_vector: list[float] | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall for narrative memories using LanceDB vector search.
 
@@ -552,7 +590,11 @@ class LongTermMemory(SQLiteStore):
             category: 可选，按类别过滤
             scene_tag: 可选，按场景标签过滤
         """
-        query_vector = self._embed(query, source="memory.narrative.recall")
+        query_vector = (
+            _query_vector
+            if _query_vector is not None
+            else self._embed(query, source="memory.narrative.recall")
+        )
         table = self._get_narrative_lance_table()
 
         safe_user_id = self._safe_user_id(user_id)
@@ -1338,6 +1380,8 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         context: str = "auto",
         type_weights: dict[str, float] | None = None,
         mem_type: str | None = None,
+        *,
+        _query_vector: list[float] | None = None,
     ) -> list[dict[str, Any]]:
         """Recall memories by semantic similarity.
 
@@ -1369,7 +1413,18 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
 
         # Try vector search first
         try:
-            result = self._vector_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights, mem_type)
+            result = self._vector_recall(
+                query,
+                user_id,
+                top_k,
+                sources,
+                scene,
+                time_range,
+                context,
+                type_weights,
+                mem_type,
+                query_vector=_query_vector,
+            )
             from xiaomei_brain.base.vector_trace import record_vector_trace
             recalled = result if result is not None else []
             record_vector_trace(
@@ -1471,18 +1526,28 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         context: str = "auto",
         type_weights: dict[str, float] | None = None,
         mem_type: str | None = None,
+        *,
+        query_vector: list[float] | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
-        query_vector = self._embed(query, source="memory.recall")
+        recall_started = time.perf_counter()
+        query_vector = (
+            query_vector
+            if query_vector is not None
+            else self._embed(query, source="memory.recall")
+        )
         table = self._get_lance_table()
 
         results = table.search(query_vector) \
+            .metric("cosine") \
             .limit(top_k * 3) \
             .to_list()
+        search_elapsed_ms = round((time.perf_counter() - recall_started) * 1000)
 
         if not results:
             return []
 
+        sqlite_started = time.perf_counter()
         conn = self._get_conn()
         mem_ids = [item["id"] for item in results]
         distances = {
@@ -1536,6 +1601,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
             [(now, r["id"]) for r in rows],
         )
         conn.commit()
+        sqlite_elapsed_ms = round((time.perf_counter() - sqlite_started) * 1000)
 
         result = []
         for r in rows:
@@ -1578,6 +1644,18 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         # Remove internal field
         for r in result:
             r.pop("_rank_score", None)
+
+        total_elapsed_ms = round((time.perf_counter() - recall_started) * 1000)
+        log_timing = logger.info if total_elapsed_ms >= 200 else logger.debug
+        log_timing(
+            "[MemoryRecall/Timing] lance=%dms sqlite=%dms post=%dms total=%dms candidates=%d selected=%d",
+            search_elapsed_ms,
+            sqlite_elapsed_ms,
+            max(0, total_elapsed_ms - search_elapsed_ms - sqlite_elapsed_ms),
+            total_elapsed_ms,
+            len(results),
+            len(result),
+        )
 
         return result[:top_k]
 

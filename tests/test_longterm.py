@@ -9,6 +9,51 @@ import pytest
 from xiaomei_brain.memory.longterm import LongTermMemory
 
 
+class _IndexDescription:
+    def __init__(self, columns):
+        self.columns = columns
+
+
+class _IndexableTable:
+    def __init__(self, rows=1757, indices=None):
+        self.rows = rows
+        self.indices = list(indices or [])
+        self.created_with = None
+
+    def count_rows(self):
+        return self.rows
+
+    def list_indices(self):
+        return self.indices
+
+    def create_index(self, **kwargs):
+        self.created_with = kwargs
+
+
+def test_realtime_memory_index_is_created_for_existing_vectors():
+    table = _IndexableTable()
+
+    LongTermMemory._ensure_lance_vector_index(table, table_name="memories")
+
+    assert table.created_with == {
+        "metric": "cosine",
+        "index_type": "IVF_FLAT",
+        "target_partition_size": 256,
+        "replace": False,
+    }
+
+
+def test_realtime_memory_index_is_not_recreated_or_built_for_tiny_table():
+    indexed = _IndexableTable(indices=[_IndexDescription(["vector"])])
+    tiny = _IndexableTable(rows=100)
+
+    LongTermMemory._ensure_lance_vector_index(indexed, table_name="memories")
+    LongTermMemory._ensure_lance_vector_index(tiny, table_name="memories")
+
+    assert indexed.created_with is None
+    assert tiny.created_with is None
+
+
 @pytest.fixture
 def ltm(monkeypatch):
     """Create LongTermMemory with temp SQLite, no embedding/LanceDB."""

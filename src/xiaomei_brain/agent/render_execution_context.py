@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.base.selection_query import SelectionQuery
 from xiaomei_brain.prompts import MEMORY_DECISION_PROMPT
 from xiaomei_brain.tools.dynamic import (
     build_step_tool_selection_context,
@@ -57,7 +58,11 @@ def render_execution_context(agent: Any, user_input: str) -> str:
             list(getattr(agent, "messages", []) or []),
             getattr(agent, "current_attachments", None),
         )
-        selection_query = _with_runtime_context(agent, selection_query)
+        selection_query = _current_input_selection_query(selection_query)
+        # Context-weighted discovery is intentionally disconnected for now.
+        # Keep the runtime providers and SelectionQuery weighting implementation
+        # intact so the experiment can be restored without reconstructing it.
+        # selection_query = _with_runtime_context(agent, selection_query)
         prefetched = capability_prefetch(
             selection_query or user_input,
             person_id=getattr(agent, "user_id", ""),
@@ -112,7 +117,10 @@ def prepare_execution_selection(
             messages,
             getattr(agent, "current_attachments", None),
         )
-        selection_query = _with_runtime_context(agent, selection_query)
+        selection_query = _current_input_selection_query(selection_query)
+        # See render_execution_context(): nearby/runtime weighting is retained
+        # in code but deliberately not connected to automatic discovery.
+        # selection_query = _with_runtime_context(agent, selection_query)
 
     dynamic_loader = getattr(agent, "_dynamic_loader", None)
     if dynamic_loader:
@@ -197,7 +205,9 @@ def render_step_selection_context(
 ) -> str:
     """Refresh mutable execution facts when choosing tools for a ReAct step."""
     query = build_step_tool_selection_context(original_intent, progress)
-    return _with_runtime_context(agent, query)
+    query = _current_input_selection_query(query)
+    # query = _with_runtime_context(agent, query)
+    return query
 
 
 def current_execution_selection(
@@ -275,6 +285,13 @@ def _section_enabled(agent: Any, name: str) -> bool:
 def _with_runtime_context(agent: Any, query: str) -> str:
     renderer = getattr(agent, "_with_runtime_tool_selection_context", None)
     return renderer(query) if callable(renderer) else query
+
+
+def _current_input_selection_query(query: str) -> str:
+    """Disconnect nearby/runtime context while preserving its implementation."""
+    if isinstance(query, SelectionQuery):
+        return SelectionQuery(query.primary)
+    return query
 
 
 def _render_explicit_workspace_files(agent: Any, user_input: str) -> str:

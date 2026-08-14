@@ -77,13 +77,20 @@ class RemoteEmbedder:
             logger.debug("Remote embedding server not available: %s", e)
         return False
 
-    def embed(self, text: str, *, source: str = "unknown") -> list[float]:
+    def embed(
+        self,
+        text: str,
+        *,
+        source: str = "unknown",
+        priority: str = "normal",
+    ) -> list[float]:
         request_id = f"embed_{uuid.uuid4().hex[:12]}"
         normalized_source = _normalize_source(source)
         data = json.dumps({
             "text": text,
             "request_id": request_id,
             "source": normalized_source,
+            "priority": _normalize_priority(priority),
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{self._url}/embed",
@@ -120,13 +127,20 @@ class RemoteEmbedder:
             )
             raise
 
-    def embed_batch(self, texts: list[str], *, source: str = "unknown") -> list[list[float]]:
+    def embed_batch(
+        self,
+        texts: list[str],
+        *,
+        source: str = "unknown",
+        priority: str = "normal",
+    ) -> list[list[float]]:
         request_id = f"embed_{uuid.uuid4().hex[:12]}"
         normalized_source = _normalize_source(source)
         data = json.dumps({
             "texts": texts,
             "request_id": request_id,
             "source": normalized_source,
+            "priority": _normalize_priority(priority),
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{self._url}/embed",
@@ -172,6 +186,10 @@ def _normalize_source(source: str) -> str:
     if not value:
         return "unknown"
     return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
+
+
+def _normalize_priority(priority: str) -> str:
+    return "realtime" if str(priority or "").strip().lower() == "realtime" else "normal"
 
 
 def _record_embedding_trace(

@@ -129,7 +129,7 @@ def test_step_selection_context_promotes_human_steering():
     assert "生成图表" in context.context
 
 
-def test_agent_refreshes_runtime_tool_context_after_first_step():
+def test_automatic_selection_uses_only_current_input_after_first_step():
     from xiaomei_brain.agent.render_execution_context import prepare_execution_selection
 
     agent = Agent(llm=object(), tools=ToolRegistry())
@@ -155,12 +155,13 @@ def test_agent_refreshes_runtime_tool_context_after_first_step():
     refreshed = render_step_selection_context(agent, initial, [
         "create_workspace: workspace-1",
     ])
-    assert "<focused_workspace>" in refreshed
-    assert "原料采购" in refreshed
+    assert refreshed == "create_workspace: workspace-1"
+    assert "<focused_workspace>" not in refreshed
 
 
 def test_execution_renderer_injects_selected_skill():
     from xiaomei_brain.agent.render_execution_context import prepare_execution_selection
+    from xiaomei_brain.base.selection_query import SelectionQuery
 
     agent = Agent(llm=object(), tools=ToolRegistry())
     agent.session_id = "session-1"
@@ -172,10 +173,14 @@ def test_execution_renderer_injects_selected_skill():
 
     prepared, query = prepare_execution_selection(agent, [
         {"role": "system", "content": "consciousness"},
+        {"role": "user", "content": "上一轮让我播放音乐"},
         {"role": "user", "content": "写一份报告"},
     ])
 
-    assert "写一份报告" in query
+    assert isinstance(query, SelectionQuery)
+    assert query.primary == "写一份报告"
+    assert query.context == ""
+    assert "播放音乐" not in query
     assert prepared[0]["content"].startswith("consciousness")
     assert "document-writing" in prepared[0]["content"]
 

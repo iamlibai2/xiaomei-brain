@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,10 @@ class SharedEmbedder:
         self._model: Any = None
         self._model_lock = threading.Lock()
         self._ready = threading.Event()
+        self._foreground_depth: ContextVar[int] = ContextVar(
+            f"xiaomei_embedding_foreground_{id(self)}",
+            default=0,
+        )
         self._remote_required = os.environ.get("XIAOMEI_EMBED_REMOTE_REQUIRED", "").strip() == "1"
 
         # WSL2 / Windows PyTorch 线程数限制，防止 segfault
@@ -201,11 +207,27 @@ class SharedEmbedder:
 
     # ── Embedding ─────────────────────────────────────────────
 
+    @contextmanager
+    def foreground(self):
+        """Mark embedding requests in this thread as realtime conversation work."""
+        token = self._foreground_depth.set(self._foreground_depth.get() + 1)
+        try:
+            yield
+        finally:
+            self._foreground_depth.reset(token)
+
+    def _request_priority(self) -> str:
+        return "realtime" if self._foreground_depth.get() > 0 else "normal"
+
     def embed(self, text: str, *, source: str = "unknown") -> list[float]:
         """Embed 单个文本。远程优先，本地 fallback。"""
         if self._remote.available:
             try:
-                return self._remote.embed(text, source=source)
+                return self._remote.embed(
+                    text,
+                    source=source,
+                    priority=self._request_priority(),
+                )
             except Exception as e:
                 if self._remote_required:
                     raise RuntimeError("共享向量服务请求失败") from e
@@ -221,7 +243,11 @@ class SharedEmbedder:
         """Embed 多个文本。远程优先，本地 fallback。"""
         if self._remote.available:
             try:
-                return self._remote.embed_batch(texts, source=source)
+                return self._remote.embed_batch(
+                    texts,
+                    source=source,
+                    priority=self._request_priority(),
+                )
             except Exception as e:
                 if self._remote_required:
                     raise RuntimeError("共享向量服务请求失败") from e

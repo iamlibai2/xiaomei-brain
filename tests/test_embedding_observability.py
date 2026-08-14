@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -47,8 +48,27 @@ def test_remote_embedder_sends_request_identity_and_source(monkeypatch) -> None:
     assert result == [0.1, 0.2]
     assert captured["text"] == "private memory text"
     assert captured["source"] == "memory.recall"
+    assert captured["priority"] == "normal"
     assert captured["request_id"].startswith("embed_")
     assert captured["timeout"] == 30
+
+
+def test_remote_embedder_sends_realtime_priority(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout):
+        captured.update(json.loads(request.data))
+        return _Response({"vector": [0.1, 0.2]})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    RemoteEmbedder("http://127.0.0.1:18765").embed(
+        "realtime turn",
+        source="memory.recall",
+        priority="realtime",
+    )
+
+    assert captured["priority"] == "realtime"
 
 
 def test_embedding_handler_logs_metadata_without_text(caplog) -> None:
@@ -170,3 +190,62 @@ def test_embedding_handler_reuses_vectors_across_sources_and_whitespace(caplog) 
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "cache_hits=1" in messages
     assert "cache_misses=0" in messages
+
+
+def test_embedding_handler_prioritizes_waiting_realtime_request() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    order: list[str] = []
+
+    class BlockingModel:
+        def encode(self, value, **_kwargs):
+            text = value[0] if isinstance(value, list) else value
+            order.append(text)
+            if text == "first-background":
+                started.set()
+                assert release.wait(timeout=3)
+            return np.array([0.4, 0.6], dtype=np.float32)
+
+    Handler = create_embedding_handler(
+        model=BlockingModel(),
+        model_id="test-embedding",
+        device="cpu",
+        dimension=2,
+        inference_lock=threading.Lock(),
+        on_inference=lambda: None,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    def request(text: str, priority: str) -> None:
+        payload = json.dumps({"text": text, "priority": priority}).encode("utf-8")
+        http_request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/embed",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(http_request, timeout=5) as response:
+            response.read()
+
+    first = threading.Thread(target=request, args=("first-background", "normal"))
+    second = threading.Thread(target=request, args=("second-background", "normal"))
+    realtime = threading.Thread(target=request, args=("realtime", "realtime"))
+    try:
+        first.start()
+        assert started.wait(timeout=2)
+        second.start()
+        time.sleep(0.05)
+        realtime.start()
+        time.sleep(0.05)
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        realtime.join(timeout=5)
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+
+    assert order == ["first-background", "realtime", "second-background"]

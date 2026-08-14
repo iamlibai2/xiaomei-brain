@@ -269,6 +269,103 @@ def test_memory_window_does_not_load_cross_session_dag_without_session(
     dag.get_higher_summaries.assert_not_called()
 
 
+def test_memory_window_batches_and_reuses_semantic_query_vectors(monkeypatch):
+    from xiaomei_brain.consciousness import memory_window
+
+    monkeypatch.setattr(memory_window, "_ENABLE_ATTENTION_VECTOR_RECALL", True)
+
+    class LongTermStub:
+        _vector_recall = object()
+
+        def __init__(self) -> None:
+            self.embed_calls = []
+            self.narrative_vector = None
+            self.recall_vectors = {}
+
+        def _embed_batch(self, texts, *, source):
+            self.embed_calls.append((list(texts), source))
+            return [[float(index + 1)] for index, _text in enumerate(texts)]
+
+        def _get_lance_table(self):
+            return object()
+
+        def _get_narrative_lance_table(self):
+            return object()
+
+        def search_narratives(self, *, query, user_id, top_k, _query_vector=None):
+            self.narrative_vector = _query_vector
+            return [{"id": "narrative"}]
+
+        def recall(self, query, *, _query_vector=None, **_kwargs):
+            self.recall_vectors[query] = _query_vector
+            return [{"id": query}]
+
+    longterm = LongTermStub()
+    result = memory_window._semantic_memory_channels(
+        longterm,
+        user_id="person-1",
+        user_input="写一份报告",
+        attention_query="认知欲偏高",
+    )
+
+    assert longterm.embed_calls == [
+        (["写一份报告", "认知欲偏高"], "memory.window.recall"),
+    ]
+    assert longterm.recall_vectors["写一份报告"] == [1.0]
+    assert longterm.recall_vectors["认知欲偏高"] == [2.0]
+    assert longterm.narrative_vector == [2.0]
+    assert result["narratives"] == [{"id": "narrative"}]
+    assert result["user"] == [{"id": "写一份报告"}]
+    assert result["attention"] == [{"id": "认知欲偏高"}]
+
+
+def test_memory_window_skips_attention_vector_recall_by_default():
+    from xiaomei_brain.consciousness import memory_window
+
+    class LongTermStub:
+        _vector_recall = object()
+
+        def __init__(self) -> None:
+            self.embed_calls = []
+            self.recall_queries = []
+            self.narrative_queries = []
+
+        def _embed_batch(self, texts, *, source):
+            self.embed_calls.append((list(texts), source))
+            return [[1.0] for _text in texts]
+
+        def _get_lance_table(self):
+            return object()
+
+        def _get_narrative_lance_table(self):
+            return object()
+
+        def search_narratives(self, *, query, **_kwargs):
+            self.narrative_queries.append(query)
+            return []
+
+        def recall(self, query, **_kwargs):
+            self.recall_queries.append(query)
+            return []
+
+    longterm = LongTermStub()
+    result = memory_window._semantic_memory_channels(
+        longterm,
+        user_id="person-1",
+        user_input="写一份报告",
+        attention_query="认知欲偏高",
+    )
+
+    assert memory_window._ENABLE_ATTENTION_VECTOR_RECALL is False
+    assert longterm.embed_calls == [
+        (["写一份报告"], "memory.window.recall"),
+    ]
+    assert longterm.recall_queries == ["写一份报告"]
+    assert longterm.narrative_queries == []
+    assert result["narratives"] == []
+    assert result["attention"] == []
+
+
 def test_build_context_conversation_db_logging():
     """Message logged to ConversationDB when available."""
     with tempfile.TemporaryDirectory() as tmpdir:

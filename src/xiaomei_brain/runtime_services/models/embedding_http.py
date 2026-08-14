@@ -8,6 +8,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -35,6 +36,31 @@ def create_embedding_handler(
     # their domain indexes.
     vector_cache: OrderedDict[str, list[float]] = OrderedDict()
     cache_lock = threading.Lock()
+    inference_condition = threading.Condition()
+    inference_active = False
+    realtime_waiters = 0
+
+    @contextmanager
+    def inference_slot(priority: str):
+        """Serialize model access while letting queued realtime work go first."""
+        nonlocal inference_active, realtime_waiters
+        realtime = priority == "realtime"
+        with inference_condition:
+            if realtime:
+                realtime_waiters += 1
+            try:
+                while inference_active or (not realtime and realtime_waiters > 0):
+                    inference_condition.wait()
+                inference_active = True
+            finally:
+                if realtime:
+                    realtime_waiters -= 1
+        try:
+            yield
+        finally:
+            with inference_condition:
+                inference_active = False
+                inference_condition.notify_all()
 
     def cache_key(text: str) -> str:
         # Whitespace formatting is not semantic input for retrieval, and the
@@ -78,10 +104,16 @@ def create_embedding_handler(
             received_at = time.perf_counter()
             request_id = f"embed_{uuid.uuid4().hex[:12]}"
             request_source = "unknown"
+            request_priority = "normal"
             try:
                 value = read_json(self)
                 request_id = _safe_label(value.get("request_id"), request_id)
                 request_source = _safe_label(value.get("source"), "unknown")
+                request_priority = (
+                    "realtime"
+                    if str(value.get("priority") or "").strip().lower() == "realtime"
+                    else "normal"
+                )
                 texts_value = value.get("texts")
                 if isinstance(texts_value, list):
                     texts = [str(item) for item in texts_value]
@@ -106,11 +138,13 @@ def create_embedding_handler(
             keys = [cache_key(text) for text in texts]
             total_chars = sum(len(text) for text in texts)
             max_chars = max((len(text) for text in texts), default=0)
-            queued = inference_lock.locked()
+            with inference_condition:
+                queued = inference_active
             logging.info(
-                "[EmbedTrace] start id=%s source=%s mode=%s items=%d chars=%d max_chars=%d queued=%s",
+                "[EmbedTrace] start id=%s source=%s priority=%s mode=%s items=%d chars=%d max_chars=%d queued=%s",
                 request_id,
                 request_source,
+                request_priority,
                 mode,
                 item_count,
                 total_chars,
@@ -125,7 +159,7 @@ def create_embedding_handler(
             initial_hits = sum(value is not None for value in initial_values)
             try:
                 if initial_hits < item_count:
-                    with inference_lock:
+                    with inference_slot(request_priority):
                         acquired_at = time.perf_counter()
                         # Another request may have populated the cache while
                         # this request waited for the model lock.
