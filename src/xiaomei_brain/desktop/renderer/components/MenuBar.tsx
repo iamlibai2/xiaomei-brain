@@ -85,6 +85,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
             action: () => window.dispatchEvent(new CustomEvent("xiaomei:prompt-analysis-open")),
             disabled: !activeAgent,
           },
+          {
+            label: t("menu.contextControl"),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:context-control-open")),
+            disabled: !activeAgent,
+          },
         ],
       },
       { separator: true, label: "" },

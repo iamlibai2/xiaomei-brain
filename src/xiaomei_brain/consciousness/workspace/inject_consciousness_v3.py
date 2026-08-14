@@ -60,98 +60,117 @@ def inject_consciousness(si, mode: str = "daily", user_input: str = "",
 
 # ── Mode 组装方法 ──────────────────────────────────────
 
+def _join_sections(si, *sections) -> str:
+    """Render enabled prompt sections without stopping their producers."""
+    context_config = getattr(si, "_context_config", None)
+    policy = getattr(context_config, "prompt_sections", {})
+    policy = policy if isinstance(policy, dict) else {}
+    rendered: list[str] = []
+    for name, render in sections:
+        if policy.get(name, True) is False:
+            continue
+        rendered.extend(render(si))
+    return "\n".join(rendered)
+
+
 def _assemble_flow(si) -> str:
     """flow: 最小化 — 身份、身体、底色、历史摘要"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_dag_summaries(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("dag_summaries", _render_dag_summaries),
     )
 
 
 def _assemble_daily(si) -> str:
     """daily: 完整日常 — 身份、身体、记忆、叙事、桌面"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_procedures(si)
-        + _render_short_term_memories(si)
-        + _render_longterm_memories(si)
-        + _render_relation_chains(si)
-        + _render_dag_summaries(si)
-        + _render_narratives(si)
-        + _render_internal_narratives(si)
-        + _render_cross_user_dialog(si)
-        + _render_experience_timeline(si)
-        + _render_learn_queue(si)
-        + _render_desk(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("procedures", _render_procedures),
+        ("short_term_memories", _render_short_term_memories),
+        ("long_term_memories", _render_longterm_memories),
+        ("relation_chains", _render_relation_chains),
+        ("dag_summaries", _render_dag_summaries),
+        ("narratives", _render_narratives),
+        ("internal_narratives", _render_internal_narratives),
+        ("cross_user_dialog", _render_cross_user_dialog),
+        ("experience_timeline", _render_experience_timeline),
+        ("learn_queue", _render_learn_queue),
+        ("desk", _render_desk),
     )
 
 
 def _assemble_task(si) -> str:
     """task: 任务导向 — 身份、身体、记忆、经验、学习队列、桌面（不含叙事和关系链）"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_experience(si)
-        + _render_short_term_memories(si)
-        + _render_longterm_memories(si)
-        + _render_dag_summaries(si)
-        + _render_learn_queue(si)
-        + _render_desk(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("experience", _render_experience),
+        ("short_term_memories", _render_short_term_memories),
+        ("long_term_memories", _render_longterm_memories),
+        ("dag_summaries", _render_dag_summaries),
+        ("learn_queue", _render_learn_queue),
+        ("desk", _render_desk),
     )
 
 
 def _assemble_reflect(si) -> str:
     """reflect: 反思 — 同 daily，完整上下文"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_short_term_memories(si)
-        + _render_longterm_memories(si)
-        + _render_relation_chains(si)
-        + _render_dag_summaries(si)
-        + _render_narratives(si)
-        + _render_internal_narratives(si)
-        + _render_experience_timeline(si)
-        + _render_learn_queue(si)
-        + _render_desk(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("short_term_memories", _render_short_term_memories),
+        ("long_term_memories", _render_longterm_memories),
+        ("relation_chains", _render_relation_chains),
+        ("dag_summaries", _render_dag_summaries),
+        ("narratives", _render_narratives),
+        ("internal_narratives", _render_internal_narratives),
+        ("experience_timeline", _render_experience_timeline),
+        ("learn_queue", _render_learn_queue),
+        ("desk", _render_desk),
     )
 
 
 def _assemble_dream(si) -> str:
     """dream: 梦境 — header + being + cornerstone + essence"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
     )
 
 
 def _assemble_learn(si) -> str:
     """learn: 学习 — header + being + cornerstone + essence"""
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
     )
 
 
@@ -162,25 +181,26 @@ def _assemble_proactive(si) -> str:
     与 daily 的区别：额外渲染最近对话（recent_dialog），
     让 LLM 知道最近聊了什么，避免"失忆"。
     """
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_procedures(si)
-        + _render_short_term_memories(si)
-        + _render_longterm_memories(si)
-        + _render_relation_chains(si)
-        + _render_dag_summaries(si)
-        + _render_narratives(si)
-        + _render_internal_narratives(si)
-        + _render_recent_dialog(si)
-        + _render_cross_user_dialog(si)
-        + _render_experience_timeline(si)
-        + _render_learn_queue(si)
-        + _render_desk(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("procedures", _render_procedures),
+        ("short_term_memories", _render_short_term_memories),
+        ("long_term_memories", _render_longterm_memories),
+        ("relation_chains", _render_relation_chains),
+        ("dag_summaries", _render_dag_summaries),
+        ("narratives", _render_narratives),
+        ("internal_narratives", _render_internal_narratives),
+        ("recent_dialog", _render_recent_dialog),
+        ("cross_user_dialog", _render_cross_user_dialog),
+        ("experience_timeline", _render_experience_timeline),
+        ("learn_queue", _render_learn_queue),
+        ("desk", _render_desk),
     )
 
 
@@ -191,23 +211,24 @@ def _assemble_internal(si) -> str:
     与 daily 的区别：额外渲染 recent_dialog（不过滤 user_id，展示全部用户消息），
     让 LLM 在内部决策时能看到全局对话上下文。
     """
-    return "\n".join(
-        _render_header(si)
-        + _render_being(si)
-        + _render_cornerstone(si)
-        + _render_essence(si)
-        + _render_body(si)
-        + _render_observed(si)
-        + _render_procedures(si)
-        + _render_short_term_memories(si)
-        + _render_longterm_memories(si)
-        + _render_relation_chains(si)
-        + _render_dag_summaries(si)
-        + _render_narratives(si)
-        + _render_internal_narratives(si)
-        + _render_recent_dialog(si)
-        + _render_cross_user_dialog(si)
-        + _render_experience_timeline(si)
-        + _render_learn_queue(si)
-        + _render_desk(si)
+    return _join_sections(
+        si,
+        ("header", _render_header),
+        ("being", _render_being),
+        ("cornerstone", _render_cornerstone),
+        ("essence", _render_essence),
+        ("body", _render_body),
+        ("observed", _render_observed),
+        ("procedures", _render_procedures),
+        ("short_term_memories", _render_short_term_memories),
+        ("long_term_memories", _render_longterm_memories),
+        ("relation_chains", _render_relation_chains),
+        ("dag_summaries", _render_dag_summaries),
+        ("narratives", _render_narratives),
+        ("internal_narratives", _render_internal_narratives),
+        ("recent_dialog", _render_recent_dialog),
+        ("cross_user_dialog", _render_cross_user_dialog),
+        ("experience_timeline", _render_experience_timeline),
+        ("learn_queue", _render_learn_queue),
+        ("desk", _render_desk),
     )

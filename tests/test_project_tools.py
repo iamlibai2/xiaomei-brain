@@ -197,6 +197,27 @@ def test_project_conversation_tools_create_restore_and_update(tmp_path):
     service.store.close()
 
 
+def test_project_context_does_not_list_unbound_active_projects(tmp_path):
+    service = ProjectService(
+        ProjectStore(tmp_path / "brain.db"),
+        ProjectWorkspaceManager(tmp_path / "projects"),
+    )
+    agent = FakeAgentInstance(service)
+    tools = _tools(agent)
+    created = json.loads(tools["create_project"].execute(
+        name="Other conversation project",
+        project_type="video.production",
+    ))
+    assert created["id"]
+
+    agent.core.session_id = "session_2"
+    agent.core.active_project_id = ""
+    agent.core.project_context = None
+
+    assert render_project_context(agent.core) == ""
+    service.store.close()
+
+
 def test_project_review_reconciles_reality_without_enforcing_step_order(tmp_path):
     service = ProjectService(
         ProjectStore(tmp_path / "brain.db"),

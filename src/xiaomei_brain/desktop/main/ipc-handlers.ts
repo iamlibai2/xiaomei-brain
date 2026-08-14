@@ -2212,6 +2212,33 @@ export function registerIpcHandlers(
 
   // Model resources live on the Agent host. Desktop only forwards RPC
   // requests and never reads or edits the Agent's JSON files directly.
+  // Agent configuration is read and updated through the Gateway. Desktop
+  // never opens a remote or local Agent's configuration files directly.
+  ipcMain.handle("gateway:getAgentConfig", async (_event, args: {
+    agentId: string;
+    section: string;
+  }) => channelRpc(args, "config.get", { section: args.section }));
+
+  ipcMain.handle("gateway:updateAgentConfig", async (_event, args: {
+    agentId: string;
+    section: string;
+    values: Record<string, unknown>;
+    revision?: string;
+  }) => channelRpc(args, "config.update", {
+    section: args.section,
+    values: args.values,
+    revision: args.revision || "",
+  }));
+
+  ipcMain.handle("gateway:resetAgentConfig", async (_event, args: {
+    agentId: string;
+    section: string;
+    revision?: string;
+  }) => channelRpc(args, "config.reset", {
+    section: args.section,
+    revision: args.revision || "",
+  }));
+
   ipcMain.handle("gateway:getModelConfig", async (_event, args: {
     agentId: string;
   }) => channelRpc(args, "model.config.get", {}));

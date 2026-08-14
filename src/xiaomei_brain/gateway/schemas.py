@@ -43,6 +43,24 @@ class ConnectParams(BaseModel):
 
 # ── Agent capabilities ──────────────────────
 
+class ConfigGetParams(BaseModel):
+    section: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    )
+
+
+class ConfigUpdateParams(ConfigGetParams):
+    values: dict[str, Any] = Field(..., min_length=1)
+    revision: str = Field(default="", max_length=64)
+
+
+class ConfigResetParams(ConfigGetParams):
+    revision: str = Field(default="", max_length=64)
+
+
 class CapabilityGetParams(BaseModel):
     capability_id: str = Field(
         ...,

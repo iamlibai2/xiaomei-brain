@@ -21,11 +21,11 @@ _ACTIVE_STATUSES = tuple(
 
 
 def render_assignment_context(agent: Any, *, limit: int = 8) -> str:
-    """Render only the current Person's active agreements.
+    """Render Assignments relevant to the current conversation or worker.
 
     Assignment text is historical/user-authored data, not a fresh instruction.
-    Keeping this block small prevents the work ledger from replacing normal
-    conversation memory or the Agent's private Goal/PACE context.
+    Other conversations' work remains queryable through tools but does not
+    become permanent prompt content.
     """
     service = getattr(agent, "assignment_service", None)
     person_id = str(getattr(agent, "user_id", "")).strip()
@@ -35,24 +35,35 @@ def render_assignment_context(agent: Any, *, limit: int = 8) -> str:
         or person_id in {"global", "system"}
     ):
         return ""
+    session_id = str(getattr(agent, "session_id", "") or "").strip()
+    active_id = str(getattr(agent, "active_assignment_id", "") or "").strip()
+    if not session_id and not active_id:
+        return ""
     try:
         actor = AssignmentActor(ActorType.PERSON, person_id)
-        assignments = service.list_for_actor(
+        visible_active = service.list_for_actor(
             actor,
             statuses=_ACTIVE_STATUSES,
-            limit=limit,
+            limit=100,
         )
-        recent_completed = service.list_for_actor(
+        visible_finished = service.list_for_actor(
             actor,
             statuses=(AssignmentStatus.COMPLETED, AssignmentStatus.FAILED),
-            limit=min(4, limit),
+            limit=100,
         )
     except (ValueError, PermissionError):
         return ""
+    assignments = [
+        item for item in visible_active
+        if item.origin_session_id == session_id or item.id == active_id
+    ][:limit]
+    recent_completed = [
+        item for item in visible_finished
+        if item.origin_session_id == session_id or item.id == active_id
+    ][:min(4, limit)]
     if not assignments and not recent_completed:
         return ""
 
-    active_id = str(getattr(agent, "active_assignment_id", "")).strip()
     active = None
     if active_id:
         try:

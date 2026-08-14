@@ -374,6 +374,7 @@
       "modelContext": "模型上下文",
       "executionAnalysis": "执行分析",
       "promptAnalysis": "提示词分析",
+      "contextControl": "上下文管理",
       "window": "窗口(W)",
       "reload": "重新加载",
       "close": "关闭窗口",
@@ -561,6 +562,55 @@
       "source": {
         "capability": "能力依赖",
         "semantic": "语义召回"
+      }
+    },
+    "contextControl": {
+      "title": "上下文管理",
+      "subtitle": "控制下一次 LLM 调用会收到哪些上下文；不会停止记忆整理、检索或状态更新。",
+      "currentAgent": "当前 Agent：{{name}}",
+      "enabledCount": "已启用 {{enabled}} / {{total}} 项",
+      "reset": "恢复默认",
+      "loadFailed": "无法读取上下文配置",
+      "updateFailed": "无法保存上下文配置",
+      "resetFailed": "无法恢复默认配置",
+      "groups": {
+        "identity": { "title": "自我与身份", "description": "Agent 对自己是谁、坚持什么以及如何存在的认识。" },
+        "state": { "title": "状态", "description": "当前身体、情绪、驱动力以及最近观察到的变化。" },
+        "memory": { "title": "记忆", "description": "短期、长期、叙事、经验和关系链等记忆内容。" },
+        "continuity": { "title": "对话连续性", "description": "当前会话、跨渠道对话与稳定行为程序。" },
+        "work": { "title": "内部工作现场", "description": "学习队列以及 Agent 内部桌面信息。" },
+        "execution": { "title": "执行上下文", "description": "本轮可用能力、工作对象和执行规则。" }
+      },
+      "sections": {
+        "header": { "title": "当前时间与场景", "description": "当前时刻、时段和基础场景信息。" },
+        "being": { "title": "存在感", "description": "Agent 当前对自身存在状态的理解。" },
+        "cornerstone": { "title": "基石", "description": "稳定的核心原则与不可轻易改变的约束。" },
+        "essence": { "title": "本质", "description": "身份、性格和自我叙事的核心内容。" },
+        "body": { "title": "身体与情绪", "description": "能量、欲望、情绪和模拟调节状态。" },
+        "observed": { "title": "近期观察", "description": "最近感知到的环境和自身变化。" },
+        "short_term_memories": { "title": "短期记忆", "description": "近期形成、尚未沉淀为长期记忆的内容。" },
+        "long_term_memories": { "title": "长期记忆", "description": "与当前人物和 Agent 相关的长期记忆。" },
+        "relation_chains": { "title": "关系链", "description": "人物关系、互动脉络和相关联的记忆。" },
+        "dag_summaries": { "title": "会话摘要", "description": "当前会话经压缩形成的历史摘要。" },
+        "narratives": { "title": "叙事记忆", "description": "由经历形成的结构化叙事。" },
+        "internal_narratives": { "title": "内部叙事", "description": "Agent 自身活动形成的内部记录。" },
+        "experience": { "title": "经验", "description": "从过往执行和事件中总结出的经验。" },
+        "experience_timeline": { "title": "经验时间线", "description": "近期经验和里程碑的时间顺序。" },
+        "procedures": { "title": "行为程序", "description": "逐渐形成的稳定做事方式和程序性知识。" },
+        "recent_dialog": { "title": "当前会话", "description": "当前会话中尚未压缩的近期原始消息。" },
+        "cross_user_dialog": { "title": "跨渠道对话", "description": "同一人物通过其他渠道产生的相关近期对话。" },
+        "learn_queue": { "title": "学习队列", "description": "当前待学习和正在关注的主题。" },
+        "desk": { "title": "内部桌面", "description": "Agent 意识中的当前桌面和工作现场。" },
+        "capabilities": { "title": "能力", "description": "本轮语义匹配到的能力摘要和确定性依赖。" },
+        "skills": { "title": "Skill", "description": "本轮预取或明确选择的 Skill 摘要。" },
+        "tool_discovery": { "title": "工具发现规则", "description": "提示模型在缺少工具时使用能力发现。" },
+        "explicit_files": { "title": "明确引用的文件", "description": "用户本轮明确提到且已确认存在的工作区文件。" },
+        "group_observations": { "title": "群聊观察", "description": "当前群聊中最近可供理解现场的普通消息。" },
+        "project": { "title": "项目", "description": "当前项目、阶段、进度和交付信息。" },
+        "workspace": { "title": "Workspace", "description": "当前聚焦的业务工作空间及相关数据结构。" },
+        "process": { "title": "Process", "description": "当前项目需要遵守的交付标准和检查要求。" },
+        "assignment": { "title": "委托", "description": "当前人物和会话可见的委托状态与进度。" },
+        "memory_policy": { "title": "记忆判断规则", "description": "要求模型判断本轮内容是否值得形成记忆。" }
       }
     },
     "promptAnalysis": {

@@ -12,7 +12,7 @@ from xiaomei_brain.assignments import (
 )
 
 
-def _offer(service, person_id, title, assignment_id):
+def _offer(service, person_id, title, assignment_id, session_id="session_1"):
     return service.offer(
         title=title,
         objective=f"完成 {title}",
@@ -21,6 +21,7 @@ def _offer(service, person_id, title, assignment_id):
         scope_type="person",
         scope_id=person_id,
         assignment_id=assignment_id,
+        origin_session_id=session_id,
     )
 
 
@@ -33,7 +34,11 @@ def test_context_contains_only_current_person_active_assignments(tmp_path):
     own = _offer(service, "person_1", "自己的报告", "assignment_1")
     _offer(service, "person_2", "别人的机密工作", "assignment_2")
     service.accept(own.id, actor=AssignmentActor(ActorType.AGENT, "xiaomei"))
-    agent = SimpleNamespace(assignment_service=service, user_id="person_1")
+    agent = SimpleNamespace(
+        assignment_service=service,
+        user_id="person_1",
+        session_id="session_1",
+    )
 
     rendered = render_assignment_context(agent)
 
@@ -59,11 +64,13 @@ def test_context_expands_only_verified_current_assignment(tmp_path):
         acceptance_criteria=["包含市场结论"],
         constraints={"items": ["使用中文"]},
         assignment_id="assignment_1",
+        origin_session_id="session_1",
     )
     other = _offer(service, "person_2", "别人的工作", "assignment_2")
     agent = SimpleNamespace(
         assignment_service=service,
         user_id="person_1",
+        session_id="session_1",
         active_assignment_id=own.id,
     )
 
@@ -110,7 +117,11 @@ def test_context_includes_recent_finished_work_for_revision(tmp_path):
             summary=f"已交付 {assignment.title}",
         )
     assert store.get_assignment(own.id).status == AssignmentStatus.COMPLETED
-    agent = SimpleNamespace(assignment_service=service, user_id="person_1")
+    agent = SimpleNamespace(
+        assignment_service=service,
+        user_id="person_1",
+        session_id="session_1",
+    )
 
     rendered = render_assignment_context(agent)
 
@@ -118,4 +129,23 @@ def test_context_includes_recent_finished_work_for_revision(tmp_path):
     assert "公司介绍 PPT" in rendered
     assert "revise_assignment" in rendered
     assert "机密报告" not in rendered
+    store.close()
+
+
+def test_context_excludes_same_person_assignment_from_another_session(tmp_path):
+    store = AssignmentStore(tmp_path / "brain.db")
+    service = AssignmentService(store, person_exists=lambda _person_id: True)
+    _offer(service, "person_1", "当前会话工作", "assignment_1", "session_1")
+    _offer(service, "person_1", "其他会话工作", "assignment_2", "session_2")
+    agent = SimpleNamespace(
+        assignment_service=service,
+        user_id="person_1",
+        session_id="session_1",
+        active_assignment_id="",
+    )
+
+    rendered = render_assignment_context(agent)
+
+    assert "当前会话工作" in rendered
+    assert "其他会话工作" not in rendered
     store.close()

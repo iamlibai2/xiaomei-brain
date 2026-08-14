@@ -816,6 +816,21 @@ export interface GatewayBridge {
     provider: "feishu" | "dingtalk";
     bindingId: string;
   }): Promise<JsonRpcResponse>;
+  getAgentConfig(args: {
+    agentId: string;
+    section: string;
+  }): Promise<JsonRpcResponse>;
+  updateAgentConfig(args: {
+    agentId: string;
+    section: string;
+    values: Record<string, unknown>;
+    revision?: string;
+  }): Promise<JsonRpcResponse>;
+  resetAgentConfig(args: {
+    agentId: string;
+    section: string;
+    revision?: string;
+  }): Promise<JsonRpcResponse>;
   getModelConfig(args: { agentId: string }): Promise<JsonRpcResponse>;
   getModelCatalog(args: { agentId: string; providerId?: string }): Promise<JsonRpcResponse>;
   testModelProvider(args: {

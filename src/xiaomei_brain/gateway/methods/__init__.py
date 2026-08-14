@@ -9,6 +9,7 @@ from .chat import ChatMethods
 from .capabilities import CapabilityMethods
 from .channels import ChannelMethods
 from .connection import ConnectionMethods
+from .config import ConfigMethods
 from .embodiments import EmbodimentMethods
 from .execution import ExecutionEnvironmentMethods
 from .identity import IdentityMethods
@@ -35,6 +36,7 @@ __all__ = [
     "CapabilityMethods",
     "ChannelMethods",
     "ConnectionMethods",
+    "ConfigMethods",
     "EmbodimentMethods",
     "ExecutionEnvironmentMethods",
     "IdentityMethods",

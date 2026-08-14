@@ -476,6 +476,7 @@ class ConsciousLiving(Living):
         self.consciousness._cancel_check = lambda: self._cancel_requested
         self._load_consciousness = load_consciousness
         self.agent.commands._self_image = self.consciousness.self_image
+        self.consciousness.self_image._context_config = self._config.context
         boot_line("意识核心", "OK", f"agent={self._agent_id}")
 
         # ── 内感受（Interoception）—— 身体状态感知 ──
@@ -1281,6 +1282,7 @@ class ConsciousLiving(Living):
             # _restore_snapshot() 会用新的 SelfImage 替换 self.consciousness.self_image，
             # 之前在 __init__ 挂载的运行时引用需要重新绑定到新对象上。
             si = self.consciousness.self_image
+            si._context_config = self._config.context
             if self._inner_voice:
                 self._inner_voice._self_image = si
             if self._social_cognition:

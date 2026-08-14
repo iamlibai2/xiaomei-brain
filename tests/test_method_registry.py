@@ -58,6 +58,9 @@ def test_method_router_exposes_domain_composed_catalog():
         "interaction.respond",
         "action.respond",
         "identity.list",
+        "config.get",
+        "config.update",
+        "config.reset",
     }.issubset(set(router.method_names))
 
 

@@ -374,6 +374,7 @@
       "modelContext": "Model Context",
       "executionAnalysis": "Execution Analysis",
       "promptAnalysis": "Prompt Analysis",
+      "contextControl": "Context Management",
       "window": "Window(W)",
       "reload": "Reload",
       "close": "Close Window",
@@ -561,6 +562,55 @@
       "source": {
         "capability": "Capability dependency",
         "semantic": "Semantic retrieval"
+      }
+    },
+    "contextControl": {
+      "title": "Context management",
+      "subtitle": "Choose what the next LLM call receives without stopping memory work, retrieval, or state updates.",
+      "currentAgent": "Current Agent: {{name}}",
+      "enabledCount": "{{enabled}} of {{total}} enabled",
+      "reset": "Restore defaults",
+      "loadFailed": "Unable to load context settings",
+      "updateFailed": "Unable to save context settings",
+      "resetFailed": "Unable to restore default settings",
+      "groups": {
+        "identity": { "title": "Self and identity", "description": "How the Agent understands who it is, what it stands for, and how it exists." },
+        "state": { "title": "State", "description": "Current body, emotion, drives, and recently observed changes." },
+        "memory": { "title": "Memory", "description": "Short-term, long-term, narrative, experience, and relationship memories." },
+        "continuity": { "title": "Conversation continuity", "description": "Current-session context, cross-channel dialog, and stable procedures." },
+        "work": { "title": "Internal work context", "description": "Learning queue and the Agent's internal desktop state." },
+        "execution": { "title": "Execution context", "description": "Abilities, work objects, and execution rules available in this turn." }
+      },
+      "sections": {
+        "header": { "title": "Time and scene", "description": "Current time, period, and basic scene information." },
+        "being": { "title": "Sense of being", "description": "The Agent's current understanding of its own existence." },
+        "cornerstone": { "title": "Cornerstones", "description": "Stable principles and constraints that should not change casually." },
+        "essence": { "title": "Essence", "description": "Core identity, personality, and self-narrative." },
+        "body": { "title": "Body and emotion", "description": "Energy, drives, emotions, and simulated regulation state." },
+        "observed": { "title": "Recent observations", "description": "Recently perceived changes in the environment and self." },
+        "short_term_memories": { "title": "Short-term memory", "description": "Recent memories that have not yet settled into long-term memory." },
+        "long_term_memories": { "title": "Long-term memory", "description": "Long-term memories related to the current person and Agent." },
+        "relation_chains": { "title": "Relationship chains", "description": "Relationships, interaction history, and connected memories." },
+        "dag_summaries": { "title": "Conversation summaries", "description": "Compressed history summaries for the current conversation." },
+        "narratives": { "title": "Narrative memory", "description": "Structured narratives formed from experience." },
+        "internal_narratives": { "title": "Internal narratives", "description": "Internal records formed by the Agent's own activity." },
+        "experience": { "title": "Experience", "description": "Experience distilled from previous execution and events." },
+        "experience_timeline": { "title": "Experience timeline", "description": "Recent experience and milestones in chronological order." },
+        "procedures": { "title": "Procedures", "description": "Stable ways of working and procedural knowledge." },
+        "recent_dialog": { "title": "Current conversation", "description": "Recent raw messages in the current conversation." },
+        "cross_user_dialog": { "title": "Cross-channel dialog", "description": "Relevant recent dialog with the same person on other channels." },
+        "learn_queue": { "title": "Learning queue", "description": "Topics currently queued for learning or attention." },
+        "desk": { "title": "Internal desktop", "description": "The current desktop and work scene in the Agent's consciousness." },
+        "capabilities": { "title": "Capabilities", "description": "Semantically matched capability summaries and deterministic dependencies." },
+        "skills": { "title": "Skills", "description": "Skill summaries prefetched or explicitly selected for this turn." },
+        "tool_discovery": { "title": "Tool discovery policy", "description": "Tells the model to discover abilities when required tools are missing." },
+        "explicit_files": { "title": "Explicit file references", "description": "Existing workspace files explicitly mentioned in the current request." },
+        "group_observations": { "title": "Group observations", "description": "Recent ordinary group messages used to understand the current scene." },
+        "project": { "title": "Project", "description": "Current project stages, progress, and delivery information." },
+        "workspace": { "title": "Workspace", "description": "The focused business Workspace and its related data structures." },
+        "process": { "title": "Process", "description": "Delivery standards and checks governing the current project." },
+        "assignment": { "title": "Assignment", "description": "Assignment state and progress visible to the current person and conversation." },
+        "memory_policy": { "title": "Memory decision policy", "description": "Asks the model whether this turn should form a memory." }
       }
     },
     "promptAnalysis": {

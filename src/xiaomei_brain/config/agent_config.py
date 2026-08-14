@@ -423,6 +423,14 @@ def _build_living_config(data: dict):
                 daily_min_strength=context.get("daily_min_strength", 0.6),
                 reflect_min_strength=context.get("reflect_min_strength", 0.4),
                 short_input_threshold=context.get("short_input_threshold", 15),
+                prompt_sections={
+                    **config.context.prompt_sections,
+                    **(
+                        context.get("prompt_sections", {})
+                        if isinstance(context.get("prompt_sections", {}), dict)
+                        else {}
+                    ),
+                },
             )
 
         keywords = data.get("keywords", {})

@@ -17,6 +17,7 @@ from .methods import (
     CapabilityMethods,
     ChatMethods,
     ChannelMethods,
+    ConfigMethods,
     ConnectionMethods,
     EmbodimentMethods,
     ExecutionEnvironmentMethods,
@@ -59,6 +60,7 @@ class MethodRouter:
             capability_provider=self._capabilities,
         )
         self._chat_methods = ChatMethods(living)
+        self._config_methods = ConfigMethods(living)
         self._capability_methods = CapabilityMethods(living)
         self._embodiment_methods = EmbodimentMethods(living)
         self._execution_environment_methods = ExecutionEnvironmentMethods(living)
@@ -101,6 +103,7 @@ class MethodRouter:
         )
         for provider in (
             self._chat_methods,
+            self._config_methods,
             self._capability_methods,
             self._embodiment_methods,
             self._execution_environment_methods,
@@ -156,6 +159,11 @@ class MethodRouter:
             "event.timestamp",
         }
         requirements = {
+            "config.manage": {
+                "config.get",
+                "config.update",
+                "config.reset",
+            },
             "message.lifecycle": {"chat.send"},
             "tool.lifecycle": {"chat.send"},
             "interaction.question": {"interaction.respond"},

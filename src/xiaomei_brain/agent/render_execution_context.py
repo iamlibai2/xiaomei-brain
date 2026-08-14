@@ -69,25 +69,25 @@ def render_execution_context(agent: Any, user_input: str) -> str:
             "query": selection_query or user_input,
             "result": prefetched,
         }
-        _append(parts, prefetched.get("context"))
+        _append_section(agent, parts, "capabilities", prefetched.get("context"))
     else:
         capability_registry = getattr(agent, "_capability_registry", None)
         capability_builder = getattr(capability_registry, "build_context", None)
         if callable(capability_builder):
-            _append(parts, capability_builder(user_input))
+            _append_section(agent, parts, "capabilities", capability_builder(user_input))
 
-    _append(parts, _render_explicit_workspace_files(agent, user_input))
-    _append(parts, _render_group_observations(agent))
+    _append_section(agent, parts, "explicit_files", _render_explicit_workspace_files(agent, user_input))
+    _append_section(agent, parts, "group_observations", _render_group_observations(agent))
 
     from xiaomei_brain.projects import render_project_context
     from xiaomei_brain.workspaces import render_workspace_context
     from xiaomei_brain.processes import render_process_context
     from xiaomei_brain.assignments import render_assignment_context
 
-    _append(parts, render_project_context(agent))
-    _append(parts, render_workspace_context(agent, user_input))
-    _append(parts, render_process_context(agent))
-    _append(parts, render_assignment_context(agent))
+    _append_section(agent, parts, "project", render_project_context(agent))
+    _append_section(agent, parts, "workspace", render_workspace_context(agent, user_input))
+    _append_section(agent, parts, "process", render_process_context(agent))
+    _append_section(agent, parts, "assignment", render_assignment_context(agent))
     return "\n\n".join(parts)
 
 
@@ -177,8 +177,10 @@ def prepare_execution_selection(
         },
     }
 
-    execution_prompts = [skill_prompt]
-    if dynamic_loader:
+    execution_prompts = [
+        skill_prompt if _section_enabled(agent, "skills") else "",
+    ]
+    if dynamic_loader and _section_enabled(agent, "tool_discovery"):
         execution_prompts.append(_TOOL_DISCOVERY_PROMPT)
     return append_system_context(
         messages,
@@ -218,6 +220,8 @@ def inject_memory_policy(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Add the common memory-decision policy to one LLM request."""
+    if not _section_enabled(agent, "memory_policy"):
+        return [dict(message) for message in messages]
     prompt = MEMORY_DECISION_PROMPT.format(
         user_name=getattr(agent, "user_display_name", "这位用户"),
     )
@@ -249,6 +253,21 @@ def append_system_context(
 def _append(parts: list[str], value: Any) -> None:
     if isinstance(value, str) and value.strip():
         parts.append(value)
+
+
+def _append_section(agent: Any, parts: list[str], name: str, value: Any) -> None:
+    """Append rendered text only when its final-prompt section is enabled."""
+    if _section_enabled(agent, name):
+        _append(parts, value)
+
+
+def _section_enabled(agent: Any, name: str) -> bool:
+    living_config = getattr(agent, "_living_cfg", None)
+    context_config = getattr(living_config, "context", None)
+    policy = getattr(context_config, "prompt_sections", {})
+    if not isinstance(policy, dict):
+        return True
+    return policy.get(name, True) is not False
 
 
 def _with_runtime_context(agent: Any, query: str) -> str:

@@ -118,6 +118,40 @@ class ContextConfig:
     # 模式判断
     short_input_threshold: int = 15    # 短输入字符数阈值
 
+    # 只控制最终提示词是否包含对应区块；记忆检索、状态更新等上游机制
+    # 仍然正常运行，便于单独观察某类上下文对模型响应的影响。
+    prompt_sections: dict[str, bool] = field(default_factory=lambda: {
+        "header": True,
+        "being": True,
+        "cornerstone": True,
+        "essence": True,
+        "body": True,
+        "observed": True,
+        "procedures": True,
+        "short_term_memories": True,
+        "long_term_memories": True,
+        "relation_chains": True,
+        "dag_summaries": True,
+        "narratives": True,
+        "internal_narratives": True,
+        "recent_dialog": True,
+        "cross_user_dialog": True,
+        "experience": True,
+        "experience_timeline": True,
+        "learn_queue": True,
+        "desk": True,
+        "capabilities": True,
+        "explicit_files": True,
+        "group_observations": True,
+        "project": True,
+        "workspace": True,
+        "process": True,
+        "assignment": True,
+        "skills": True,
+        "tool_discovery": True,
+        "memory_policy": True,
+    })
+
 
 # ── 关键词配置 ──────────────────────────────────────────────────────
 
