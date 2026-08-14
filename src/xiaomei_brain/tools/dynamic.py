@@ -608,12 +608,28 @@ class DynamicToolLoader:
             sections.get("current attachments", ""),
             sections.get("recent user context", ""),
         ]
-        # Embeddings need the actual intent, not English envelope labels or
-        # serialized tool results. Recent user messages resolve short follow-up
-        # requests; execution progress is deliberately excluded.
+        # Lexical matching may still use nearby user context to resolve short
+        # follow-up requests. Tool vector retrieval is intentionally stricter:
+        # it only embeds the current input (plus current attachments). The
+        # SelectionQuery context and its weighted embedding implementation are
+        # retained for Capability and Skill retrieval, but are disconnected
+        # from Tool retrieval here to avoid historical intent contaminating the
+        # current tool choice.
         query_text = "\n".join(part for part in intent_parts if part).casefold().strip()
         if not query_text:
             query_text = _SELECTION_CONTEXT_HEADINGS.sub("", raw_query).casefold().strip()
+        if isinstance(query, SelectionQuery):
+            semantic_query = query.primary.strip()
+        else:
+            semantic_query = "\n".join(
+                part for part in (
+                    sections.get("current user request", ""),
+                    sections.get("current attachments", ""),
+                )
+                if part
+            ).strip()
+            if not semantic_query:
+                semantic_query = query_text
         query_terms = self._search_terms(query_text)
         scores: dict[str, float] = {}
         semantic_distances: dict[str, float] = {}
@@ -653,12 +669,9 @@ class DynamicToolLoader:
         if table is not None:
             try:
                 if table.count_rows() > 0:
-                    embedding_query: str | SelectionQuery = (
-                        query if isinstance(query, SelectionQuery) else query_text
-                    )
                     query_vec = embed_selection_query(
                         self._get_embedder(),
-                        embedding_query,
+                        semantic_query,
                         source="tool.prefetch",
                     )
                     rows = table.search(query_vec).limit(
@@ -701,7 +714,7 @@ class DynamicToolLoader:
         record_vector_trace(
             source="tool.prefetch",
             phase="retrieval",
-            query=query_text,
+            query=semantic_query,
             candidates=[{
                 "id": name,
                 "name": name,
@@ -715,6 +728,7 @@ class DynamicToolLoader:
                 "top_k": limit,
                 "threshold_metric": "max_l2_distance",
                 "excluded": sorted(excluded_names),
+                "query_scope": "current_input",
             },
         )
         return [name_to_tool[name] for name in selected_names]

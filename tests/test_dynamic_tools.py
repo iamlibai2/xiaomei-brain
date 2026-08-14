@@ -872,7 +872,7 @@ def test_execution_progress_does_not_pollute_lexical_tool_ranking(monkeypatch):
     assert [tool.name for tool in loader.select_tools(query)] == ["write_document"]
 
 
-def test_prefetch_embeds_plain_intent_without_execution_progress(monkeypatch):
+def test_prefetch_embeds_only_current_input(monkeypatch):
     reg = _registry_with_tools(
         ("write_document", "创建 Word 文件和 PowerPoint 演示文稿"),
         ("play_music", "播放音乐"),
@@ -918,10 +918,61 @@ def test_prefetch_embeds_plain_intent_without_execution_progress(monkeypatch):
     later = loader.select_tools(later_query, step=1)
 
     assert embedded_queries == [
-        "随便写一页\n- 演示文稿会写吗",
-        "随便写一页\n- 演示文稿会写吗",
+        "随便写一页",
+        "随便写一页",
     ]
     assert [tool.name for tool in later] == [tool.name for tool in first]
+
+
+def test_prefetch_ignores_selection_query_context_for_vector_search(monkeypatch):
+    from xiaomei_brain.base.selection_query import SelectionQuery
+
+    reg = _registry_with_tools(
+        ("write_document", "创建 Word 文件和 PowerPoint 演示文稿"),
+        ("play_music", "播放音乐"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+    embedded_queries: list[str] = []
+
+    class _Search:
+        @staticmethod
+        def limit(_count):
+            return _Search()
+
+        @staticmethod
+        def to_list():
+            return []
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 1
+
+        @staticmethod
+        def search(_vector):
+            return _Search()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(
+        loader._shared,
+        "embed",
+        lambda query, **_kwargs: embedded_queries.append(query) or [0.0],
+    )
+    monkeypatch.setattr(
+        loader._shared,
+        "embed_batch",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Tool vector retrieval must not embed nearby context"
+        ),
+    )
+
+    query = SelectionQuery(
+        "写个 Word 文件\n当前附件: 要求.docx",
+        "上一轮让我播放音乐",
+    )
+    loader.select_tools(query)
+
+    assert embedded_queries == ["写个 Word 文件\n当前附件: 要求.docx"]
 
 
 def test_semantic_prefetch_accepts_absolutely_relevant_tool(monkeypatch):
