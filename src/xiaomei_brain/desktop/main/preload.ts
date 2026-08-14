@@ -70,6 +70,7 @@ const CHANNEL_MAP = {
     cancelCapabilitySetup: { invoke: "gateway:cancelCapabilitySetup" },
     runCapabilityOAuth: { invoke: "gateway:runCapabilityOAuth" },
     inspectCapabilityPackage: { invoke: "gateway:inspectCapabilityPackage" },
+    inspectCapabilityArtifact: { invoke: "gateway:inspectCapabilityArtifact" },
     listCapabilityPackages: { invoke: "gateway:listCapabilityPackages" },
     installCapabilityPackage: { invoke: "gateway:installCapabilityPackage" },
     setCapabilityPackageActive: { invoke: "gateway:setCapabilityPackageActive" },

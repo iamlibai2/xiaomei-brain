@@ -741,6 +741,11 @@ export interface GatewayBridge {
     authorizationUrl: string;
   }): Promise<JsonRpcResponse>;
   inspectCapabilityPackage(args: { agentId: string }): Promise<JsonRpcResponse>;
+  inspectCapabilityArtifact(args: {
+    agentId: string;
+    sessionId: string;
+    artifactId: string;
+  }): Promise<JsonRpcResponse>;
   listCapabilityPackages(args: { agentId: string }): Promise<JsonRpcResponse>;
   installCapabilityPackage(args: { agentId: string; sha256: string }): Promise<JsonRpcResponse>;
   setCapabilityPackageActive(args: {

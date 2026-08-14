@@ -12,6 +12,7 @@ import { ChatInput } from "./ChatInput";
 import { ChatTopbar } from "./ChatTopbar";
 import {
   CAPABILITY_STATUS_CHANGED_EVENT,
+  notifyCapabilityStatusChanged,
   openSettingsCenter,
   type SettingsSection,
 } from "../settings/events";
@@ -26,6 +27,7 @@ import { enqueueMediaFilePlayback } from "../../embodiment";
 import { MusicPlayer } from "../music-player/MusicPlayer";
 import { VideoPlayer } from "../media-player/VideoPlayer";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
+import { CapabilityPackageInspectionDialog } from "../capabilities/CapabilityPackageInspectionDialog";
 import {
   ArtifactPresentationStage,
   type PresentationMediaCommand,
@@ -33,6 +35,7 @@ import {
 import type { PresentationStageLayout } from "../presentation-stage/PresentationStage";
 import type {
   ChatArtifactReference,
+  CapabilityPackageInspection,
   ContextTokenPressure,
   TokenUsageTurn,
 } from "../../types";
@@ -1647,6 +1650,10 @@ function ArtifactCard({
   const [opening, setOpening] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [packageInspection, setPackageInspection] = useState<CapabilityPackageInspection | null>(null);
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [packageNotice, setPackageNotice] = useState("");
+  const [packageUpdating, setPackageUpdating] = useState(false);
   const previewSupported = supportsArtifactPreview(artifact);
   const isCapabilityPackage = artifact.name.toLowerCase().endsWith(".xmcap");
   const setDraft = useCoreStore((state) => state.setDraft);
@@ -1741,6 +1748,71 @@ function ArtifactCard({
     }
   };
 
+  const inspectCapabilityPackage = async () => {
+    if (!agentId || !sessionId || packageBusy) return;
+    setPackageBusy(true);
+    setPackageNotice("");
+    setError("");
+    try {
+      const response = await window.gateway.inspectCapabilityArtifact({
+        agentId,
+        sessionId,
+        artifactId: artifact.id,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const inspection = response.result?.inspection;
+      if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
+        throw new Error(t("capabilityUi.invalidInspection"));
+      }
+      const parsed = inspection as unknown as CapabilityPackageInspection;
+      setPackageInspection(parsed);
+      setPackageUpdating(false);
+      const packageId = parsed.manifest?.package.id;
+      const packageVersion = parsed.manifest?.package.version;
+      if (packageId && packageVersion) {
+        const installedResponse = await window.gateway.listCapabilityPackages({ agentId });
+        const installedPackages = installedResponse.result?.packages;
+        if (!installedResponse.error && Array.isArray(installedPackages)) {
+          setPackageUpdating(installedPackages.some((item) => (
+            item
+            && typeof item === "object"
+            && !Array.isArray(item)
+            && (item as Record<string, unknown>).id === packageId
+            && (item as Record<string, unknown>).version !== packageVersion
+          )));
+        }
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPackageBusy(false);
+    }
+  };
+
+  const installCapabilityPackage = async () => {
+    if (!packageInspection || packageBusy) return;
+    setPackageBusy(true);
+    setError("");
+    try {
+      const response = await window.gateway.installCapabilityPackage({
+        agentId,
+        sha256: packageInspection.sha256,
+      });
+      if (response.error) throw new Error(response.error.message);
+      const operation = response.result?.operation;
+      setPackageInspection(null);
+      setPackageUpdating(false);
+      notifyCapabilityStatusChanged(agentId, packageInspection.manifest?.package.id || "");
+      setPackageNotice(operation === "upgraded"
+        ? t("capabilityUi.upgradeNotice", { suffix: "" })
+        : t("capabilityUi.installNotice"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPackageBusy(false);
+    }
+  };
+
   const size = artifact.size < 1024
     ? `${artifact.size} B`
     : artifact.size < 1024 * 1024
@@ -1824,7 +1896,8 @@ function ArtifactCard({
   }
 
   return (
-    <div className={`assistant-message-row artifact-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
+    <>
+      <div className={`assistant-message-row artifact-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
       {showAgentHeader && (
         <div className="assistant-avatar">
           <div className="assistant-avatar-face">{agentName.charAt(0)}</div>
@@ -1836,13 +1909,13 @@ function ArtifactCard({
           type="button"
           className={`artifact-card artifact-${artifact.kind}`}
           onClick={() => isCapabilityPackage
-            ? void download()
+            ? void inspectCapabilityPackage()
             : ["audio", "video"].includes(artifact.kind)
             ? void playMedia()
             : previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
-          disabled={opening || playing || downloading}
+          disabled={opening || playing || downloading || packageBusy}
           title={error || `${isCapabilityPackage
-            ? t("home.download")
+            ? t("capabilityUi.packageCheck")
             : ["audio", "video"].includes(artifact.kind)
             ? t("mediaPlayer.play")
             : previewSupported ? t("common.preview") : t("common.open")} ${artifact.name}`}
@@ -1862,19 +1935,32 @@ function ArtifactCard({
                 ? t("mediaPlayer.loading")
                 : downloading ? t("home.downloading")
                 : opening ? t("home.opening")
-                  : isCapabilityPackage ? t("home.download")
+                  : packageBusy ? t("capabilityUi.checking")
+                  : isCapabilityPackage ? t("capabilityUi.packageCheck")
                   : ["audio", "video"].includes(artifact.kind) ? t("mediaPlayer.play")
                     : previewSupported ? t("home.preview") : t("home.open")}
             </span>
             {error && <span className="artifact-error">{error}</span>}
+            {packageNotice && <span className="artifact-success">{packageNotice}</span>}
           </span>
           <Icon
-            name={isCapabilityPackage ? "download" : ["audio", "video"].includes(artifact.kind) ? "play" : previewSupported ? "eye" : "external-link"}
+            name={isCapabilityPackage ? "shield" : ["audio", "video"].includes(artifact.kind) ? "play" : previewSupported ? "eye" : "external-link"}
             size={16}
             className="artifact-open-icon"
           />
         </button>
-        {!isCapabilityPackage && (
+        {isCapabilityPackage ? (
+          <button
+            type="button"
+            className="artifact-present-button"
+            onClick={() => void download()}
+            disabled={downloading || packageBusy}
+            title={t("home.download")}
+            aria-label={`${t("home.download")} ${artifact.name}`}
+          >
+            <Icon name="download" size={15} />
+          </button>
+        ) : (
           <button
             type="button"
             className="artifact-present-button"
@@ -1889,7 +1975,22 @@ function ArtifactCard({
       {artifact.kind === "video" && (
         <VideoPlayer variant="inline" artifactId={artifact.id} />
       )}
-    </div>
+      </div>
+      {packageInspection && (
+        <CapabilityPackageInspectionDialog
+          inspection={packageInspection}
+          installing={packageBusy}
+          actionError={error}
+          updating={packageUpdating}
+          onInstall={() => void installCapabilityPackage()}
+          onClose={() => {
+            if (packageBusy) return;
+            setPackageInspection(null);
+            setPackageUpdating(false);
+          }}
+        />
+      )}
+    </>
   );
 }
 

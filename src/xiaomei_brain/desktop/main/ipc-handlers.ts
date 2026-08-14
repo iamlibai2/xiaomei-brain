@@ -48,10 +48,20 @@ function invalidateArtifactCache(
     if (key.startsWith(prefix)) artifactCache.delete(key);
   }
 }
-const inspectedCapabilityPackages = new Map<string, {
+type InspectedCapabilityPackageSource = {
+  source: "file";
   filePath: string;
+  fileName: string;
   sha256: string;
-}>();
+} | {
+  source: "artifact";
+  sessionId: string;
+  artifactId: string;
+  fileName: string;
+  sha256: string;
+};
+
+const inspectedCapabilityPackages = new Map<string, InspectedCapabilityPackageSource>();
 const MAX_CACHED_ATTACHMENTS = 32;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -1785,7 +1795,63 @@ export function registerIpcHandlers(
         && !Array.isArray(inspection)
         && (inspection as Record<string, unknown>).valid === true
       ) {
-        inspectedCapabilityPackages.set(args.agentId, { filePath, sha256 });
+        inspectedCapabilityPackages.set(args.agentId, {
+          source: "file",
+          filePath,
+          fileName: path.basename(filePath),
+          sha256,
+        });
+      }
+      return response;
+    } catch (error) {
+      return {
+        error: {
+          code: -32603,
+          message: String(error instanceof Error ? error.message : error),
+        },
+      };
+    }
+  });
+
+  ipcMain.handle("gateway:inspectCapabilityArtifact", async (_event, args: {
+    agentId: string;
+    sessionId: string;
+    artifactId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    try {
+      const fetched = await fetchArtifact(args.agentId, args.sessionId, args.artifactId);
+      if ("error" in fetched) return fetched;
+      const artifact = fetched.artifact;
+      if (!artifact.name.toLowerCase().endsWith(".xmcap")) {
+        return { error: { code: -32602, message: "Artifact is not a Xiaomei capability package" } };
+      }
+      if (artifact.size > MAX_CAPABILITY_PACKAGE_BYTES) {
+        return { error: { code: -32602, message: "Capability package exceeds the 8 MB inspection limit" } };
+      }
+      const data = Buffer.from(artifact.dataBase64, "base64");
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      const response = await client.rpc("capability.package.inspect", {
+        file_name: artifact.name,
+        data_base64: artifact.dataBase64,
+        sha256,
+      });
+      const inspection = response.result?.inspection;
+      if (
+        !response.error
+        && inspection
+        && typeof inspection === "object"
+        && !Array.isArray(inspection)
+        && (inspection as Record<string, unknown>).valid === true
+      ) {
+        inspectedCapabilityPackages.set(args.agentId, {
+          source: "artifact",
+          sessionId: args.sessionId,
+          artifactId: args.artifactId,
+          fileName: artifact.name,
+          sha256,
+        });
       }
       return response;
     } catch (error) {
@@ -1817,14 +1883,21 @@ export function registerIpcHandlers(
       return { error: { code: -32602, message: "能力包预览已失效，请重新选择文件" } };
     }
     try {
-      const data = await fs.readFile(selected.filePath);
+      let data: Buffer;
+      if (selected.source === "file") {
+        data = await fs.readFile(selected.filePath);
+      } else {
+        const fetched = await fetchArtifact(args.agentId, selected.sessionId, selected.artifactId);
+        if ("error" in fetched) return fetched;
+        data = Buffer.from(fetched.artifact.dataBase64, "base64");
+      }
       const sha256 = createHash("sha256").update(data).digest("hex");
       if (sha256 !== selected.sha256 || data.length > MAX_CAPABILITY_PACKAGE_BYTES) {
         inspectedCapabilityPackages.delete(args.agentId);
         return { error: { code: -32602, message: "能力包内容已改变，请重新检查" } };
       }
       const installed = await client.rpc("capability.package.install", {
-        file_name: path.basename(selected.filePath),
+        file_name: selected.fileName,
         data_base64: data.toString("base64"),
         sha256,
       });

@@ -4087,6 +4087,12 @@ body.is-resizing-artifact-workspace {
   font-size: 11px;
 }
 
+.artifact-success {
+  color: var(--success-text, #19724b);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .artifact-open-icon {
   flex: 0 0 auto;
   color: var(--ui-color-text-tertiary);
