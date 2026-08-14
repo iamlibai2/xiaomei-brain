@@ -6,11 +6,15 @@ import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from xiaomei_brain.runtime_services.http_utils import health_payload, read_json, send_json
+
+
+_VECTOR_CACHE_LIMIT = 512
 
 
 def create_embedding_handler(
@@ -23,6 +27,38 @@ def create_embedding_handler(
     on_inference: Callable[[], None],
 ) -> type[BaseHTTPRequestHandler]:
     """Create an embedding handler with request attribution and timing logs."""
+
+    # The embedding model is shared by every local Agent. A single user turn
+    # can ask several independent indexes for the same query vector (memory,
+    # Procedure, Capability, Skill and Tool discovery). Cache at the service
+    # boundary so all callers and all Agent processes benefit without coupling
+    # their domain indexes.
+    vector_cache: OrderedDict[str, list[float]] = OrderedDict()
+    cache_lock = threading.Lock()
+
+    def cache_key(text: str) -> str:
+        # Whitespace formatting is not semantic input for retrieval, and the
+        # same query is commonly rendered once with line breaks and once with
+        # spaces by adjacent context producers.
+        return " ".join(str(text).split())
+
+    def cached_vectors(keys: list[str]) -> list[list[float] | None]:
+        with cache_lock:
+            values: list[list[float] | None] = []
+            for key in keys:
+                value = vector_cache.get(key)
+                if value is not None:
+                    vector_cache.move_to_end(key)
+                values.append(value)
+            return values
+
+    def store_vectors(values: dict[str, list[float]]) -> None:
+        with cache_lock:
+            for key, vector in values.items():
+                vector_cache[key] = vector
+                vector_cache.move_to_end(key)
+            while len(vector_cache) > _VECTOR_CACHE_LIMIT:
+                vector_cache.popitem(last=False)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -67,6 +103,7 @@ def create_embedding_handler(
                 return
 
             item_count = len(texts)
+            keys = [cache_key(text) for text in texts]
             total_chars = sum(len(text) for text in texts)
             max_chars = max((len(text) for text in texts), default=0)
             queued = inference_lock.locked()
@@ -82,16 +119,40 @@ def create_embedding_handler(
             )
 
             wait_started = time.perf_counter()
-            acquired_at: float | None = None
+            acquired_at = wait_started
+            inference_finished_at = wait_started
+            initial_values = cached_vectors(keys)
+            initial_hits = sum(value is not None for value in initial_values)
             try:
-                with inference_lock:
-                    acquired_at = time.perf_counter()
-                    if mode == "batch":
-                        encoded = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-                    else:
-                        encoded = model.encode(texts[0], normalize_embeddings=True, show_progress_bar=False)
-                    inference_finished_at = time.perf_counter()
-                on_inference()
+                if initial_hits < item_count:
+                    with inference_lock:
+                        acquired_at = time.perf_counter()
+                        # Another request may have populated the cache while
+                        # this request waited for the model lock.
+                        current_values = cached_vectors(keys)
+                        missing: dict[str, str] = {}
+                        for key, text, value in zip(keys, texts, current_values):
+                            if value is None and key not in missing:
+                                missing[key] = text
+                        if missing:
+                            missing_keys = list(missing)
+                            missing_texts = [missing[key] for key in missing_keys]
+                            encoded_missing = model.encode(
+                                missing_texts[0] if len(missing_texts) == 1 else missing_texts,
+                                normalize_embeddings=True,
+                                show_progress_bar=False,
+                            )
+                            if len(missing_texts) == 1:
+                                encoded_rows = [encoded_missing.tolist()]
+                            else:
+                                encoded_rows = encoded_missing.tolist()
+                            store_vectors(dict(zip(missing_keys, encoded_rows)))
+                        inference_finished_at = time.perf_counter()
+                    if missing:
+                        on_inference()
+                vectors = cached_vectors(keys)
+                if any(vector is None for vector in vectors):
+                    raise RuntimeError("embedding cache did not contain every requested vector")
             except Exception as exc:
                 finished_at = time.perf_counter()
                 queue_finished_at = acquired_at if acquired_at is not None else finished_at
@@ -109,19 +170,18 @@ def create_embedding_handler(
                 _send_safely(self, 400, {"error": str(exc)}, request_id, request_source)
                 return
 
-            assert acquired_at is not None
             response = {"model": model_id, "dim": dimension, "request_id": request_id}
             if mode == "batch":
-                response["vectors"] = encoded.tolist()
+                response["vectors"] = vectors
             else:
-                response["vector"] = encoded.tolist()
+                response["vector"] = vectors[0]
 
             response_started_at = time.perf_counter()
             sent = _send_safely(self, 200, response, request_id, request_source)
             finished_at = time.perf_counter()
             logging.info(
                 "[EmbedTrace] done id=%s source=%s mode=%s items=%d chars=%d queue_ms=%d "
-                "inference_ms=%d response_ms=%d total_ms=%d status=%s",
+                "inference_ms=%d response_ms=%d total_ms=%d cache_hits=%d cache_misses=%d status=%s",
                 request_id,
                 request_source,
                 mode,
@@ -131,6 +191,8 @@ def create_embedding_handler(
                 _milliseconds(inference_finished_at - acquired_at),
                 _milliseconds(finished_at - response_started_at),
                 _milliseconds(finished_at - received_at),
+                initial_hits,
+                item_count - initial_hits,
                 "ok" if sent else "client_disconnected",
             )
 

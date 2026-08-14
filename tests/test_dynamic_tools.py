@@ -200,6 +200,47 @@ def test_execution_renderer_exposes_selection_snapshot():
     assert snapshot["tools"]["required"] == ["write_document"]
 
 
+def test_capability_prefetch_is_reused_by_context_and_execution_selection():
+    from xiaomei_brain.agent.render_execution_context import (
+        prepare_execution_selection,
+        render_execution_context,
+    )
+
+    class Discovery:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_discovery = None
+
+        def begin_run(self) -> None:
+            self.last_discovery = None
+
+        def prefetch(self, query: str, *, person_id: str):
+            self.calls += 1
+            return {
+                "capabilities": [{"id": "office_documents", "name": "Office"}],
+                "skills": [],
+                "context": "<relevant_capability>Office</relevant_capability>",
+            }
+
+    agent = Agent(llm=object(), tools=ToolRegistry())
+    agent.session_id = "session-1"
+    agent.turn_id = "turn-1"
+    agent.user_id = "person-1"
+    agent.messages = [{"role": "user", "content": "write a report"}]
+    discovery = Discovery()
+    agent._discovery_service = discovery
+
+    rendered = render_execution_context(agent, "write a report")
+    prepare_execution_selection(agent, [
+        {"role": "system", "content": "consciousness"},
+        {"role": "user", "content": "write a report"},
+    ])
+
+    assert discovery.calls == 1
+    assert "<relevant_capability>Office</relevant_capability>" in rendered
+    assert agent._execution_selection_base["capability"]["capabilities"][0]["id"] == "office_documents"
+
+
 def test_focused_workspace_does_not_expand_a_keyword_rule_kit(monkeypatch):
     tool_names = (
         "get_current_workspace",

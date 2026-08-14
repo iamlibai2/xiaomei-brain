@@ -204,6 +204,7 @@ class Consciousness:
             return
         llm = getattr(self.agent, "llm", None)
         self._procedure_memory = ProcedureMemory(db_path, llm_client=llm)
+        self._procedure_memory.build_index()
         # 同步到 agent 上，供 ContextAssembler 注入读取
         if self.agent:
             self.agent._procedure_memory = self._procedure_memory

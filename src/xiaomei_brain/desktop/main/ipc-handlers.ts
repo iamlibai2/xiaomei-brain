@@ -235,7 +235,10 @@ export function registerIpcHandlers(
     try {
       return {
         ok: true,
-        service: await localAIRuntime.control(args.serviceId, args.action, args.device || "auto"),
+        // An omitted device means "use the persisted service selection".  Do
+        // not turn it into `auto` here, otherwise an explicit CPU selection is
+        // silently overridden and a CUDA-capable host starts on the GPU.
+        service: await localAIRuntime.control(args.serviceId, args.action, args.device),
       };
     } catch (error) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) };

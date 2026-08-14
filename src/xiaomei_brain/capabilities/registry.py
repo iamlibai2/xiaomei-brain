@@ -8,7 +8,10 @@ import math
 import re
 import shutil
 import threading
+from pathlib import Path
 from typing import Any, Iterable
+
+from xiaomei_brain.base.persistent_vector_index import PersistentVectorIndex
 
 from .loader import CapabilityManifestLoader
 from .models import (
@@ -50,6 +53,7 @@ class CapabilityRegistry:
         tool_service_configuration: Any | None = None,
         runtime_probes: dict[str, Any] | None = None,
         definitions: Iterable[CapabilityDefinition] | None = None,
+        vector_index_path: str | Path | None = None,
     ) -> None:
         self._plugin_registry = plugin_registry
         self._tool_registry = tool_registry
@@ -62,7 +66,47 @@ class CapabilityRegistry:
         self._definitions = {definition.id: definition for definition in loaded}
         self._discovery_lock = threading.Lock()
         self._discovery_entries: list[dict[str, Any]] | None = None
+        self._discovery_build_started = False
+        self._vector_index = (
+            PersistentVectorIndex(
+                vector_index_path,
+                "capability_embeddings",
+                "capability.index",
+            )
+            if vector_index_path is not None
+            else None
+        )
         self._apply_activation_policy()
+
+    def build_discovery_index(self) -> int:
+        """Build the persistent index during Agent startup, not first chat."""
+        return len(self._ensure_discovery_entries())
+
+    def start_discovery_index_build(self) -> None:
+        """Warm the persistent index without blocking Agent availability."""
+        if (
+            self._vector_index is None
+            or self._discovery_entries is not None
+            or self._discovery_build_started
+        ):
+            return
+        with self._discovery_lock:
+            if self._discovery_build_started:
+                return
+            self._discovery_build_started = True
+        threading.Thread(
+            target=self._build_discovery_index_background,
+            name="capability-vector-index",
+            daemon=True,
+        ).start()
+
+    def _build_discovery_index_background(self) -> None:
+        try:
+            self._ensure_discovery_entries()
+        except Exception:
+            logger.exception("[Capability] background index build failed")
+            with self._discovery_lock:
+                self._discovery_entries = []
 
     def list(self, *, person_id: str = "") -> list[CapabilityView]:
         skill_names = self._load_skill_names()
@@ -137,6 +181,9 @@ class CapabilityRegistry:
         if not normalized:
             return []
         try:
+            if self._vector_index is not None and self._discovery_entries is None:
+                self.start_discovery_index_build()
+                return []
             entries = self._ensure_discovery_entries()
             from xiaomei_brain.base.shared_embedder import SharedEmbedder
             query_vector = SharedEmbedder.get_or_create().embed(
@@ -174,7 +221,6 @@ class CapabilityRegistry:
             if self._discovery_entries is not None:
                 return self._discovery_entries
             pending: list[dict[str, Any]] = []
-            texts: list[str] = []
             for definition in self._definitions.values():
                 for outcome in definition.outcomes:
                     descriptor = "\n".join([
@@ -198,20 +244,35 @@ class CapabilityRegistry:
                     # vectors. Embeddings do not model negation reliably, so
                     # "not for PPT" can otherwise make an HTML capability
                     # rank higher for a PPT request.
-                    for text in search_texts:
+                    for index, text in enumerate(search_texts):
                         pending.append({
+                            "id": f"{definition.id}::{outcome.id}::{index}",
                             "capability_id": definition.id,
                             "outcome_id": outcome.id,
                             "text": text,
                         })
-                        texts.append(text)
-            from xiaomei_brain.base.shared_embedder import SharedEmbedder
-            vectors = SharedEmbedder.get_or_create().embed_batch(
-                texts,
-                source="capability.index",
-            ) if texts else []
-            for entry, vector in zip(pending, vectors):
-                entry["vector"] = vector
+            if self._vector_index is not None:
+                vectors = self._vector_index.sync(
+                    ((entry["id"], entry["text"]) for entry in pending),
+                    batch_size=4,
+                    yield_seconds=0.02,
+                )
+                for entry in pending:
+                    vector = vectors.get(entry["id"])
+                    if vector is not None:
+                        entry["vector"] = vector
+                pending = [entry for entry in pending if "vector" in entry]
+            else:
+                # Tests and small standalone integrations may omit a cache
+                # path; retain the previous in-memory behaviour for them.
+                from xiaomei_brain.base.shared_embedder import SharedEmbedder
+                texts = [entry["text"] for entry in pending]
+                embedded = SharedEmbedder.get_or_create().embed_batch(
+                    texts,
+                    source="capability.index",
+                ) if texts else []
+                for entry, vector in zip(pending, embedded):
+                    entry["vector"] = vector
             self._discovery_entries = pending
             return self._discovery_entries
 
@@ -332,6 +393,11 @@ class CapabilityRegistry:
     def build_context(self, query: str, *, limit: int = 3, person_id: str = "") -> str:
         """Build a compact runtime-truth block for the current conversation."""
         views = self.resolve(query, limit=limit, person_id=person_id)
+        return self.render_context(views)
+
+    def render_context(self, views: Iterable[CapabilityView]) -> str:
+        """Render already-resolved capabilities without a second search."""
+        views = list(views)
         if not views:
             return ""
         labels = {

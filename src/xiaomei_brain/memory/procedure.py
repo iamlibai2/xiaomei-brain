@@ -21,8 +21,10 @@ import random
 import re
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
+from xiaomei_brain.base.persistent_vector_index import PersistentVectorIndex
 from xiaomei_brain.base.sqlite_store import SQLiteStore
 
 logger = logging.getLogger("xiaomei_brain.procedure")
@@ -189,6 +191,18 @@ class ProcedureStore(SQLiteStore):
 
     def __init__(self, db_path: str) -> None:
         super().__init__(db_path)
+        self._on_content_change = None
+
+    def set_content_change_callback(self, callback) -> None:
+        self._on_content_change = callback
+
+    def _notify_content_change(self) -> None:
+        if self._on_content_change is None:
+            return
+        try:
+            self._on_content_change()
+        except Exception:
+            logger.warning("%s Persistent index update failed", _P_LOG, exc_info=True)
 
     def _init_table(self) -> None:
         conn = self._get_conn()
@@ -265,6 +279,7 @@ class ProcedureStore(SQLiteStore):
         ))
         conn.commit()
         logger.info("%s Stored %s: %s", _P_LOG, proc_id, procedure.get("name", ""))
+        self._notify_content_change()
         return proc_id
 
     def get(self, proc_id: str) -> dict | None:
@@ -358,6 +373,7 @@ class ProcedureStore(SQLiteStore):
         conn.commit()
         if cur.rowcount > 0:
             logger.info("%s Archived %d procedures (weight < %.2f)", _P_LOG, cur.rowcount, threshold)
+            self._notify_content_change()
         return cur.rowcount
 
     def _row_to_dict(self, row: sqlite3.Row) -> dict:
@@ -375,8 +391,29 @@ class ProcedureStore(SQLiteStore):
 class ProcedureMatcher:
     """语义向量 + 关键词 boosted 的过程记忆匹配。"""
 
-    def __init__(self, store: ProcedureStore) -> None:
+    def __init__(
+        self,
+        store: ProcedureStore,
+        vector_index: PersistentVectorIndex | None = None,
+    ) -> None:
         self._store = store
+        self._vector_index = vector_index
+        self._vectors: dict[str, list[float]] = {}
+
+    @staticmethod
+    def _embedding_text(procedure: dict) -> str:
+        return f"{procedure['name']}: {procedure.get('description', '')}"
+
+    def build_index(self) -> int:
+        """Synchronize active Procedure vectors outside the chat hot path."""
+        if self._vector_index is None:
+            return 0
+        active = self._store.get_all_active()
+        self._vectors = self._vector_index.sync(
+            (procedure["id"], self._embedding_text(procedure))
+            for procedure in active
+        )
+        return len(self._vectors)
 
     def match(
         self,
@@ -427,9 +464,15 @@ class ProcedureMatcher:
 
         scored = []
         for proc in all_active:
-            text = f"{proc['name']}: {proc.get('description', '')}"
             try:
-                proc_vec = np.array(embed_fn(text))
+                cached_vector = self._vectors.get(proc["id"])
+                # Compatibility fallback for callers that intentionally use a
+                # custom embedder without a persistent index (mainly tests).
+                if cached_vector is None:
+                    if self._vector_index is not None:
+                        continue
+                    cached_vector = embed_fn(self._embedding_text(proc))
+                proc_vec = np.array(cached_vector)
                 # 向量已归一化，dot product = cosine similarity
                 sim = float(np.dot(proc_vec, query_vec))
             except Exception as e:
@@ -666,8 +709,21 @@ class ProcedureMemory:
     def __init__(self, db_path: str, llm_client: Any = None) -> None:
         self._store = ProcedureStore(db_path)
         self._store._init_table()
-        self._matcher = ProcedureMatcher(self._store)
+        vector_path = Path(db_path).parent / "lancedb"
+        self._matcher = ProcedureMatcher(
+            self._store,
+            PersistentVectorIndex(
+                vector_path,
+                "procedure_embeddings",
+                "procedure.index",
+            ),
+        )
+        self._store.set_content_change_callback(self._matcher.build_index)
         self._learner = ProcedureLearner(self._store, llm_client)
+
+    def build_index(self) -> int:
+        """Build or incrementally refresh the persistent Procedure index."""
+        return self._matcher.build_index()
 
     def match(
         self, user_message: str, top_k: int = 1,

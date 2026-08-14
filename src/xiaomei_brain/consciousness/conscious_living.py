@@ -232,6 +232,7 @@ class ConsciousLiving(Living):
         # ProcedureMemory（过程记忆：学习 + 关键词触发）
         from ..memory.procedure import ProcedureMemory
         self.agent._procedure_memory = ProcedureMemory(db_path, llm_client=_llm)
+        self.agent._procedure_memory.build_index()
         boot_line("过程记忆 (ProcedureMemory)", "OK")
 
         # Essence（底色存储：不可变身份片段）

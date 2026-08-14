@@ -42,8 +42,17 @@ class DiscoveryService:
             item for item in capability_candidates
             if item["view"].status.value in {"ready", "degraded"}
         ][:2]
+        context_renderer = getattr(self._capabilities, "render_context", None)
+        capability_context = (
+            context_renderer([
+                item["view"] for item in capability_candidates[:3]
+            ])
+            if callable(context_renderer)
+            else ""
+        )
         return {
             "capabilities": [self._capability_summary(item) for item in capabilities],
+            "context": capability_context,
             # SkillLoader already builds the prompt and exact selection in one
             # vector query. render_execution_context fills this list from that
             # result rather than issuing the same search twice.

@@ -120,3 +120,53 @@ def test_response_disconnect_is_not_reported_as_inference_failure(monkeypatch, c
     assert "response_dropped" in messages
     assert "id=embed_disconnected" in messages
     assert "source=memory.recall" in messages
+
+
+def test_embedding_handler_reuses_vectors_across_sources_and_whitespace(caplog) -> None:
+    class CountingModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def encode(self, value, **_kwargs):
+            self.calls += 1
+            if isinstance(value, list):
+                return np.array([[0.3, 0.7] for _ in value], dtype=np.float32)
+            return np.array([0.3, 0.7], dtype=np.float32)
+
+    model = CountingModel()
+    Handler = create_embedding_handler(
+        model=model,
+        model_id="test-embedding",
+        device="cpu",
+        dimension=2,
+        inference_lock=threading.Lock(),
+        on_inference=lambda: None,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def request(text: str, source: str) -> dict:
+        payload = json.dumps({"text": text, "source": source}).encode("utf-8")
+        http_request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/embed",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(http_request, timeout=5) as response:
+            return json.loads(response.read())
+
+    try:
+        with caplog.at_level(logging.INFO):
+            first = request("Current user request:\nwrite a report", "skill.search")
+            second = request("Current  user request: write a report", "tool.prefetch")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert first["vector"] == second["vector"]
+    assert model.calls == 1
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "cache_hits=1" in messages
+    assert "cache_misses=0" in messages

@@ -50,10 +50,31 @@ def render_execution_context(agent: Any, user_input: str) -> str:
     """Render stable execution context for the current user turn."""
     parts: list[str] = []
 
-    capability_registry = getattr(agent, "_capability_registry", None)
-    capability_builder = getattr(capability_registry, "build_context", None)
-    if callable(capability_builder):
-        _append(parts, capability_builder(user_input))
+    discovery_service = getattr(agent, "_discovery_service", None)
+    capability_prefetch = getattr(discovery_service, "prefetch", None)
+    if callable(capability_prefetch):
+        selection_query = build_tool_selection_context(
+            list(getattr(agent, "messages", []) or []),
+            getattr(agent, "current_attachments", None),
+        )
+        selection_query = _with_runtime_context(agent, selection_query)
+        prefetched = capability_prefetch(
+            selection_query or user_input,
+            person_id=getattr(agent, "user_id", ""),
+        )
+        agent._staged_discovery_prefetch = {
+            "turn_id": getattr(agent, "turn_id", ""),
+            "session_id": getattr(agent, "session_id", ""),
+            "person_id": getattr(agent, "user_id", ""),
+            "query": selection_query or user_input,
+            "result": prefetched,
+        }
+        _append(parts, prefetched.get("context"))
+    else:
+        capability_registry = getattr(agent, "_capability_registry", None)
+        capability_builder = getattr(capability_registry, "build_context", None)
+        if callable(capability_builder):
+            _append(parts, capability_builder(user_input))
 
     _append(parts, _render_explicit_workspace_files(agent, user_input))
     _append(parts, _render_group_observations(agent))
@@ -75,11 +96,21 @@ def prepare_execution_selection(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], str]:
     """Select Capability and Skill context before the ReAct loop begins."""
-    selection_query = build_tool_selection_context(
-        messages,
-        getattr(agent, "current_attachments", None),
+    staged = getattr(agent, "_staged_discovery_prefetch", None)
+    staged_is_current = bool(
+        isinstance(staged, dict)
+        and staged.get("turn_id") == getattr(agent, "turn_id", "")
+        and staged.get("session_id") == getattr(agent, "session_id", "")
+        and staged.get("person_id") == getattr(agent, "user_id", "")
     )
-    selection_query = _with_runtime_context(agent, selection_query)
+    if staged_is_current:
+        selection_query = str(staged.get("query") or "")
+    else:
+        selection_query = build_tool_selection_context(
+            messages,
+            getattr(agent, "current_attachments", None),
+        )
+        selection_query = _with_runtime_context(agent, selection_query)
 
     dynamic_loader = getattr(agent, "_dynamic_loader", None)
     if dynamic_loader:
@@ -96,7 +127,11 @@ def prepare_execution_selection(
         begin_discovery_run()
     prefetch = getattr(discovery_service, "prefetch", None)
     discovery_prefetch: dict[str, Any] = {"capabilities": [], "skills": []}
-    if callable(prefetch):
+    if staged_is_current:
+        discovery_prefetch = dict(staged.get("result") or discovery_prefetch)
+        capability_selection["capabilities"] = discovery_prefetch.get("capabilities", [])
+        agent._staged_discovery_prefetch = None
+    elif callable(prefetch):
         discovery_prefetch = prefetch(selection_query, person_id=agent.user_id)
         capability_selection["capabilities"] = discovery_prefetch["capabilities"]
     else:
@@ -128,6 +163,9 @@ def prepare_execution_selection(
                 required_names=[],
             )
     discovery_prefetch["skills"] = list(skill_selection)
+    # The rendered capability text has already been added to the system prompt.
+    # Keep only compact selection evidence in the execution trace.
+    discovery_prefetch.pop("context", None)
 
     agent._execution_selection_base = {
         "query": selection_query,

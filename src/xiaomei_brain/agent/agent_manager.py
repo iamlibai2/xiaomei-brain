@@ -480,6 +480,7 @@ class AgentManager:
         capability_definitions = CapabilityManifestLoader(
             capability_directories,
         ).load()
+        lance_path = os.path.join(self._agent_dir(agent.id), "memory", "lancedb")
         capability_runtime_registry = CapabilityRuntimeRegistry()
         capability_runtime_registry.register_factories(
             registry.get_runtime_factories()
@@ -503,6 +504,7 @@ class AgentManager:
             tool_service_configuration=tool_service_configuration,
             runtime_probes=agent._capability_runtimes,
             definitions=capability_definitions,
+            vector_index_path=lance_path,
         )
         agent._capability_registry = capability_registry
         for capability_tool in create_capability_tools(agent):
@@ -519,7 +521,6 @@ class AgentManager:
             )
             from xiaomei_brain.discovery import DiscoveryService, create_discover_tool
             top_k = dynamic_cfg.get("top_k", 3)
-            lance_path = os.path.join(self._agent_dir(agent.id), "memory", "lancedb")
             boot_section("工具索引")
             loader = DynamicToolLoader(tools, top_k=top_k, lance_db_path=lance_path)
             loader.build_index()
@@ -540,6 +541,7 @@ class AgentManager:
         capability_registry.bind_dynamic_tool_loader(
             getattr(agent, "_dynamic_loader", None)
         )
+        capability_registry.start_discovery_index_build()
         capability_views = capability_registry.list()
         ready_count = sum(
             view.status.value in {"ready", "degraded"}
