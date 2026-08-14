@@ -96,6 +96,7 @@ class CliTuiApp:
         self._logged_in = False
         self._user_id = ''
         self._user_name = ''
+        self._session_id = 'cli-%s' % agent_id
         self._ids: list[str] = []
         self._identity_mgr = None
         self._login_input = ''
@@ -382,32 +383,18 @@ class CliTuiApp:
         self._logged_in = True
 
         living = self.living
-        living.user_id = user_id
         living._ears_enabled = load_ears_enabled(self.agent_id)
         living._eyes_enabled = load_eyes_enabled(self.agent_id)
-
-        agent_core = self.agent._get_agent()
-        agent_core.user_id = user_id
-        agent_core.user_display_name = self._user_name
-
-        if hasattr(living, 'consciousness') and living.consciousness:
-            si = living.consciousness.get_self_image()
-            if si:
-                si.current_user_name = self._user_name
-                si.current_user_id = user_id
-                si.current_user_relation = self._identity_mgr.get_relation(user_id)
-                ltm = getattr(self.agent, 'longterm_memory', None)
-                si.load_preferred_names(user_id, ltm)
 
         ltm = getattr(self.agent, 'longterm_memory', None)
         if ltm and not ltm.is_embedder_ready():
             ltm.wait_embedder()
 
-        sid = 'cli-%s' % self.agent_id
-        restored = living.load_fresh_tail(sid)
+        sid = self._session_id
+        restored = living.load_fresh_tail(sid, user_id=user_id)
         if hasattr(living, '_attention') and living._attention:
             context_key = f"person:{user_id}"
-            living._attention.activate_loaded(context_key, restored)
+            living._attention.preload_loaded(context_key, restored)
         if hasattr(living, '_router') and living._router:
             living._router.register_peer(
                 peer_type="human", peer_id=user_id, channel="cli",
@@ -499,17 +486,16 @@ class CliTuiApp:
                 return
 
         self._msgs.add('', '%s\u25b6 %s%s' % (_C_USER, _C_RST, text), '')
-        sid = 'cli-%s' % self.agent_id
         gw = getattr(self.living, '_gateway_inbound', None)
         if gw:
             from xiaomei_brain.gateway.inbound import RawMessage
             gw.accept(RawMessage(
                 content=text, source='human', channel='cli',
                 peer_id=self._user_id, peer_type='human',
-                session_id=sid,
+                session_id=self._session_id,
             ))
         else:
-            self.living.put_message(text, session_id=sid)
+            self.living.put_message(text, session_id=self._session_id)
 
     def _handle_cmd(self, cmd: str) -> bool:
         cmd = cmd.lower().strip()
@@ -519,17 +505,46 @@ class CliTuiApp:
         elif cmd == '/clear':
             self._msgs.clear()
             return True
-        elif cmd == '/help':
-            self._msgs.add(
-                '',
-                '%s/help /clear /exit%s | '
-                '/flame /drive /purpose /intent /fuel /tick /think /identity | '
-                '/db /memory /dag /summarize /dream /context%s'
-                % (_C_DIM, _C_RST, ''),
-                '',
+        from xiaomei_brain.cli.local_commands import execute_local_command
+
+        result = execute_local_command(
+            self.living,
+            cmd,
+            user_id=self._user_id,
+            session_id=self._session_id,
+            identity_mgr=self._identity_mgr,
+        )
+        if not result.handled:
+            return False
+
+        if result.output:
+            self._msgs.add('', *result.output.splitlines(), '')
+        if result.user_id:
+            self._user_id = result.user_id
+            identity = self._identity_mgr.resolve(self._user_id)
+            self._user_name = identity["name"] if identity else self._user_id
+        if result.session_id:
+            self._session_id = result.session_id
+        if result.user_id or result.session_id:
+            restored = self.living.load_fresh_tail(
+                self._session_id,
+                user_id=self._user_id,
             )
-            return True
-        return False
+            if hasattr(self.living, '_attention') and self.living._attention:
+                self.living._attention.preload_loaded(
+                    f"session:{self._session_id}", restored,
+                )
+            if hasattr(self.living, '_router') and self.living._router:
+                self.living._router.register_peer(
+                    peer_type="human",
+                    peer_id=self._user_id,
+                    channel="cli",
+                    session_id=self._session_id,
+                    output_type="cli",
+                    output_target="stdout",
+                    priority=10,
+                )
+        return True
 
     def _do_exit(self) -> None:
         self._running = False

@@ -238,16 +238,6 @@ class AgentLiving:
 
     def _handle_message(self, msg: LivingMessage) -> None:
         """Process one incoming message."""
-        if self.agent.commands:
-            result = self.agent.commands.execute(
-                msg.content,
-                user_id=msg.user_id,
-                session_id=msg.session_id,
-            )
-            if result:
-                logger.info("[Living] Command: %s", result.output)
-                return
-
         try:
             content = self.agent.chat(
                 msg.content,

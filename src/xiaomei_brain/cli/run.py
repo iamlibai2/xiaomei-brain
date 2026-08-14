@@ -324,32 +324,20 @@ def _run_agent(
         living._eyes_enabled = eyes_enabled
 
         login_listener = None
+        cli_session_id = f"cli-{agent_id}"
 
         def _apply_login(_user_id, identity):
             display_name = identity["name"]
-            living.user_id = _user_id
-            agent_core = agent._get_agent()
-            agent_core.user_id = _user_id
-            agent_core.user_display_name = display_name
-            if hasattr(living, 'consciousness') and living.consciousness:
-                si = living.consciousness.get_self_image()
-                if si:
-                    si.current_user_name = display_name
-                    si.current_user_id = _user_id
-                    si.current_user_relation = identity_mgr.get_relation(_user_id)
-                    ltm = getattr(agent, 'longterm_memory', None)
-                    si.load_preferred_names(_user_id, ltm)
             print(f"\n  {C_ACCENT}你好，{display_name}\033[0m\n")
             ltm = getattr(agent, 'longterm_memory', None)
             if ltm and not ltm.is_embedder_ready():
                 print(f"  \033[90m[....] Embedding 模型加载中（首次约 20 秒），请稍候...\033[0m", flush=True)
                 ltm.wait_embedder()
                 print(f"  \033[90m[ OK ] Embedding 模型就绪\033[0m", flush=True)
-            cli_session_id = f"cli-{agent_id}"
-            restored = living.load_fresh_tail(cli_session_id)
+            restored = living.load_fresh_tail(cli_session_id, user_id=_user_id)
             if hasattr(living, '_attention') and living._attention:
                 context_key = f"person:{_user_id}"
-                living._attention.activate_loaded(context_key, restored)
+                living._attention.preload_loaded(context_key, restored)
             if hasattr(living, '_router') and living._router:
                 living._router.register_peer(
                     peer_type="human", peer_id=_user_id, channel="cli",
@@ -359,21 +347,11 @@ def _run_agent(
                 )
 
         def _switch_user(_user_id):
-            """轻量用户切换（对话中换人，不重新加载上下文）。"""
+            """Change the CLI speaker without mutating an active Turn."""
             identity = identity_mgr.resolve(_user_id)
             if not identity:
                 return
             display_name = identity["name"]
-            living.user_id = _user_id
-            agent_core = agent._get_agent()
-            agent_core.user_id = _user_id
-            agent_core.user_display_name = display_name
-            if hasattr(living, 'consciousness') and living.consciousness:
-                si = living.consciousness.get_self_image()
-                if si:
-                    si.current_user_name = display_name
-                    si.current_user_id = _user_id
-                    si.current_user_relation = identity_mgr.get_relation(_user_id)
             print(f"\n  {C_ACCENT2}⇄ 对话切换至 {display_name}\033[0m\n", flush=True)
 
         def _try_face_login():
@@ -720,13 +698,18 @@ def _run_agent(
                 logger.warning("_on_voice attention: should_pass=%s target_user=%s", should_pass, target_user)
                 if not should_pass:
                     return
-                if target_user and target_user != living.user_id:
+                if target_user and target_user != attention_gate.current_user_id:
                     _switch_user(target_user)
 
             if not getattr(living, '_chatting', False):
                 with _stream_lock:
                     print(f"\n  🎙  \033[90m{text}\033[0m", flush=True)
-            living.put_message(text, source="voice", user_id=attention_gate.current_user_id if attention_gate else user_id)
+            living.put_message(
+                text,
+                source="voice",
+                user_id=attention_gate.current_user_id if attention_gate else user_id,
+                session_id=cli_session_id,
+            )
 
         voice_listener = VoiceListener(body, on_speech=_on_voice)
         living._voice_listener = voice_listener
@@ -870,14 +853,54 @@ def _run_agent(
                 msg = text or "请看这张图片"
                 print(f"[图片] {img_path}")
 
-            living._command_done.clear()
+            if msg.startswith("/"):
+                from xiaomei_brain.cli.local_commands import execute_local_command
+
+                command_result = execute_local_command(
+                    living,
+                    msg,
+                    user_id=user_id or "cli-user",
+                    session_id=cli_session_id,
+                    identity_mgr=identity_mgr,
+                )
+                if command_result.handled:
+                    if command_result.output:
+                        print(f"\n{command_result.output}", flush=True)
+                    if command_result.user_id:
+                        user_id = command_result.user_id
+                        if attention_gate:
+                            attention_gate.set_current_user(user_id)
+                    if command_result.session_id:
+                        cli_session_id = command_result.session_id
+                    if command_result.user_id or command_result.session_id:
+                        restored = living.load_fresh_tail(
+                            cli_session_id,
+                            user_id=user_id or "cli-user",
+                        )
+                        if hasattr(living, '_attention') and living._attention:
+                            living._attention.preload_loaded(
+                                f"session:{cli_session_id}", restored,
+                            )
+                        if hasattr(living, '_router') and living._router:
+                            living._router.register_peer(
+                                peer_type="human",
+                                peer_id=user_id or "cli-user",
+                                channel="cli",
+                                session_id=cli_session_id,
+                                output_type="cli",
+                                output_target="stdout",
+                                priority=10,
+                            )
+                    _skip_separator = True
+                    continue
+
             gw = getattr(living, '_gateway_inbound', None)
             if gw:
                 from xiaomei_brain.gateway.inbound import RawMessage
                 result = gw.accept(RawMessage(
                     content=msg, source="human", channel="cli",
                     peer_id=user_id or "cli-user", peer_type="human",
-                    images=images, session_id=f"cli-{agent_id}",
+                    images=images, session_id=cli_session_id,
                 ))
                 if hasattr(result, 'reason'):
                     if getattr(result, 'silent', False):
@@ -885,12 +908,7 @@ def _run_agent(
                     else:
                         print(f"\n[Gateway] 消息被拒绝: {result.reason}", flush=True)
             else:
-                living.put_message(msg, images=images, session_id=f"cli-{agent_id}")
-
-            if msg.startswith("/"):
-                living._command_done.wait(timeout=3)
-                _skip_separator = True  # _run_react 会打印分隔线，避免双横线
-                continue
+                living.put_message(msg, images=images, session_id=cli_session_id)
 
             from xiaomei_brain.tools.builtin.clarify import _clarify_request_ready
 

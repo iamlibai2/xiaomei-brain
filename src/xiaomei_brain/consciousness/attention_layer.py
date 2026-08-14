@@ -131,6 +131,27 @@ class AttentionLayer:
             len(loaded),
         )
 
+    def preload_loaded(
+        self,
+        context_key: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Cache a context without changing the currently executing Turn.
+
+        Authentication and channel connection can happen while another
+        conversation is still using the shared realtime Agent Core.  Those
+        control-plane operations may prepare history for their future Turn,
+        but must never replace ``agent.messages`` or the active context.
+        """
+        loaded = list(messages[-MAX_SESSION_MESSAGES:])
+        with self._lock:
+            self._context_messages[context_key] = list(loaded)
+        logger.info(
+            "[Attention] 预加载上下文 %s: %d 条消息（未激活）",
+            context_key,
+            len(loaded),
+        )
+
     # ── Query ──────────────────────────────────────────────
 
     def get_message_count(self, context_key: str | None = None) -> int:

@@ -155,13 +155,13 @@ class TestGatewayAccept:
         assert route.type == "ws"
         assert route.target == "shared"
 
-    def test_data_command_routed(self):
+    def test_slash_text_is_not_interpreted_by_gateway(self):
         living = FakeLiving()
         g = Gateway(living, FakeRouter(), config=None)
-        g.set_agent_commands(_FakeCommandRegistry())
         result = g.accept(RawMessage(content="/db", source="human", channel="cli"))
-        assert isinstance(result, Rejected)
-        assert result.reason == "HANDLED"
+        assert isinstance(result, Accepted)
+        assert result.living_message.content == "/db"
+        assert living.messages[-1]["content"] == "/db"
 
     def test_comms_session_routed_to_comms(self):
         living = FakeLiving()
@@ -311,11 +311,3 @@ class _FakeIdentityMgr:
     def resolve(self, id): return {"id": id, "name": "李白"}
     def get_display_name(self, id): return "李白"
 
-
-class _FakeCommandRegistry:
-    def execute(self, raw, user_id, session_id):
-        return type("Result", (), {
-            "output": "ok",
-            "user_id": None,
-            "session_id": None,
-        })()

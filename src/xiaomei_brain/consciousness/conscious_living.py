@@ -264,8 +264,6 @@ class ConsciousLiving(Living):
             memory_extractor=self.agent.memory_extractor,
             agent_instance=self.agent,
         )
-        if hasattr(self, '_gateway_inbound'):
-            self._gateway_inbound.set_agent_commands(self.agent.commands)
 
         # Per-agent 输出目录隔离
         # Use the deployed instance's real directory.  Reconstructing it from
@@ -979,8 +977,6 @@ class ConsciousLiving(Living):
         from xiaomei_brain.channels import ChannelRuntimeService
         self._channel_runtime = ChannelRuntimeService(self)
         self._gateway_inbound.set_identity_mgr(self._identity_mgr)
-        if self.agent.commands:
-            self._gateway_inbound.set_agent_commands(self.agent.commands)
         logger.info("[ConsciousLiving] Gateway 入站门已创建")
         boot_line("Gateway 入站门", "OK")
 
@@ -2313,7 +2309,11 @@ class ConsciousLiving(Living):
             body.open()
             logger.info("[ConsciousLiving] Body 感官已上线")
 
-    def load_fresh_tail(self, session_id: str) -> list[dict[str, Any]]:
+    def load_fresh_tail(
+        self,
+        session_id: str,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """加载当前会话的 fresh tail，让 Agent 恢复该会话的执行现场。
 
         原始消息属于会话现场，必须同时按 Person 和 session_id 过滤；
@@ -2325,16 +2325,17 @@ class ConsciousLiving(Living):
             return []
 
         agent = self.agent._get_agent()
+        effective_user_id = str(user_id or self.user_id)
         recent = self.agent.conversation_db.get_recent(
             self._config.context.fresh_tail_count,
             session_id=session_id,
-            user_id=self.user_id,
+            user_id=effective_user_id,
         )
 
         if not recent:
             logger.info(
                 "[ConsciousLiving] fresh_tail: 无历史消息 (user_id=%s, session_id=%s)",
-                self.user_id,
+                effective_user_id,
                 session_id,
             )
             return []
@@ -2504,7 +2505,7 @@ class ConsciousLiving(Living):
         logger.info(
             "[ConsciousLiving] 加载 fresh_tail: %d 条消息 (user_id=%s, session_id=%s)",
             len(merged),
-            self.user_id,
+            effective_user_id,
             session_id,
         )
         return merged

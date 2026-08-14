@@ -67,7 +67,7 @@ class Gateway:
     """统一入站门。
 
     所有外部消息的唯一入口。做机械层面的预处理（清洗、认证、限流、
-    身份解析、会话路由、数据命令），然后将纯净消息送入 Living 队列。
+    身份解析、会话路由），然后将纯净消息送入 Living 队列。
     """
 
     def __init__(self, living, router, config=None):
@@ -75,7 +75,6 @@ class Gateway:
         self._router = router
         self._config = config
         self._identity_mgr = None
-        self._agent_commands = None
         self._channels: dict[str, Any] = {}
         self._ws_server = None
         self._ws_thread = None
@@ -84,9 +83,6 @@ class Gateway:
 
     def set_identity_mgr(self, mgr) -> None:
         self._identity_mgr = mgr
-
-    def set_agent_commands(self, commands) -> None:
-        self._agent_commands = commands
 
     def set_ws_server(self, server, thread) -> None:
         """注册 WS Gateway，由 Gateway 统一管理生命周期。"""
@@ -223,12 +219,6 @@ class Gateway:
             if sig and getattr(sig, 'throttle', False):
                 logger.warning("[Gateway] 限流激活，丢弃非紧急消息: %.50s", content)
                 return Rejected(reason="THROTTLED", silent=True)
-
-        # 6. Command dispatch — all / commands handled here
-        if content.startswith("/"):
-            handled = self._dispatch_command(content, user_id, session_id)
-            if handled:
-                return Rejected(reason="HANDLED", silent=True)
 
         turn_id = str(uuid.uuid4())
         message_id = self._persist_human_message(
@@ -752,158 +742,3 @@ class Gateway:
         if raw.session_id and callable(route_for_session):
             return route_for_session(raw.session_id)
         return None
-
-    # ── Command dispatch ──────────────────────────────────────
-
-    # Data commands routed to MemoryConsole.execute()
-    _DATA_CMDS = frozenset({
-        "db", "memory", "dag", "context", "clear", "new", "summarize",
-        "expand", "periodic", "dream", "user-memories", "relationship", "learn",
-        "self", "essence", "stream", "projects", "stats",
-    })
-
-    def _dispatch_command(self, content: str, user_id: str, session_id: str) -> bool:
-        """统一命令入口。处理所有 / 命令。返回 True 表示已处理。
-
-        顺序：裸 / → 数据命令 → 系统命令 → 未识别（入队当普通消息）
-        """
-        raw = content.strip()[1:].strip()  # 去掉 /
-        living = self._living
-
-        # Bare `/` → list all commands
-        if not raw:
-            self._list_all_commands()
-            living._command_done.set()
-            return True
-
-        parts = raw.split(None, 1)
-        cmd = parts[0].lower()
-        cmd_args = parts[1] if len(parts) > 1 else ""
-
-        # /help — show all commands (data + system)
-        if cmd == "help":
-            self._list_all_commands()
-            living._command_done.set()
-            return True
-
-        # 1. Data commands: /db, /context, /dag, etc.
-        if self._agent_commands and cmd in self._DATA_CMDS:
-            result = self._agent_commands.execute(
-                raw, user_id=user_id, session_id=session_id,
-            )
-            if result:
-                print(f"\n{result.output}", flush=True)
-                if result.user_id:
-                    living.user_id = result.user_id
-                    agent_core = living.agent._get_agent()
-                    agent_core.user_id = result.user_id
-                if result.session_id:
-                    living.session_id = result.session_id
-                    if hasattr(living, '_attention') and living._attention:
-                        living._attention.switch_to(
-                            f"session:{result.session_id}"
-                        )
-                    living.agent._get_agent().session_id = result.session_id
-                living._command_done.set()
-                return True
-
-        # 2. /intask /inchat — task/chat mode switch
-        if cmd in ("intask", "inchat"):
-            cd = getattr(living, 'conversation_driver', None)
-            if cd and cd.handle_command(cmd, cmd_args):
-                living._command_done.set()
-            return True
-
-        # 3. System/debug commands: /intent, /drive, /flame, etc.
-        intent_cmds = getattr(living, '_intent_commands', {})
-        if cmd in intent_cmds:
-            logger.info("[Gateway] 执行系统命令: %s %s", cmd, cmd_args)
-            intent_cmds[cmd](cmd_args)
-            living._command_done.set()
-            return True
-
-        return False
-
-    def _list_all_commands(self) -> None:
-        """列出所有可用命令，按功能分组。"""
-        living = self._living
-        G, D, R = "\033[32m", "\033[38;5;73m", "\033[0m"
-        C = "\033[36m"
-        CW = 20  # 命令列宽度
-
-        # ── 收集所有命令 → 描述映射 ────────────────────────────
-        cmd_desc: dict[str, str] = {}
-
-        # 数据命令
-        data_cmds = [
-            ("/user <name>",   "切换用户身份"),
-            ("/db",            "查看数据库大小/表/行数"),
-            ("/memory",        "查看最近长期记忆"),
-            ("/stats",         "全局统计面板"),
-            ("/stream <N>",    "查看最近经验流（默认20条）"),
-            ("/context",       "查看完整上下文"),
-            ("/user-memories", "查看用户记忆分布"),
-            ("/dag <kw>",      "搜索DAG摘要"),
-            ("/expand <kw>",   "展开DAG摘要原文"),
-            ("/summarize",     "手动触发DAG压缩"),
-            ("/periodic",      "手动触发定时记忆提取"),
-            ("/dream",         "手动触发梦境深度提取"),
-            ("/relationship",  "查看当前用户的关系数据"),
-            ("/self",          "查看当前自我画像"),
-            ("/essence",       "查看底色（性格基线）"),
-            ("/projects",      "查看项目心智模型"),
-            ("/learn",         "查看学习情况（队列 + 已学程序）"),
-            ("/clear",         "清空当前会话上下文（数据保留）"),
-            ("/new",           "新建会话"),
-        ]
-        for name, desc in data_cmds:
-            cmd_desc[name] = desc
-
-        # 系统命令（从 COMMAND_REGISTRY 取 docstring）
-        from ..consciousness.living_commands import COMMAND_REGISTRY
-        for name, (handler, _) in COMMAND_REGISTRY.items():
-            full = f"/{name}"
-            if full not in cmd_desc:  # 数据命令优先
-                cmd_desc[full] = (handler.__doc__ or "").strip()
-
-        # 模式切换
-        cmd_desc["/intask"] = "进入任务模式"
-        cmd_desc["/inchat"] = "退出任务模式"
-
-        # ── 分组 ──────────────────────────────────────────────
-        groups = [
-            ("记忆与查询", [
-                "/db", "/memory", "/stats", "/stream <N>", "/context",
-                "/user-memories",
-                "/dag <kw>", "/expand <kw>", "/summarize",
-                "/periodic", "/dream",
-            ]),
-            ("会话", [
-                "/user <name>", "/clear", "/new", "/sessions", "/switch <id>",
-                "/export", "/intask", "/inchat",
-            ]),
-            ("自我认知", [
-                "/self", "/essence", "/identity", "/flame", "/projects",
-            ]),
-            ("意识与驱动", [
-                "/intent", "/fuel", "/tick", "/think",
-                "/drive", "/purpose", "/pace-stats",
-                "/relationship", "/learn",
-            ]),
-            ("身体与感官", [
-                "/ears", "/eyes", "/hear", "/listen", "/look", "/see",
-                "/register", "/touch",
-            ]),
-            ("系统", ["/model", "/mcp", "/plan", "/tool"]),
-        ]
-
-        # ── 渲染 ──────────────────────────────────────────────
-        print()
-        print(f"  {C}命令列表{R}")
-        for group_name, cmd_names in groups:
-            entries = [(n, cmd_desc.get(n, "")) for n in cmd_names if n in cmd_desc]
-            if not entries:
-                continue
-            print(f"\n  {C}── {group_name} ──{R}")
-            for name, desc in entries:
-                print(f"  {G}{name:<{CW}}{R} {D}{desc}{R}", flush=True)

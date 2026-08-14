@@ -74,15 +74,15 @@ class _Living:
         self._agent_id = "xiaomei"
         self.user_id = "global"
         self.fresh_tail_loads = 0
-        self.fresh_tail_sessions: list[str] = []
+        self.fresh_tail_sessions: list[tuple[str, str | None]] = []
         self._turn_registry = SimpleNamespace(snapshot=lambda _session_id: None)
         self._attention = None
         self._core = SimpleNamespace(user_id="global")
         self.agent = SimpleNamespace(_get_agent=lambda: self._core)
 
-    def load_fresh_tail(self, session_id: str):
+    def load_fresh_tail(self, session_id: str, user_id: str | None = None):
         self.fresh_tail_loads += 1
-        self.fresh_tail_sessions.append(session_id)
+        self.fresh_tail_sessions.append((session_id, user_id))
         return []
 
 
@@ -101,7 +101,7 @@ def test_legacy_context_activation_does_not_duplicate_desktop_session_prefix(tmp
     living = _Living(tmp_path / "brain.db")
     activated: list[tuple[str, list[dict]]] = []
     living._attention = SimpleNamespace(
-        activate_loaded=lambda key, messages: activated.append((key, messages)),
+        preload_loaded=lambda key, messages: activated.append((key, messages)),
     )
     router = MethodRouter(living=living)
 
@@ -117,9 +117,34 @@ def test_legacy_context_activation_does_not_duplicate_desktop_session_prefix(tmp
         ("session:ws-legacy-session", []),
     ]
     assert living.fresh_tail_sessions == [
-        "ws-db65e318",
-        "legacy-session",
+        ("ws-db65e318", "person-1"),
+        ("legacy-session", "person-1"),
     ]
+
+
+def test_identity_activation_does_not_mutate_active_core(tmp_path):
+    living = _Living(tmp_path / "brain.db")
+    living.user_id = "person-active"
+    living._core.user_id = "person-active"
+    living._core.messages = [{"role": "user", "content": "active turn"}]
+    living._core.context_key = "session:active"
+    preloaded: list[tuple[str, list[dict]]] = []
+    living._attention = SimpleNamespace(
+        preload_loaded=lambda key, messages: preloaded.append((key, messages)),
+    )
+    router = MethodRouter(living=living)
+
+    router._identity_methods._activate_legacy_conversation_context(
+        "ws-future", "person-future"
+    )
+
+    assert living.user_id == "person-active"
+    assert living._core.user_id == "person-active"
+    assert living._core.messages == [
+        {"role": "user", "content": "active turn"},
+    ]
+    assert living._core.context_key == "session:active"
+    assert preloaded == [("session:ws-future", [])]
 
 
 def test_fresh_tail_queries_only_the_authenticated_session():
@@ -195,9 +220,11 @@ def test_register_challenge_binds_server_verified_person_to_connection(tmp_path)
         person_id = complete["result"]["person"]["person_id"]
         assert cm.get_person_id(conn_id) == person_id
         assert cm.get_session_id(conn_id) == "session-1"
-        assert living.user_id == person_id
+        # Authentication binds the connection only.  The shared realtime Core
+        # is switched later, when this connection's message reaches its Turn.
+        assert living.user_id == "global"
         assert living.fresh_tail_loads == 1
-        assert living.fresh_tail_sessions == ["session-1"]
+        assert living.fresh_tail_sessions == [("session-1", person_id)]
 
         spoofed = router.dispatch(conn_id, "chat-1", "chat.send", {
             "content": "冒用别人",

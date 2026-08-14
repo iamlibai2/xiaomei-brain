@@ -615,20 +615,16 @@ class IdentityMethods:
         session_id: str,
         person_id: str,
     ) -> None:
-        """把已认证 person_id 注入尚未重构的现有对话运行时。"""
+        """Preload authenticated history without activating the shared Core."""
         living = self._living
         if living is None:
             return
-        living.user_id = person_id
-        agent_core = living.agent._get_agent()
-        if agent_core is not None:
-            agent_core.user_id = person_id
 
         turn_registry = getattr(living, "_turn_registry", None)
         active_turn = turn_registry.snapshot(session_id) if turn_registry else None
         if active_turn is not None:
             return
-        restored = living.load_fresh_tail(session_id) or []
+        restored = living.load_fresh_tail(session_id, user_id=person_id) or []
         attention = getattr(living, "_attention", None)
         if attention:
             # Desktop session IDs already use the ``ws-`` prefix.  Reapplying
@@ -637,11 +633,7 @@ class IdentityMethods:
             # conversation context after Desktop restarts.
             ws_sid = session_id if session_id.startswith("ws-") else f"ws-{session_id}"
             context_key = f"session:{ws_sid}"
-            attention.activate_loaded(context_key, restored)
-        elif agent_core is not None:
-            ws_sid = session_id if session_id.startswith("ws-") else f"ws-{session_id}"
-            agent_core.context_key = f"session:{ws_sid}"
-            agent_core.messages = list(restored)
+            attention.preload_loaded(context_key, restored)
 
     @staticmethod
     def _context_result(context: IdentityContext) -> dict:

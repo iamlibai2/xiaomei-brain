@@ -1,7 +1,7 @@
 """Memory inspection and control commands.
 
 Provides MemoryConsole, a unified memory debug/admin interface that any
-channel (CLI, WebSocket, Feishu, etc.) can call. Commands operate on the
+local CLI or an explicit structured RPC can call. Commands operate on the
 memory subsystems (ConversationDB, DAGSummaryGraph, LongTermMemory, etc.).
 
 Usage:

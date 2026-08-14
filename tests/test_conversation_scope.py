@@ -45,6 +45,28 @@ def test_activate_loaded_empty_session_preserves_previous_context():
     assert agent.messages == [{"role": "user", "content": "old session"}]
 
 
+def test_preload_loaded_does_not_replace_active_turn():
+    agent = Agent(llm=Mock(), tools=ToolRegistry())
+    attention = AttentionLayer(agent)
+
+    agent.context_key = "session:desktop"
+    agent.messages = [{"role": "user", "content": "desktop turn"}]
+    agent.user_id = "person-desktop"
+    attention._current_context = "session:desktop"
+
+    attention.preload_loaded(
+        "person:person-cli",
+        [{"role": "user", "content": "cli history"}],
+    )
+
+    assert agent.context_key == "session:desktop"
+    assert agent.user_id == "person-desktop"
+    assert agent.messages == [{"role": "user", "content": "desktop turn"}]
+
+    attention.switch_to("person:person-cli")
+    assert agent.messages == [{"role": "user", "content": "cli history"}]
+
+
 def test_shared_conversation_uses_its_own_memory_scope(tmp_path):
     people = PeopleService(PeopleStore(tmp_path / "brain.db"))
     people.store.ensure_session(
