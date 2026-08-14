@@ -276,7 +276,7 @@ class Doctor:
             from xiaomei_brain.base.shared_embedder import SharedEmbedder
             shared = SharedEmbedder.get_or_create()
             shared.wait_ready(timeout=30)
-            vec = shared.embed("hello")
+            vec = shared.embed("hello", source="doctor.healthcheck")
             sec.checks.append(self._ok("embedding", f"{len(vec)}-dim vector"))
         except ImportError:
             sec.checks.append(self._skip("embedding", "sentence_transformers not installed"))

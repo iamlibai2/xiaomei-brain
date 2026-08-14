@@ -230,7 +230,7 @@ def test_focused_workspace_does_not_expand_a_keyword_rule_kit(monkeypatch):
             return _EmptySearch()
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._shared, "embed", lambda _query, **_kwargs: [0.0])
 
     query = (
         "Current user request:\n你先按你自己理解建\n\n"
@@ -406,7 +406,7 @@ def test_skill_required_tools_are_scoped_to_one_run(monkeypatch):
             return _EmptySearch()
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._shared, "embed", lambda _query, **_kwargs: [0.0])
 
     loader.begin_run("session-a")
     activated, missing = loader.activate_required_tools(
@@ -454,7 +454,7 @@ def test_tool_search_activates_deferred_workspace_import(monkeypatch):
             return _EmptySearch()
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._shared, "embed", lambda _query, **_kwargs: [0.0])
 
     query = (
         "Current user request:\n把这份表导入刚才的 Workspace，作为持续经营数据\n\n"
@@ -497,7 +497,7 @@ def test_model_directed_search_can_activate_business_tools(monkeypatch):
             return _EmptySearch()
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._shared, "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._shared, "embed", lambda _query, **_kwargs: [0.0])
 
     loader.begin_run("session-a", reset=True)
     result = loader.search_and_activate(
@@ -697,7 +697,7 @@ def test_explicit_tool_name_is_not_truncated_by_full_embedding_results(monkeypat
             ]
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query, **_kwargs: [0.0])
 
     selected = loader.select_tools("please run forced_tool", top_k=2)
 
@@ -732,7 +732,7 @@ def test_semantic_prefetch_rejects_nearest_but_irrelevant_tools(monkeypatch):
             ]
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query, **_kwargs: [0.0])
 
     assert loader.select_tools("hi") == []
 
@@ -765,7 +765,7 @@ def test_transport_scaffolding_does_not_create_lexical_tool_relevance(monkeypatc
             ]
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query, **_kwargs: [0.0])
 
     query = build_tool_selection_context([
         {"role": "user", "content": "距上条消息 2分钟 hi"},
@@ -801,7 +801,7 @@ def test_semantic_prefetch_accepts_absolutely_relevant_tool(monkeypatch):
             ]
 
     monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
-    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query: [0.0])
+    monkeypatch.setattr(loader._get_embedder(), "embed", lambda _query, **_kwargs: [0.0])
 
     assert [tool.name for tool in loader.select_tools("remind me later")] == [
         "schedule_alarm"

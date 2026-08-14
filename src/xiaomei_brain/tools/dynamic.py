@@ -266,7 +266,7 @@ class DynamicToolLoader:
         # 获取当前模型的 embedding 维度
         dim = self._shared.dim
         if dim is None:
-            dim = len(self._get_embedder().embed("dim check"))
+            dim = len(self._get_embedder().embed("dim check", source="tool.dimension"))
         expected_dim = dim
 
         # 尝试直接打开（list_tables() 有时不返回已存在的表）
@@ -382,7 +382,7 @@ class DynamicToolLoader:
                 embedder = self._get_embedder()
                 try:
                     texts = [self._tool_embedding_text(t) for t in new_tools]
-                    vectors = embedder.embed_batch(texts)
+                    vectors = embedder.embed_batch(texts, source="tool.index")
                 except Exception:
                     logger.warning("DynamicToolLoader: incremental embed failed")
                     self._built = True
@@ -410,7 +410,7 @@ class DynamicToolLoader:
         logger.info("DynamicToolLoader: embedding %d tools (%d KB)...", len(texts), total_chars // 1024)
         try:
             embedder = self._get_embedder()
-            vectors = embedder.embed_batch(texts)
+            vectors = embedder.embed_batch(texts, source="tool.index")
         except Exception as e:
             logger.warning("DynamicToolLoader: embedding failed, disabled: %s", e)
             self._built = True
@@ -612,7 +612,7 @@ class DynamicToolLoader:
         if table is not None:
             try:
                 if table.count_rows() > 0:
-                    query_vec = self._get_embedder().embed(query)
+                    query_vec = self._get_embedder().embed(query, source="tool.prefetch")
                     rows = table.search(query_vec).limit(
                         min(
                             len(all_tools) + len(excluded_names),

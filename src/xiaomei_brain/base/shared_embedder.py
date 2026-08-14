@@ -201,11 +201,11 @@ class SharedEmbedder:
 
     # ── Embedding ─────────────────────────────────────────────
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str, *, source: str = "unknown") -> list[float]:
         """Embed 单个文本。远程优先，本地 fallback。"""
         if self._remote.available:
             try:
-                return self._remote.embed(text)
+                return self._remote.embed(text, source=source)
             except Exception as e:
                 if self._remote_required:
                     raise RuntimeError("共享向量服务请求失败") from e
@@ -217,11 +217,11 @@ class SharedEmbedder:
         model = self._get_model()
         return self._safe_encode(model, text)
 
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+    def embed_batch(self, texts: list[str], *, source: str = "unknown") -> list[list[float]]:
         """Embed 多个文本。远程优先，本地 fallback。"""
         if self._remote.available:
             try:
-                return self._remote.embed_batch(texts)
+                return self._remote.embed_batch(texts, source=source)
             except Exception as e:
                 if self._remote_required:
                     raise RuntimeError("共享向量服务请求失败") from e

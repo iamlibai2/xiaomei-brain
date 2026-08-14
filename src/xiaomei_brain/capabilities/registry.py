@@ -139,7 +139,10 @@ class CapabilityRegistry:
         try:
             entries = self._ensure_discovery_entries()
             from xiaomei_brain.base.shared_embedder import SharedEmbedder
-            query_vector = SharedEmbedder.get_or_create().embed(normalized)
+            query_vector = SharedEmbedder.get_or_create().embed(
+                normalized,
+                source="capability.discover",
+            )
         except Exception:
             logger.warning("[Capability] semantic discovery unavailable", exc_info=True)
             return []
@@ -203,7 +206,10 @@ class CapabilityRegistry:
                         })
                         texts.append(text)
             from xiaomei_brain.base.shared_embedder import SharedEmbedder
-            vectors = SharedEmbedder.get_or_create().embed_batch(texts) if texts else []
+            vectors = SharedEmbedder.get_or_create().embed_batch(
+                texts,
+                source="capability.index",
+            ) if texts else []
             for entry, vector in zip(pending, vectors):
                 entry["vector"] = vector
             self._discovery_entries = pending

@@ -111,11 +111,11 @@ class SkillStorage(SQLiteStore):
 
     # ── Embedding ────────────────────────────────────────────────
 
-    def _embed(self, text: str) -> list[float]:
-        return self._shared.embed(text)
+    def _embed(self, text: str, *, source: str = "skill.search") -> list[float]:
+        return self._shared.embed(text, source=source)
 
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return self._shared.embed_batch(texts)
+    def _embed_batch(self, texts: list[str], *, source: str = "skill.index") -> list[list[float]]:
+        return self._shared.embed_batch(texts, source=source)
 
     def _get_embedding_dim(self) -> int:
         dim = self._shared.dim
@@ -194,7 +194,7 @@ class SkillStorage(SQLiteStore):
 
         logger.warning("SkillStorage: embedding %d texts for LanceDB rebuild...", len(texts))
         try:
-            vectors = self._embed_batch(texts)
+            vectors = self._embed_batch(texts, source="skill.index")
         except Exception:
             logger.exception("SkillStorage: embedding failed during LanceDB rebuild")
             return
@@ -216,7 +216,7 @@ class SkillStorage(SQLiteStore):
         tags = json.loads(row["tags"]) if row["tags"] else []
         tags_str = " ".join(tags) if isinstance(tags, list) else str(tags)
         text = f"{row['name']}: {row['description']} {tags_str}"
-        vector = self._embed(text)
+        vector = self._embed(text, source="skill.index")
 
         table = self._get_lance_table()
         import pyarrow as pa
@@ -392,7 +392,7 @@ class SkillStorage(SQLiteStore):
 
         # 语义搜索
         try:
-            query_vec = self._embed(query)
+            query_vec = self._embed(query, source="skill.search")
             table = self._get_lance_table()
             results = table.search(query_vec).limit(top_k).to_list()
         except Exception:

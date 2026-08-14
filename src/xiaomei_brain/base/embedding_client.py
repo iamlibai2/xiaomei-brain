@@ -23,6 +23,7 @@ import logging
 import os
 import time
 import urllib.request
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -76,25 +77,67 @@ class RemoteEmbedder:
             logger.debug("Remote embedding server not available: %s", e)
         return False
 
-    def embed(self, text: str) -> list[float]:
-        data = json.dumps({"text": text}).encode("utf-8")
+    def embed(self, text: str, *, source: str = "unknown") -> list[float]:
+        request_id = f"embed_{uuid.uuid4().hex[:12]}"
+        normalized_source = _normalize_source(source)
+        data = json.dumps({
+            "text": text,
+            "request_id": request_id,
+            "source": normalized_source,
+        }).encode("utf-8")
         req = urllib.request.Request(
             f"{self._url}/embed",
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())["vector"]
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read())["vector"]
+        except Exception as exc:
+            logger.warning(
+                "[EmbedClient] id=%s source=%s mode=single elapsed_ms=%d status=%s",
+                request_id,
+                normalized_source,
+                round((time.monotonic() - started) * 1000),
+                type(exc).__name__,
+            )
+            raise
 
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        data = json.dumps({"texts": texts}).encode("utf-8")
+    def embed_batch(self, texts: list[str], *, source: str = "unknown") -> list[list[float]]:
+        request_id = f"embed_{uuid.uuid4().hex[:12]}"
+        normalized_source = _normalize_source(source)
+        data = json.dumps({
+            "texts": texts,
+            "request_id": request_id,
+            "source": normalized_source,
+        }).encode("utf-8")
         req = urllib.request.Request(
             f"{self._url}/embed",
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            result = json.loads(resp.read())
-            if "vectors" in result:
-                return result["vectors"]
-            return [result["vector"]]
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                result = json.loads(resp.read())
+                if "vectors" in result:
+                    return result["vectors"]
+                return [result["vector"]]
+        except Exception as exc:
+            logger.warning(
+                "[EmbedClient] id=%s source=%s mode=batch items=%d elapsed_ms=%d status=%s",
+                request_id,
+                normalized_source,
+                len(texts),
+                round((time.monotonic() - started) * 1000),
+                type(exc).__name__,
+            )
+            raise
+
+
+def _normalize_source(source: str) -> str:
+    value = str(source or "unknown").strip()[:80]
+    if not value:
+        return "unknown"
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)

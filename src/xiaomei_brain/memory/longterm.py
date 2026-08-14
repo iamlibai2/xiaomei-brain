@@ -99,13 +99,13 @@ class LongTermMemory(SQLiteStore):
         """阻塞等待 embedding 模型加载完成。返回 True 表示就绪。"""
         return self._shared.wait_ready(timeout=timeout)
 
-    def _embed(self, text: str) -> list[float]:
+    def _embed(self, text: str, *, source: str = "memory.unknown") -> list[float]:
         """Embed a single text string. 委托给 SharedEmbedder。"""
-        return self._shared.embed(text)
+        return self._shared.embed(text, source=source)
 
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+    def _embed_batch(self, texts: list[str], *, source: str = "memory.unknown") -> list[list[float]]:
         """Embed multiple texts. 委托给 SharedEmbedder。"""
-        return self._shared.embed_batch(texts)
+        return self._shared.embed_batch(texts, source=source)
 
     # ── LanceDB ─────────────────────────────────────────────────
 
@@ -225,7 +225,7 @@ class LongTermMemory(SQLiteStore):
     def _add_narrative_vector(self, nm_id: str, content: str, user_id: str) -> None:
         """Add a narrative vector to LanceDB."""
         try:
-            vector = self._embed(content)
+            vector = self._embed(content, source="memory.narrative.write")
             table = self._get_narrative_lance_table()
             import pyarrow as pa
 
@@ -292,7 +292,7 @@ class LongTermMemory(SQLiteStore):
                 user_ids.append(r["user_id"] if "user_id" in r.keys() else "global")
 
             try:
-                vectors = self._embed_batch(contents)
+                vectors = self._embed_batch(contents, source="memory.narrative.index")
                 data = pa.table({
                     "id": ids,
                     "vector": vectors,
@@ -387,7 +387,7 @@ class LongTermMemory(SQLiteStore):
     def _add_consciousness_vector(self, cs_id: int, content: str, user_id: str) -> None:
         """Add a consciousness_stream vector to LanceDB."""
         try:
-            vector = self._embed(content)
+            vector = self._embed(content, source="memory.consciousness.write")
             table = self._get_consciousness_lance_table()
             import pyarrow as pa
 
@@ -447,7 +447,7 @@ class LongTermMemory(SQLiteStore):
                 user_ids.append(r["user_id"] if "user_id" in r.keys() else "global")
 
             try:
-                vectors = self._embed_batch(contents)
+                vectors = self._embed_batch(contents, source="memory.consciousness.index")
                 data = pa.table({
                     "id": ids,
                     "vector": vectors,
@@ -482,7 +482,7 @@ class LongTermMemory(SQLiteStore):
             top_k: 返回条数
             trigger: 可选，按 trigger 类型过滤（'L2_light', 'L3_deep', 'dream'）
         """
-        query_vector = self._embed(query)
+        query_vector = self._embed(query, source="memory.consciousness.recall")
         table = self._get_consciousness_lance_table()
 
         # Build LanceDB filter
@@ -552,7 +552,7 @@ class LongTermMemory(SQLiteStore):
             category: 可选，按类别过滤
             scene_tag: 可选，按场景标签过滤
         """
-        query_vector = self._embed(query)
+        query_vector = self._embed(query, source="memory.narrative.recall")
         table = self._get_narrative_lance_table()
 
         safe_user_id = self._safe_user_id(user_id)
@@ -606,7 +606,7 @@ class LongTermMemory(SQLiteStore):
     def _add_to_lance(self, memory_id: int, content: str, user_id: str) -> None:
         """Add a memory vector to LanceDB."""
         try:
-            vector = self._embed(content)
+            vector = self._embed(content, source="memory.write")
             table = self._get_lance_table()
             import pyarrow as pa
 
@@ -627,7 +627,7 @@ class LongTermMemory(SQLiteStore):
             # Delete old entry
             table.delete(f"id = {memory_id}")
             # Add updated entry
-            vector = self._embed(new_content)
+            vector = self._embed(new_content, source="memory.update")
             import pyarrow as pa
             data = pa.table({
                 "id": [memory_id],
@@ -682,7 +682,7 @@ class LongTermMemory(SQLiteStore):
                 user_ids.append(r["user_id"])
 
             try:
-                vectors = self._embed_batch(contents)
+                vectors = self._embed_batch(contents, source="memory.index")
                 data = pa.table({
                     "id": ids,
                     "vector": vectors,
@@ -1457,7 +1457,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         mem_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic recall using LanceDB vector search."""
-        query_vector = self._embed(query)
+        query_vector = self._embed(query, source="memory.recall")
         table = self._get_lance_table()
 
         results = table.search(query_vector) \

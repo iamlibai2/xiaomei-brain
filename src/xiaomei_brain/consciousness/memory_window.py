@@ -233,7 +233,9 @@ def refresh_memory_window(
     proc_query = user_input if user_input else attention_query
     if procedure_memory and proc_query:
         try:
-            embed_fn = longterm._embed if longterm else None
+            embed_fn = (
+                lambda text: longterm._embed(text, source="procedure.match")
+            ) if longterm else None
             procedures = procedure_memory.match(proc_query, top_k=1, embed_fn=embed_fn, threshold=0.5) or []
         except Exception as e:
             logger.warning("[MemoryWindow] 过程记忆获取失败: %s", e)
