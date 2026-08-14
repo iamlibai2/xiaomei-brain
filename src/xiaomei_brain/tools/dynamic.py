@@ -61,7 +61,6 @@ MAX_DYNAMIC = 3
 MAX_TOOL_SEARCH_RESULTS = 8
 TOOL_CONTEXT_USER_MESSAGES = 3
 TOOL_CONTEXT_MAX_CHARS = 2400
-TOOL_PROGRESS_MAX_CHARS = 1200
 # Tool embeddings are normalized before they are stored. LanceDB's default L2
 # distance is therefore comparable across the supported embedding models. A
 # result above this distance is merely the nearest tool, not necessarily a
@@ -72,6 +71,16 @@ _DISCOVERY_TOOL_NAMES = frozenset({"discover", "tool_search"})
 _MESSAGE_TRANSPORT_PREFIXES = (
     re.compile(r"^\s*距上条消息\s+\S+\s*"),
     re.compile(r"^\s*\[\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*"),
+)
+_SELECTION_CONTEXT_HEADINGS = re.compile(
+    r"(?im)^\s*(?:Current user request|Current attachments|"
+    r"Recent user context|Recent execution progress):\s*$"
+)
+_SELECTION_CONTEXT_SECTION = re.compile(
+    r"(?ims)^\s*(Current user request|Current attachments|"
+    r"Recent user context|Recent execution progress):\s*\n(.*?)"
+    r"(?=^\s*(?:Current user request|Current attachments|"
+    r"Recent user context|Recent execution progress):\s*$|\Z)"
 )
 
 # 全局活跃的 loader，供 MCP/Plugin 热重载后通知重建索引
@@ -140,11 +149,9 @@ def build_tool_selection_context(
 
     protected_parts: list[str] = []
     if current:
-        protected_parts.append(f"Current user request:\n{current}")
+        protected_parts.append(current)
     if attachment_lines:
-        protected_parts.append(
-            "Current attachments:\n" + "\n".join(attachment_lines)
-        )
+        protected_parts.extend(attachment_lines)
     protected = "\n\n".join(protected_parts)
 
     if len(protected) >= max_chars:
@@ -152,29 +159,29 @@ def build_tool_selection_context(
     if not recent:
         return protected
 
-    recent_text = "\n".join(f"- {text}" for text in reversed(recent))
-    heading = "\n\nRecent user context:\n"
-    remaining = max_chars - len(protected) - len(heading)
+    recent_text = "\n".join(text for text in reversed(recent))
+    separator = "\n\n"
+    remaining = max_chars - len(protected) - len(separator)
     if remaining <= 0:
         return protected
     # Preserve the beginnings of the most recent messages: they usually hold
     # the task verb and object omitted by short follow-ups such as "use this".
-    return f"{protected}{heading}{recent_text[:remaining]}".strip()
+    return f"{protected}{separator}{recent_text[:remaining]}".strip()
 
 
 def build_step_tool_selection_context(
     original_intent: str,
     progress: list[str],
-    *,
-    max_progress_chars: int = TOOL_PROGRESS_MAX_CHARS,
 ) -> str:
-    """Keep the original request dominant while adding bounded execution facts."""
-    if not progress:
-        return original_intent
-    recent_progress = "\n".join(reversed(progress))[:max_progress_chars]
-    return (
-        f"{original_intent}\n\nRecent execution progress:\n{recent_progress}"
-    ).strip()
+    """Keep automatic retrieval anchored to the person's original intent.
+
+    Tool results belong to the ReAct message history. Serializing them back
+    into an embedding query adds paths, JSON keys and provider responses that
+    have no relation to the missing capability. ``progress`` remains in the
+    signature for existing callers, but is intentionally ignored.
+    """
+    del progress
+    return str(original_intent or "").strip()
 
 
 def set_active_loader(loader: DynamicToolLoader) -> None:
@@ -583,7 +590,25 @@ class DynamicToolLoader:
             return []
 
         name_to_tool = {item.name: item for item in all_tools}
-        query_text = str(query or "").casefold().strip()
+        raw_query = str(query or "")
+        sections = {
+            heading.casefold(): content.strip()
+            for heading, content in _SELECTION_CONTEXT_SECTION.findall(raw_query)
+        }
+        # Lexical evidence must describe what the person is asking for. Tool
+        # results from a later ReAct step contain large amounts of incidental
+        # vocabulary and must not displace the original intent.
+        intent_parts = [
+            sections.get("current user request", ""),
+            sections.get("current attachments", ""),
+            sections.get("recent user context", ""),
+        ]
+        # Embeddings need the actual intent, not English envelope labels or
+        # serialized tool results. Recent user messages resolve short follow-up
+        # requests; execution progress is deliberately excluded.
+        query_text = "\n".join(part for part in intent_parts if part).casefold().strip()
+        if not query_text:
+            query_text = _SELECTION_CONTEXT_HEADINGS.sub("", raw_query).casefold().strip()
         query_terms = self._search_terms(query_text)
         scores: dict[str, float] = {}
         semantic_distances: dict[str, float] = {}
@@ -592,13 +617,23 @@ class DynamicToolLoader:
         # being displaced by semantically similar neighbours.
         for item in all_tools:
             normalized_name = item.name.casefold().replace("_", " ").replace("-", " ")
-            searchable = (
+            descriptive_text = (
                 f"{item.name} {item.category} {item.description}"
             ).casefold().replace("_", " ").replace("-", " ")
-            item_terms = self._search_terms(searchable)
-            overlap = len(query_terms & item_terms)
-            score = float(overlap * 3)
-            if query_text and query_text in searchable:
+            parameter_text = json.dumps(
+                item.parameters or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).casefold().replace("_", " ").replace("-", " ")
+            description_terms = self._search_terms(descriptive_text)
+            parameter_terms = self._search_terms(parameter_text)
+            description_overlap = len(query_terms & description_terms)
+            parameter_overlap = len(query_terms & parameter_terms)
+            # A contract-level match is stronger than incidental prose such as
+            # "one file" appearing in an unrelated tool description.
+            score = float(description_overlap * 3 + parameter_overlap * 8)
+            if query_text and query_text in descriptive_text:
                 score += 8.0
             if normalized_name and normalized_name in query_text:
                 score += 20.0
@@ -613,7 +648,7 @@ class DynamicToolLoader:
         if table is not None:
             try:
                 if table.count_rows() > 0:
-                    query_vec = self._get_embedder().embed(query, source="tool.prefetch")
+                    query_vec = self._get_embedder().embed(query_text, source="tool.prefetch")
                     rows = table.search(query_vec).limit(
                         min(
                             len(all_tools) + len(excluded_names),
@@ -654,7 +689,7 @@ class DynamicToolLoader:
         record_vector_trace(
             source="tool.prefetch",
             phase="retrieval",
-            query=query,
+            query=query_text,
             candidates=[{
                 "id": name,
                 "name": name,

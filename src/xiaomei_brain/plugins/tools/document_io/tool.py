@@ -375,15 +375,14 @@ def create_write_document_tool(
     return Tool(
         name="write_document",
         description=(
-            "Create or revise a document through a registered format plugin. First write the "
-            "format-specific JSON specification inside the current workspace, then pass its "
-            "relative path. To revise an uploaded document, pass its current attachment id; "
-            "to continue a durable file from the focused Workspace, pass source_asset_id; "
-            "to create from an Agent-owned template, pass template_id instead. The original "
-            "uploaded attachment or template is never overwritten. When the source attachment is an "
-            "Agent-owned artifact, update that artifact in place and keep its artifact id. Specifications "
-            "may reference current image "
-            "attachment ids or relative workspace image paths exposed by image tools."
+            "通过已注册的格式插件创建或修改 Word 文件、Excel 表格、PowerPoint 演示文稿、"
+            "PDF 文件等办公文档。"
+            "先在当前工作区写入对应格式的 JSON 规格文件，再传入其相对路径。"
+            "修改本轮上传的文档时传入 source_attachment_id；继续修改当前 Workspace 中的"
+            "持久文件时传入 source_asset_id；基于 Agent 已保存的模板创建时传入 template_id。"
+            "原始上传附件和模板不会被覆盖；如果来源是 Agent 自己生成的产物，则在原产物"
+            "位置更新并保留原 artifact_id。规格文件可以引用当前消息中的图片 attachment_id，"
+            "也可以引用图片工具提供的工作区相对路径。"
         ),
         parameters={
             "type": "object",

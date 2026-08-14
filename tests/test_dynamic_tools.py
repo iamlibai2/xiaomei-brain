@@ -109,20 +109,21 @@ def test_tool_selection_context_is_bounded():
     context = build_tool_selection_context(messages, max_chars=400)
 
     assert len(context) <= 400
-    assert "Current user request" in context
     assert "C" * 100 in context
+    assert "Current user request" not in context
+    assert "Recent user context" not in context
 
 
-def test_step_selection_context_keeps_intent_and_bounds_tool_progress():
+def test_step_selection_context_excludes_tool_progress():
+    original = "Current user request:\n分析销售数据并生成图表"
     context = build_step_tool_selection_context(
-        "Current user request:\n分析销售数据并生成图表",
+        original,
         ["read_document: " + "old" * 500, "analyze_data: latest result"],
-        max_progress_chars=120,
     )
 
-    assert context.startswith("Current user request:\n分析销售数据并生成图表")
-    assert "analyze_data: latest result" in context
-    assert len(context.split("Recent execution progress:\n", 1)[1]) <= 120
+    assert context == original
+    assert "read_document" not in context
+    assert "analyze_data" not in context
 
 
 def test_agent_refreshes_runtime_tool_context_after_first_step():
@@ -812,6 +813,112 @@ def test_transport_scaffolding_does_not_create_lexical_tool_relevance(monkeypatc
         {"role": "user", "content": "距上条消息 2分钟 hi"},
     ])
     assert loader.select_tools(query) == []
+
+
+def test_lexical_prefetch_uses_parameter_schema_for_exact_format_terms(monkeypatch):
+    from xiaomei_brain.plugins.tools.document_io.tool import (
+        create_write_document_tool,
+    )
+
+    reg = ToolRegistry()
+    reg.register(create_write_document_tool(plugin_registry=None))
+    reg.register(Tool(
+        name="generate_video_minimax",
+        description="生成一个视频文件。",
+        category="video",
+        parameters={},
+        func=lambda **_kwargs: None,
+    ))
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 0
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+
+    query = build_tool_selection_context([
+        {"role": "user", "content": "hi"},
+        {"role": "user", "content": "写个word文件，里面就一个字：好"},
+    ])
+    selected = loader.select_tools(query)
+
+    assert [tool.name for tool in selected] == ["write_document"]
+
+
+def test_execution_progress_does_not_pollute_lexical_tool_ranking(monkeypatch):
+    reg = _registry_with_tools(
+        ("write_document", "Create a Word document"),
+        ("play_music", "Play an audio file from the music library"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 0
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    query = (
+        "Current user request:\n写个 Word 文件\n\n"
+        "Recent execution progress:\n"
+        "skill_view returned a long guide mentioning music audio playlist repeatedly"
+    )
+
+    assert [tool.name for tool in loader.select_tools(query)] == ["write_document"]
+
+
+def test_prefetch_embeds_plain_intent_without_execution_progress(monkeypatch):
+    reg = _registry_with_tools(
+        ("write_document", "创建 Word 文件和 PowerPoint 演示文稿"),
+        ("play_music", "播放音乐"),
+    )
+    loader = DynamicToolLoader(reg, top_k=1)
+    embedded_queries: list[str] = []
+
+    class _Search:
+        @staticmethod
+        def limit(_count):
+            return _Search()
+
+        @staticmethod
+        def to_list():
+            return []
+
+    class _Table:
+        @staticmethod
+        def count_rows():
+            return 1
+
+        @staticmethod
+        def search(_vector):
+            return _Search()
+
+    monkeypatch.setattr(loader, "_get_lance_table", lambda: _Table())
+    monkeypatch.setattr(
+        loader._shared,
+        "embed",
+        lambda query, **_kwargs: embedded_queries.append(query) or [0.0],
+    )
+    loader.begin_run("session-a", reset=True)
+    initial_query = (
+        "Current user request:\n随便写一页\n\n"
+        "Recent user context:\n- 演示文稿会写吗"
+    )
+    later_query = (
+        f"{initial_query}\n\nRecent execution progress:\n"
+        "skill_view: presentation-documents 的完整正文"
+    )
+
+    first = loader.select_tools(initial_query, step=0)
+    later = loader.select_tools(later_query, step=1)
+
+    assert embedded_queries == [
+        "随便写一页\n- 演示文稿会写吗",
+        "随便写一页\n- 演示文稿会写吗",
+    ]
+    assert [tool.name for tool in later] == [tool.name for tool in first]
 
 
 def test_semantic_prefetch_accepts_absolutely_relevant_tool(monkeypatch):
