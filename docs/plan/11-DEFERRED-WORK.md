@@ -174,3 +174,72 @@ Runtime 单归档分发已经完成，不属于待办。
 - 第一阶段多个 Assignment 并行；
 - 为旧 Desktop 保留 V2/V3 双字段兼容；
 - 记忆详情跳转到来源会话。
+
+## 13. 对话身份与跨渠道上下文边界
+
+2026-08-14 对实时对话链路完成了一次只读审查。以下问题已确认存在，但当前真实使用
+尚未证明它们造成了不可接受的影响，因此暂不修改，先通过 Desktop、CLI、飞书和钉钉
+的长期运行观察实际表现。
+
+### 13.1 Channel Session 与 Person 上下文
+
+当前飞书、钉钉和 CLI 都有各自独立的 `session_id`，消息持久化和 Desktop 会话列表
+也是分开的；但 Gateway 对同一 Person 的非 WebSocket 私聊使用
+`person:{person_id}` 作为 Attention 上下文键，因此它们可能共享临时
+`agent.messages`。Desktop 使用 `session:{session_id}`。
+
+这是一种“持久化 Session 独立、运行时上下文按 Person 共享”的混合语义。它能够带来
+跨渠道自然延续对话的便利，也可能产生以下问题：
+
+- 当前 Channel 看不到另一 Channel 的原始消息，但模型可能使用了它们；
+- 不相关话题互相干扰，或共同增加上下文 Token；
+- 重启前后因 Session 历史恢复方式不同而表现不一致；
+- 模型引用另一个 Channel 的附件，但当前执行现场无法读取；
+- 删除一个 Session 后，运行时 Person 上下文可能暂时仍保留相关消息。
+
+当前决定：保持现状，不增加跨渠道会话绑定、接续协议或新表。跨渠道继续处理 PPT、
+Word 等工作时，优先依靠同一 Person 可访问的现有产物、文件搜索、长期记忆和产物记录；
+找到唯一原文件就直接继续，多个候选才 Clarify，找不到再询问。
+
+仅在真实使用稳定复现上述困扰时，再在以下两种清晰语义中二选一：
+
+1. 所有原始消息严格按 `session_id` 隔离，只共享人物记忆、关系和产物；
+2. 同一 Person 的跨渠道消息正式属于同一个会话，并让持久化和界面也体现该语义。
+
+不要继续维持更复杂的“部分绑定、部分接续”中间机制。
+
+### 13.2 自主行为的目标人物与会话
+
+实时对话每轮都会根据不可变的 `LivingMessage` 重新设置 Core 的 `user_id`、
+`session_id` 和 `turn_id`，主循环又是串行执行，因此普通实时对话目前基本安全。
+
+仍需后续处理的遗留边界：
+
+- Work、pleasure、部分 Goal/主动行为仍可能从全局 `living.user_id`、
+  `living.session_id` 推断投递和持久化目标；
+- Intent 已能携带 `user_id`，但部分 Action handler 没有使用该元数据；
+- startup 和无显式目标的主动行为仍可能落到 `global`。
+
+触发修复的条件：主动消息投递给错误人物、写入错误 Session、显示为 `global`，或真实
+多人物并发测试出现路由错误。修复时让每个 ActionItem 显式携带目标 Person、Session
+和 reply route，不再从 Living 全局状态推断。
+
+### 13.3 自主行为共享 SelfImage 投影
+
+Assignment 和自主行为已经使用独立 Agent Core，但 `build_simple_context()` 仍会刷新并
+读取共享的 `consciousness.self_image` 和 MemoryWindow 投影。后台行为可能继承最后一个
+实时对话人物的关系状态，也可能与实时对话并发刷新同一上下文投影。
+
+触发修复的条件：自主行为提示词出现错误人物关系、跨人物记忆、实时对话上下文波动，
+或并发测试稳定复现投影污染。修复时优先使用轻量只读快照和显式目标人物，不复制第二套
+Agent，也不新增复杂的全局上下文框架。
+
+### 13.4 会话命令与遗留入口
+
+- `manage_session` 仍能在 ReAct 内修改共享会话，暂不调整；后续应改为返回会话意图，
+  由当前交互端在 Turn 边界执行，不能在工具调用中直接切换共享 Core；
+- `/user`、`/switch` 的旧 Living handler 和过时注释可在确认无调用者后清理；
+- CLI 斜杠命令已经迁到 CLI 本地处理，Gateway 不再解析；完整分组提示界面已恢复；
+- Desktop 的 `/new`、`/compact` 等确定性操作继续使用结构化 RPC，不作为普通聊天文本。
+
+以上问题进入后续观察清单，不应在没有真实故障证据时继续扩展设计或引入新概念。

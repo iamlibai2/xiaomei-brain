@@ -90,3 +90,22 @@ def test_unknown_slash_text_is_left_for_normal_chat():
     )
 
     assert result.handled is False
+
+
+def test_bare_slash_restores_categorized_local_command_palette():
+    living, _ = _living()
+
+    result = execute_local_command(
+        living,
+        "/",
+        user_id="person-a",
+        session_id="session-a",
+        identity_mgr=_IdentityManager(),
+    )
+
+    assert result.handled is True
+    assert "命令列表" in result.output
+    assert "记忆与查询" in result.output
+    assert "会话" in result.output
+    assert "/memory" in result.output
+    assert "/switch <id>" in result.output

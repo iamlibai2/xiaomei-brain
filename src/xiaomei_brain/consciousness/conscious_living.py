@@ -1071,6 +1071,7 @@ class ConsciousLiving(Living):
                 type=IntentType.ALARM,
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
+                params={"user_id": self.user_id, "session_id": self.session_id},
             )
             if self.consciousness.self_image is not None:
                 self.consciousness.self_image.contribute_intent(intent.to_dict())
@@ -2628,61 +2629,62 @@ class ConsciousLiving(Living):
 
     # ── Proactive output ─────────────────────────────────────────
 
-    def _send_proactive(self, content: str, user_id: str | None = None) -> None:
-        """发送主动消息。按用户最近活跃渠道路由，CLI 回调兜底。"""
-        target_user = user_id or self.user_id
+    def _send_proactive(
+        self,
+        content: str,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        """Deliver an autonomous result only to its explicit owner.
+
+        ``self.user_id`` and ``self.session_id`` describe whichever realtime
+        conversation ran most recently; they are not valid ownership data for
+        a deferred behavior.
+        """
+        target_user = user_id or ""
+        target_session = session_id or ""
+        if not target_user and not target_session:
+            logger.info("[ConsciousLiving/Proactive] internal result retained; no external target")
+            return False
         logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字) to %s", len(content), target_user)
 
-        if self.agent.conversation_db:
+        persisted = False
+        if self.agent.conversation_db and target_session:
             try:
                 self.agent.conversation_db.log(
-                    session_id=self.session_id,
+                    session_id=target_session,
                     role="assistant",
                     content=content,
                     user_id=target_user,
                 )
+                persisted = True
             except Exception as e:
                 logger.warning("[ConsciousLiving/Proactive] 对话日志写入失败: %s", e)
-
-        # 合并到 agent.messages：让 agent 感知自己发过主动消息
-        try:
-            agent = self.agent._get_agent()
-            msgs = agent.messages
-            last_user = getattr(self.agent, '_last_user_msg_time', 0) or getattr(agent, '_last_user_msg_time', 0)
-            gap = time.time() - last_user if last_user else float('inf')
-            if (msgs and msgs[-1].get("role") == "assistant"
-                    and not msgs[-1].get("tool_calls")
-                    and gap < 1800):
-                # 短间隔：合并到上一条 assistant
-                msgs[-1]["content"] = msgs[-1].get("content", "") + "\n\n" + content
-            else:
-                # 长间隔或第一条：插空 user 保持交替
-                if msgs and msgs[-1].get("role") == "assistant":
-                    msgs.append({"role": "user", "content": ""})
-                msgs.append({"role": "assistant", "content": content})
-        except Exception as e:
-            logger.debug("[ConsciousLiving/Proactive] agent.messages 合并失败: %s", e)
 
         # Router 优先：按用户最近活跃渠道分发
         # CLI 渠道走 on_proactive 回调（Rich Markdown 格式化），
         # 其他渠道（WS/飞书等）走 Router.deliver()
         if hasattr(self, '_router') and self._router:
-            for try_session in (True, False):
-                route = (
-                    self._router.route_for_user(target_user) if try_session
-                    else self._router.route_for_session(self.session_id)
-                )
+            routes = []
+            if target_session:
+                routes.append(self._router.route_for_session(target_session))
+            if target_user:
+                routes.append(self._router.route_for_user(target_user))
+            for route in routes:
                 if route and route.type == "cli" and self.on_proactive:
                     self.on_proactive(content, target_user)
-                    return
+                    return True
                 if route and route.type != "cli":
                     text = re.sub(r'\x1b\[[0-9;]*m', '', content)
                     if self._router.deliver(text, route):
-                        return
+                        return True
+            return persisted
             # 非 CLI 路由没配上 → 下面的兜底
 
         # 兜底：on_proactive 回调 / 裸 print
         if self.on_proactive:
             self.on_proactive(content, target_user)
+            return True
         else:
             print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
+            return True

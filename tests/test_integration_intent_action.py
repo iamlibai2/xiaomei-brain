@@ -69,6 +69,25 @@ def test_work_intent_produces_work_action():
     assert queue[0].action_type.value == "work"
 
 
+def test_work_dispatch_selects_one_concrete_scoped_intent():
+    drive, si, dispatcher = _setup()
+    si.contribute_intent({
+        "type": "WORK", "priority": 40, "content": "乙的 Word",
+        "scope_type": "session", "user_id": "person-b", "session_id": "session-b",
+    })
+    si.contribute_intent({
+        "type": "WORK", "priority": 80, "content": "甲的 PPT",
+        "scope_type": "session", "user_id": "person-a", "session_id": "session-a",
+    })
+
+    queue = dispatcher.tick(si)
+    work = next(item for item in queue if item.action_type.value == "work")
+    assert work.content == "甲的 PPT"
+    assert work.metadata["user_id"] == "person-a"
+    assert work.metadata["session_id"] == "session-a"
+    assert work.metadata["intent_id"]
+
+
 def test_express_intent_produces_proactive():
     drive, si, dispatcher = _setup()
     _push_intent(si, "EXPRESS")

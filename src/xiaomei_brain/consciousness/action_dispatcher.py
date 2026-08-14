@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .action_item import ActionItem, ActionType
     from .self_image_proxy import SelfImage
 from xiaomei_brain.consciousness.context_pipeline import build_simple_context
+from xiaomei_brain.consciousness.intent import normalize_intent_record
 
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,16 @@ class ActionExecutor:
     def _cancel_check(self) -> Callable[[], bool] | None:
         return getattr(self._runtime_local, "cancel_check", None)
 
+    def _consume_intent(self, item: ActionItem) -> None:
+        """Consume the concrete queued intent attached by the dispatcher."""
+        intent_id = str(item.metadata.get("intent_id") or "")
+        if not intent_id:
+            return
+        si = self.dispatcher._get_self_image()
+        if si and hasattr(si, "intent"):
+            si.intent.consume(intent_id)
+            logger.debug("[ActionExecutor] consumed intent: %s", intent_id)
+
     def _report_activity(
         self,
         summary: str,
@@ -114,6 +125,9 @@ class ActionExecutor:
         intent_type = item.metadata.get("intent_type", "")
         source = item.metadata.get("source", "")
         desire_type = item.metadata.get("desire_type", "")
+        if not item.metadata.get("user_id") and not item.metadata.get("session_id"):
+            logger.debug("[ActionExecutor] unowned proactive action remains internal")
+            return False
 
         content = item.content
         if not content:
@@ -126,7 +140,15 @@ class ActionExecutor:
 
         # 目标用户 ID（多用户路由）
         target_user_id = item.metadata.get("user_id", "")
-        self.dispatcher._send_proactive(content, user_id=target_user_id or None)
+        target_session_id = item.metadata.get("session_id", "")
+        delivered = self.dispatcher._send_proactive(
+            content,
+            user_id=target_user_id or None,
+            session_id=target_session_id or None,
+        )
+        if not delivered:
+            logger.info("[ActionExecutor] proactive intent retained: target unavailable")
+            return False
 
         # 经验流
         cl = self.dispatcher._conscious_living
@@ -149,11 +171,7 @@ class ActionExecutor:
 
         # 消费已执行的 intent（避免下一 tick 重复匹配）
         if intent_type_for_consume and item.source == "intent":
-            si = self.dispatcher._get_self_image()
-            if si and hasattr(si.intent, "intent_buffer"):
-                upper_type = intent_type_for_consume.upper()
-                si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type_for_consume)
+            self._consume_intent(item)
 
             # 行为完成 → 满足对应欲望（打通 L2 → drive 反馈链路）
             self._satisfy_intent_desire(intent_type_for_consume)
@@ -176,7 +194,12 @@ class ActionExecutor:
         es = getattr(agent_core, "exp_stream", None)
 
         # 构建消息
-        system_prompt = build_simple_context(consciousness, mode="daily")
+        system_prompt = build_simple_context(
+            consciousness,
+            mode="daily",
+            user_id=item.metadata.get("user_id") or None,
+            session_id=item.metadata.get("session_id") or None,
+        )
         user_msg = (
             f"你的闹钟响了。\n\n"
             f"闹钟名称：{item.content or '未命名'}\n"
@@ -207,11 +230,7 @@ class ActionExecutor:
             # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
             intent_type = item.metadata.get("intent_type", "")
             if intent_type:
-                si = self.dispatcher._get_self_image()
-                if si and hasattr(si.intent, "intent_buffer"):
-                    upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                self._consume_intent(item)
 
             # 消耗能量
             if cl.drive:
@@ -261,59 +280,27 @@ class ActionExecutor:
         consciousness = cl.consciousness
         es = getattr(agent_core, "exp_stream", None)
 
-        # 从长期记忆按 tag 直接查目标/任务（不走语义搜索）
-        longterm = getattr(cl.agent, "longterm_memory", None)
-        goal_memories = []
-        if longterm:
-            try:
-                conn = longterm._get_conn()
-                rows = conn.execute(
-                    """SELECT m.* FROM memories m
-                       JOIN memory_tags mt ON m.id = mt.memory_id
-                       WHERE m.user_id = ? AND m.status != 'EXTINCT'
-                       AND mt.tag IN ('目标', '任务')
-                       ORDER BY m.created_at DESC LIMIT 10""",
-                    (cl._agent_id,),
-                ).fetchall()
-                # 合并 tags（m.* 不含 tags，需单独查）
-                ids = [r["id"] for r in rows]
-                tag_map: dict[int, list[str]] = {}
-                if ids:
-                    placeholders = ",".join("?" * len(ids))
-                    tag_rows = conn.execute(
-                        f"SELECT memory_id, tag FROM memory_tags WHERE memory_id IN ({placeholders})",
-                        ids,
-                    ).fetchall()
-                    for tr in tag_rows:
-                        mid = tr["memory_id"]
-                        if mid not in tag_map:
-                            tag_map[mid] = []
-                        tag_map[mid].append(tr["tag"])
-                goal_memories = []
-                for r in rows:
-                    d = dict(r)
-                    d["tags"] = tag_map.get(d["id"], [])
-                    goal_memories.append(d)
-            except Exception as e:
-                logger.warning("[ActionExecutor] 按 tag 查目标记忆失败: %s", e)
-
-        # 构建任务列表
-        task_lines = []
-        if goal_memories:
-            for i, m in enumerate(goal_memories, 1):
-                task_lines.append(f"{i}. {m.get('content', '')[:100]}")
-            task_list_text = "\n".join(task_lines)
-        else:
-            task_list_text = "（暂无待办任务）"
+        # Execute the selected durable intent.  Never rediscover a different
+        # person's task from long-term memory at execution time.
+        task_text = (item.content or item.reason or "").strip()
+        intent_params = dict(item.metadata.get("intent_params") or {})
+        task_list_text = task_text or "（该自主工作意图没有可执行内容）"
 
         # 构建 system_prompt + 触发消息
         # WORK 指令放在 system 层（LLM 知道这是系统指令，不是用户说的）
         # 触发用 assistant 角色（LLM 看到的是"自己"的内心想法，而非用户在说话）
         work_instructions = WORK_INSTRUCTIONS_PROMPT.format(task_list_text=task_list_text)
-        system_prompt = build_simple_context(consciousness, mode="task") + work_instructions
+        system_prompt = build_simple_context(
+            consciousness,
+            mode="task",
+            user_input=task_text,
+            user_id=item.metadata.get("user_id") or None,
+            session_id=item.metadata.get("session_id") or None,
+        ) + work_instructions
         trigger_msg = (
-            f"（收到 WORK 意图，成就欲偏高，我应该主动推进工作了。"
-            f"看看待办列表里有什么可以做的……）"
+            "（现在执行这一条已经确认归属的自主工作，不要改做其他人的任务。）\n"
+            f"任务：{task_text}\n"
+            f"任务参数：{intent_params}"
         )
 
         messages = [
@@ -321,7 +308,7 @@ class ActionExecutor:
             {"role": "assistant", "content": trigger_msg},
         ]
 
-        logger.info("[ActionExecutor] WORK 触发 react_nodb，任务数: %d", len(goal_memories))
+        logger.info("[ActionExecutor] WORK intent=%s scope=%s", item.metadata.get("intent_id"), item.metadata.get("scope_type"))
         self._report_activity(
             "正在选择并推进可以独立完成的工作",
             current_step="autonomous_work",
@@ -338,27 +325,21 @@ class ActionExecutor:
             clean_result = self._extract_work_memories(agent_core, result)
 
             # 输出（用去除 MEMORY 块后的干净文本）
-            cl._send_proactive(clean_result, user_id=cl.user_id)
-
-            if cl.agent.conversation_db:
-                try:
-                    cl.agent.conversation_db.log(
-                        session_id=cl.session_id,
-                        role="assistant",
-                        content=clean_result,
-                        user_id=cl.user_id,
-                    )
-                except Exception as e:
-                    logger.warning("failed to log assistant response to conversation_db: %s", e)
+            scope_type = item.metadata.get("scope_type", "agent")
+            if scope_type in ("session", "person") and clean_result:
+                delivered = cl._send_proactive(
+                    clean_result,
+                    user_id=item.metadata.get("user_id") or None,
+                    session_id=item.metadata.get("session_id") or None,
+                )
+                if not delivered:
+                    logger.info("[ActionExecutor] work result retained for retry: target unavailable")
+                    return False
 
             # 消费已执行的 WORK intent
             intent_type = item.metadata.get("intent_type", "")
             if intent_type:
-                si = self.dispatcher._get_self_image()
-                if si and hasattr(si.intent, "intent_buffer"):
-                    upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                self._consume_intent(item)
 
                 # 行为完成 → 满足成就欲
                 self._satisfy_intent_desire(intent_type)
@@ -494,11 +475,7 @@ class ActionExecutor:
 
             # 消费已执行的 intent
             if intent_type and item.source == "intent":
-                si = self.dispatcher._get_self_image()
-                if si and hasattr(si.intent, "intent_buffer"):
-                    upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                self._consume_intent(item)
 
             return True
         except Exception as e:
@@ -546,10 +523,7 @@ class ActionExecutor:
             intent_type = item.metadata.get("intent_type", "")
             if intent_type:
                 si = self.dispatcher._get_self_image()
-                if si and hasattr(si.intent, "intent_buffer"):
-                    upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                self._consume_intent(item)
                 # 清除紧急标记
                 if si and hasattr(si.intent, "urgent_intents"):
                     si.intent.urgent_intents.discard(intent_type.lower())
@@ -663,11 +637,7 @@ class ActionExecutor:
             # 消费已执行的 intent
             intent_type = item.metadata.get("intent_type", "")
             if intent_type and item.source == "intent":
-                si = self.dispatcher._get_self_image()
-                if si and hasattr(si.intent, "intent_buffer"):
-                    upper_type = intent_type.upper()
-                    si.intent.intent_buffer = [i for i in si.intent.intent_buffer if i.get("type", "").upper() != upper_type]
-                    logger.debug("[ActionExecutor] 已消费 intent: %s", intent_type)
+                self._consume_intent(item)
 
             return True
 
@@ -1064,7 +1034,8 @@ class ActionExecutor:
         logger.info("[ActionExecutor] 自发 pleasure_lever: %s", sensation[:80])
 
         # 通过 proactive 输出感受
-        cl._send_proactive(sensation, user_id=cl.user_id)
+        # This is an Agent-internal bodily action.  Do not leak it to whichever
+        # Person happened to speak most recently.
 
         # 消费 craving（按压后 craving 已在 on_pleasure_hit 中归零）
         return True
@@ -1183,7 +1154,16 @@ class ActionExecutor:
 
         if desc:
             msg = f"想起来之前的「{desc}」还没完成，要继续吗？回复'继续'我就开始。"
-            living._send_proactive(msg, user_id=living.user_id)
+            goal_user_id = getattr(goal, "user_id", "")
+            goal_session_id = getattr(goal, "session_id", "")
+            if goal_user_id or goal_session_id:
+                living._send_proactive(
+                    msg,
+                    user_id=goal_user_id or None,
+                    session_id=goal_session_id or None,
+                )
+            else:
+                logger.info("[ActionExecutor] goal reminder retained internally; owner is unspecified")
             logger.info("[ActionExecutor] 目标提醒: %s", desc)
 
         if living.drive:
@@ -1268,19 +1248,32 @@ class ActionDispatcher:
             if item.source == "intent" and self_image:
                 intent_type = item.metadata.get("intent_type", "")
                 if intent_type:
-                    for i in self_image.intent.intent_buffer:
-                        if i.get("type", "").upper() == intent_type.upper():
-                            uid = i.get("user_id", "")
-                            if uid:
-                                item.metadata["user_id"] = uid
-                                logger.debug("[ActionDispatcher] intent user_id: %s → %s", intent_type, uid)
-                            # 对话类意图：注入预生成的消息内容
-                            msg = (i.get("params", {}) or {}).get("message", "")
+                    self_image.intent.intent_buffer = [
+                        normalize_intent_record(i) for i in self_image.intent.intent_buffer
+                    ]
+                    candidates = [
+                        i for i in self_image.intent.intent_buffer
+                        if i.get("type", "").upper() == intent_type.upper()
+                    ]
+                    candidates.sort(key=lambda i: (-int(i.get("priority", 50)), float(i.get("trigger_time", 0))))
+                    if candidates:
+                        selected = candidates[0]
+                        params = dict(selected.get("params") or {})
+                        item.metadata.update({
+                            "intent_id": selected.get("intent_id", ""),
+                            "scope_type": selected.get("scope_type", "agent"),
+                            "user_id": selected.get("user_id", ""),
+                            "session_id": selected.get("session_id", ""),
+                            "intent_params": params,
+                        })
+                        if item.action_type.value == "work":
+                            item.content = selected.get("content", "") or item.content
+                            item.reason = selected.get("content", "") or item.reason
+                        else:
+                            msg = params.get("message", "")
                             if msg and not item.content:
                                 item.content = msg
-                                item.reason = i.get("content", "") or item.reason
-                                logger.debug("[ActionDispatcher] intent 预生成消息: %s → %s", intent_type, msg[:60])
-                            break
+                                item.reason = selected.get("content", "") or item.reason
             if silent and item.action_type.value != "notify":
                 logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
                 continue
@@ -1397,10 +1390,20 @@ class ActionDispatcher:
             metadata=dict(item.metadata),
         )
 
-    def _send_proactive(self, content: str, user_id: str | None = None) -> None:
+    def _send_proactive(
+        self,
+        content: str,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
         """发送主动消息（委托给 ConsciousLiving）"""
         if self._conscious_living:
-            self._conscious_living._send_proactive(content, user_id=user_id)
+            return self._conscious_living._send_proactive(
+                content,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        return False
 
     def _get_self_image(self):
         """获取 SelfImage（委托给 ConsciousLiving）"""

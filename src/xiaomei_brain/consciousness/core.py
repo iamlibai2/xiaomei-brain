@@ -1051,6 +1051,10 @@ class Consciousness:
                 type=IntentType.ALARM,
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
+                params={
+                    "user_id": getattr(self.agent, "user_id", ""),
+                    "session_id": getattr(self.agent, "session_id", ""),
+                },
             )
             if self.self_image is not None:
                 self.self_image.contribute_intent(intent.to_dict())

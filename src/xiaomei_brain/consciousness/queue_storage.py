@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 DDL = """
 CREATE TABLE IF NOT EXISTS intent_buffer (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    intent_id TEXT,
+    scope_type TEXT DEFAULT 'agent',
+    user_id TEXT DEFAULT '',
+    session_id TEXT DEFAULT '',
     type TEXT NOT NULL,
     priority INTEGER DEFAULT 50,
     content TEXT DEFAULT '',
@@ -34,7 +38,6 @@ CREATE TABLE IF NOT EXISTS intent_buffer (
 
 CREATE INDEX IF NOT EXISTS idx_ib_status ON intent_buffer(status);
 CREATE INDEX IF NOT EXISTS idx_ib_type_status ON intent_buffer(type, status);
-
 CREATE TABLE IF NOT EXISTS learning_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic TEXT NOT NULL,
@@ -61,19 +64,41 @@ class TaskQueueStorage(SQLiteStore):
     def _init_tables(self) -> None:
         conn = self._get_conn()
         conn.executescript(DDL)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(intent_buffer)")}
+        for name, declaration in (
+            ("intent_id", "TEXT"),
+            ("scope_type", "TEXT DEFAULT 'agent'"),
+            ("user_id", "TEXT DEFAULT ''"),
+            ("session_id", "TEXT DEFAULT ''"),
+        ):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE intent_buffer ADD COLUMN {name} {declaration}")
+        conn.execute(
+            "UPDATE intent_buffer SET intent_id = 'legacy_' || id "
+            "WHERE intent_id IS NULL OR intent_id = ''"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_ib_intent_id ON intent_buffer(intent_id)"
+        )
         conn.commit()
 
     # ── intent_buffer ──────────────────────────────────────
 
-    def add_intent(self, intent_dict: dict) -> int:
-        """写入一条 intent 记录。返回 row id。"""
+    def add_intent(self, intent_dict: dict) -> str:
+        """Persist one concrete intent and return its stable logical ID."""
+        from .intent import normalize_intent_record
+        intent_dict = normalize_intent_record(intent_dict)
         conn = self._get_conn()
         now = time.time()
         params_json = json.dumps(intent_dict.get("params", {}), ensure_ascii=False)
         cursor = conn.execute(
-            """INSERT INTO intent_buffer (type, priority, content, trigger_time, source, params, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            """INSERT INTO intent_buffer
+               (intent_id, scope_type, user_id, session_id, type, priority, content,
+                trigger_time, source, params, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
             (
+                intent_dict["intent_id"], intent_dict["scope_type"],
+                intent_dict["user_id"], intent_dict["session_id"],
                 intent_dict.get("type", ""),
                 intent_dict.get("priority", 50),
                 intent_dict.get("content", ""),
@@ -84,7 +109,7 @@ class TaskQueueStorage(SQLiteStore):
             ),
         )
         conn.commit()
-        return cursor.lastrowid
+        return intent_dict["intent_id"]
 
     def load_pending_intents(self) -> list[dict]:
         """加载所有 pending 的 intent，按 created_at 排序。"""
@@ -94,12 +119,12 @@ class TaskQueueStorage(SQLiteStore):
         ).fetchall()
         return [self._row_to_intent(r) for r in rows]
 
-    def mark_intent_consumed(self, intent_type: str) -> int:
-        """标记指定类型的 pending intent 为 consumed。返回影响行数。"""
+    def mark_intent_consumed(self, intent_id: str) -> int:
+        """Consume exactly one intent, never every intent of the same type."""
         conn = self._get_conn()
         cursor = conn.execute(
-            "UPDATE intent_buffer SET status = 'consumed' WHERE type = ? AND status = 'pending'",
-            (intent_type,),
+            "UPDATE intent_buffer SET status = 'consumed' WHERE intent_id = ? AND status = 'pending'",
+            (intent_id,),
         )
         conn.commit()
         return cursor.rowcount
@@ -110,14 +135,34 @@ class TaskQueueStorage(SQLiteStore):
         60 秒周期调用，防止内存和 DB 不一致。
         """
         conn = self._get_conn()
-        conn.execute("DELETE FROM intent_buffer WHERE status = 'pending'")
+        from .intent import normalize_intent_record
+        normalized = [normalize_intent_record(item) for item in buffer_list]
+        keep_ids = {item["intent_id"] for item in normalized}
+        if keep_ids:
+            placeholders = ",".join("?" for _ in keep_ids)
+            conn.execute(
+                f"UPDATE intent_buffer SET status = 'consumed' WHERE status = 'pending' "
+                f"AND intent_id NOT IN ({placeholders})",
+                tuple(keep_ids),
+            )
+        else:
+            conn.execute("UPDATE intent_buffer SET status = 'consumed' WHERE status = 'pending'")
         now = time.time()
-        for item in buffer_list:
+        for item in normalized:
             params_json = json.dumps(item.get("params", {}), ensure_ascii=False)
             conn.execute(
-                """INSERT INTO intent_buffer (type, priority, content, trigger_time, source, params, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                """INSERT INTO intent_buffer
+                   (intent_id, scope_type, user_id, session_id, type, priority, content,
+                    trigger_time, source, params, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                   ON CONFLICT(intent_id) DO UPDATE SET
+                     scope_type=excluded.scope_type, user_id=excluded.user_id,
+                     session_id=excluded.session_id, type=excluded.type,
+                     priority=excluded.priority, content=excluded.content,
+                     trigger_time=excluded.trigger_time, source=excluded.source,
+                     params=excluded.params, status='pending'""",
                 (
+                    item["intent_id"], item["scope_type"], item["user_id"], item["session_id"],
                     item.get("type", ""),
                     item.get("priority", 50),
                     item.get("content", ""),
@@ -136,11 +181,12 @@ class TaskQueueStorage(SQLiteStore):
             d["params"] = json.loads(d.get("params", "{}"))
         except (json.JSONDecodeError, TypeError):
             d["params"] = {}
+        from .intent import normalize_intent_record
         # 去掉 DB 内部字段
         d.pop("id", None)
         d.pop("status", None)
         d.pop("created_at", None)
-        return d
+        return normalize_intent_record(d)
 
     # ── learning_queue ─────────────────────────────────────
 

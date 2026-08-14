@@ -7,8 +7,48 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+class IntentScope(str, Enum):
+    """The world boundary an intent is allowed to observe and affect."""
+
+    SESSION = "session"
+    PERSON = "person"
+    AGENT = "agent"
+
+
+def normalize_intent_record(data: dict) -> dict:
+    """Give legacy and new intents one durable identity and explicit scope."""
+    record = dict(data or {})
+    params = dict(record.get("params") or {})
+    user_id = str(record.get("user_id") or params.get("user_id") or "")
+    session_id = str(record.get("session_id") or params.get("session_id") or "")
+    scope_type = str(record.get("scope_type") or params.get("scope_type") or "").lower()
+    valid_scopes = {scope.value for scope in IntentScope}
+    if scope_type not in valid_scopes:
+        scope_type = (
+            IntentScope.SESSION.value if user_id and session_id
+            else IntentScope.PERSON.value if user_id
+            else IntentScope.AGENT.value
+        )
+    if scope_type == IntentScope.SESSION.value and (not user_id or not session_id):
+        scope_type = IntentScope.PERSON.value if user_id else IntentScope.AGENT.value
+    if scope_type == IntentScope.PERSON.value:
+        session_id = ""
+    elif scope_type == IntentScope.AGENT.value:
+        user_id = ""
+        session_id = ""
+    record.update({
+        "intent_id": str(record.get("intent_id") or params.get("intent_id") or f"intent_{uuid.uuid4().hex}"),
+        "scope_type": scope_type,
+        "user_id": user_id,
+        "session_id": session_id,
+        "params": params,
+    })
+    return record
 
 
 class IntentType(Enum):
@@ -105,22 +145,26 @@ class Intent:
             "source": self.source,
             "params": self.params,
         }
-        # 携带 user_id（供多用户路由）
-        uid = self.params.get("user_id", "")
-        if uid:
-            d["user_id"] = uid
-        return d
+        return normalize_intent_record(d)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Intent":
         """从字典创建"""
+        normalized = normalize_intent_record(data)
+        params = dict(normalized.get("params") or {})
+        params.update({
+            "intent_id": normalized["intent_id"],
+            "scope_type": normalized["scope_type"],
+            "user_id": normalized["user_id"],
+            "session_id": normalized["session_id"],
+        })
         return cls(
-            type=IntentType(data["type"]),
-            priority=data["priority"],
-            content=data["content"],
-            trigger_time=data.get("trigger_time", time.time()),
-            source=data.get("source", "consciousness"),
-            params=data.get("params", {}),
+            type=IntentType(normalized["type"]),
+            priority=normalized["priority"],
+            content=normalized["content"],
+            trigger_time=normalized.get("trigger_time", time.time()),
+            source=normalized.get("source", "consciousness"),
+            params=params,
         )
 
 

@@ -362,6 +362,8 @@ class SelfImage:
 
         由 L2Engine.tick() / Consciousness._check_alarms() / on_wake() 调用。
         """
+        from .intent import normalize_intent_record
+        intent_dict = normalize_intent_record(intent_dict)
         self.intent.intent_buffer.append(intent_dict)
         if urgent:
             intent_type = intent_dict.get("type", "")

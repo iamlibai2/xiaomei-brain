@@ -8,6 +8,7 @@ Agent.context_compactor 统一负责。
 from __future__ import annotations
 
 import logging
+import copy
 import time as _time
 from typing import Any
 
@@ -18,6 +19,22 @@ from xiaomei_brain.consciousness.workspace.salience_profile import SalienceProfi
 from xiaomei_brain.agent.render_execution_context import render_execution_context
 
 logger = logging.getLogger(__name__)
+
+
+def _project_self_image(self_image: Any) -> Any:
+    """Create an execution-local view without cloning the Agent's identity.
+
+    Memory windows and current-person fields are prompt material, not durable
+    Agent self state.  Shallow-cloning the mutable projection modules keeps
+    concurrent Person/session executions from overwriting each other while
+    body, intent and durable identity remain shared.
+    """
+    projected = copy.copy(self_image)
+    for name in ("memory", "mind", "history"):
+        value = getattr(self_image, name, None)
+        if value is not None:
+            setattr(projected, name, copy.copy(value))
+    return projected
 
 
 def _wait_for_dag_compaction_if_needed(agent: Any, max_tokens: int) -> None:
@@ -287,6 +304,8 @@ def build_context(
     # 5. 刷新记忆窗口 + 生成 system prompt
     system_content = ""
     if self_image is not None:
+        shared_self_image = self_image
+        self_image = _project_self_image(self_image)
         # ── 统一路径：SelfImage + memory_window ──
         from .memory_window import refresh_memory_window
 
@@ -346,7 +365,7 @@ def build_context(
             system_content += "\n\n" + execution_context
         # 记录当前消息的时间，供下次使用
         agent._last_user_msg_time = _time.time()
-        self_image._salience_profile = profile  # 挂载，供反馈阶段使用
+        shared_self_image._salience_profile = profile  # 反馈属于运行状态，不是人物投影
         # 日志：system prompt 中的 DAG 摘要数量
         dag_count = len(getattr(self_image.memory, 'dag_summaries', []))
         logger.info(
@@ -413,21 +432,55 @@ def build_context(
 
 # ── 轻量上下文 ──────────────────────────────────────
 
-def build_simple_context(consciousness, mode: str = "daily", user_input: str = "",
-                         profile=None, user_id: str | None = None) -> str:
+def build_simple_context(
+    consciousness,
+    mode: str = "daily",
+    user_input: str = "",
+    profile=None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
     """轻量上下文组装：刷新记忆窗口 + 注入意识。返回 system prompt 文本。
 
     供主对话外的独立 LLM 调用使用（意图决策、主动行为、学习、社交感知等）。
 
     Args:
-        user_id: 目标用户 ID，用于过滤 recent_dialog（None = 使用 agent_id，"" = 全部用户）
+        user_id: Explicit Person scope. ``None`` means Agent-internal context.
+        session_id: Explicit raw-dialog boundary. Person scope without a
+            session can use relationship and durable Person memory, but never
+            another session's raw messages.
     """
-    # mode="internal"：内部决策，不过滤 user_id，展示全部用户消息
-    _user_id = user_id
-    if mode == "internal" and user_id is None:
-        _user_id = ""
-    consciousness._refresh_memory_window(user_input or None, user_id=_user_id)
-    return inject_consciousness(consciousness.self_image, mode=mode, user_input=user_input, profile=profile)
+    from .memory_window import refresh_memory_window
+    from xiaomei_brain.memory.dag import DAGSummaryGraph
+
+    agent = getattr(consciousness, "agent", None)
+    projected = _project_self_image(consciousness.self_image)
+    scope_user_id = user_id or "global"
+    if agent is not None:
+        refresh_memory_window(
+            projected,
+            longterm=getattr(agent, "longterm_memory", None),
+            short_term=getattr(agent, "short_term_memory", None),
+            dag=DAGSummaryGraph.for_agent(getattr(consciousness, "_agent_id", "default")),
+            conversation_db=getattr(agent, "conversation_db", None),
+            procedure_memory=getattr(agent, "_procedure_memory", None),
+            session_id=session_id,
+            user_id=scope_user_id,
+            user_input=user_input or None,
+            exp_stream=getattr(consciousness, "exp_stream", None),
+            allow_cross_user_dialog=False,
+            recent_dialog_session_id=session_id,
+            recent_dialog_user_id=None,
+        )
+        identity_mgr = getattr(agent, "identity_mgr", None)
+        projected.current_user_id = user_id or ""
+        projected.current_user_name = (
+            identity_mgr.get_display_name(user_id) if identity_mgr and user_id else ""
+        )
+        projected.current_user_relation = (
+            identity_mgr.get_relation(user_id) if identity_mgr and user_id else ""
+        )
+    return inject_consciousness(projected, mode=mode, user_input=user_input, profile=profile)
 
 
 # ── Profile 加载辅助 ────────────────────────────────────

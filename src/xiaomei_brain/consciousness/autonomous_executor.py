@@ -132,11 +132,15 @@ class AutonomousBehaviorExecutor:
                 )
                 run_id = uuid.uuid4().hex
                 runtime_session_id = f"autonomous:{action_name}:{run_id}"
+                scope_type = str(item.metadata.get("scope_type") or "agent")
+                target_user_id = str(item.metadata.get("user_id") or "")
+                runtime_user_id = target_user_id if scope_type in ("person", "session") else "system"
+                memory_scope_id = target_user_id if runtime_user_id != "system" else "global"
                 runtime = self._factory.create(AgentRuntimeContext(
                     session_id=runtime_session_id,
                     turn_id=f"turn_{run_id}",
-                    user_id="system",
-                    memory_scope_id="global",
+                    user_id=runtime_user_id,
+                    memory_scope_id=memory_scope_id,
                     max_steps=50,
                 ))
                 activity_context = self._start_activity(
@@ -234,6 +238,13 @@ class AutonomousBehaviorExecutor:
             category, kind, title = self._describe(item)
             metadata = getattr(item, "metadata", {}) or {}
             person_id = str(metadata.get("user_id") or "").strip() or None
+            session_id = str(metadata.get("session_id") or "").strip()
+            scope_type = str(metadata.get("scope_type") or "agent")
+            scope_id = (
+                session_id if scope_type == "session" and session_id
+                else person_id if scope_type == "person" and person_id
+                else "global"
+            )
             activity = service.create(
                 category=category,
                 kind=kind,
@@ -246,9 +257,10 @@ class AutonomousBehaviorExecutor:
                     or getattr(item, "cooldown_key", "")
                     or ""
                 ),
-                scope_type="person" if person_id else "agent",
-                scope_id=person_id or "global",
+                scope_type=scope_type,
+                scope_id=scope_id,
                 person_id=person_id,
+                origin_session_id=session_id,
                 progress_summary="Waiting for the Agent's autonomous executor",
             )
             return activity.id

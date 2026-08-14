@@ -689,6 +689,19 @@ class SelfIntent:
             return
         self.intent_buffer = self._storage.load_pending_intents()
 
+    def consume(self, intent_id: str) -> bool:
+        """Consume one durable intent without affecting its siblings."""
+        if not intent_id:
+            return False
+        before = len(self.intent_buffer)
+        self.intent_buffer = [
+            item for item in self.intent_buffer
+            if item.get("intent_id") != intent_id
+        ]
+        if self._storage is not None:
+            self._storage.mark_intent_consumed(intent_id)
+        return len(self.intent_buffer) != before
+
     def is_active(self) -> bool:
         return bool(self.intent_buffer)
 
