@@ -171,17 +171,28 @@ def create_embedding_handler(
                 return
 
             response = {"model": model_id, "dim": dimension, "request_id": request_id}
+            response["trace"] = {
+                "device": device,
+                "mode": mode,
+                "items": item_count,
+                "chars": total_chars,
+                "queue_ms": _milliseconds(acquired_at - wait_started),
+                "inference_ms": _milliseconds(inference_finished_at - acquired_at),
+                "cache_hits": initial_hits,
+                "cache_misses": item_count - initial_hits,
+            }
             if mode == "batch":
                 response["vectors"] = vectors
             else:
                 response["vector"] = vectors[0]
 
-            response_started_at = time.perf_counter()
-            sent = _send_safely(self, 200, response, request_id, request_source)
+            # Emit the completed inference fact before writing the socket.
+            # The client can finish reading concurrently with this handler;
+            # logging afterwards makes observability race the response reader.
             finished_at = time.perf_counter()
             logging.info(
                 "[EmbedTrace] done id=%s source=%s mode=%s items=%d chars=%d queue_ms=%d "
-                "inference_ms=%d response_ms=%d total_ms=%d cache_hits=%d cache_misses=%d status=%s",
+                "inference_ms=%d total_ms=%d cache_hits=%d cache_misses=%d status=ok",
                 request_id,
                 request_source,
                 mode,
@@ -189,12 +200,11 @@ def create_embedding_handler(
                 total_chars,
                 _milliseconds(acquired_at - wait_started),
                 _milliseconds(inference_finished_at - acquired_at),
-                _milliseconds(finished_at - response_started_at),
                 _milliseconds(finished_at - received_at),
                 initial_hits,
                 item_count - initial_hits,
-                "ok" if sent else "client_disconnected",
             )
+            _send_safely(self, 200, response, request_id, request_source)
 
     return Handler
 

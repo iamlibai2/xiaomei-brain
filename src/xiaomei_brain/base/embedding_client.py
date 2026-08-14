@@ -93,7 +93,15 @@ class RemoteEmbedder:
         started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read())["vector"]
+                result = json.loads(resp.read())
+                _record_embedding_trace(
+                    request_id=request_id,
+                    source=normalized_source,
+                    query=text,
+                    result=result,
+                    elapsed_ms=round((time.monotonic() - started) * 1000),
+                )
+                return result["vector"]
         except Exception as exc:
             logger.warning(
                 "[EmbedClient] id=%s source=%s mode=single elapsed_ms=%d status=%s",
@@ -101,6 +109,14 @@ class RemoteEmbedder:
                 normalized_source,
                 round((time.monotonic() - started) * 1000),
                 type(exc).__name__,
+            )
+            _record_embedding_trace(
+                request_id=request_id,
+                source=normalized_source,
+                query=text,
+                result={},
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+                error=str(exc),
             )
             raise
 
@@ -121,6 +137,13 @@ class RemoteEmbedder:
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
                 result = json.loads(resp.read())
+                _record_embedding_trace(
+                    request_id=request_id,
+                    source=normalized_source,
+                    query="\n".join(str(item) for item in texts),
+                    result=result,
+                    elapsed_ms=round((time.monotonic() - started) * 1000),
+                )
                 if "vectors" in result:
                     return result["vectors"]
                 return [result["vector"]]
@@ -133,6 +156,14 @@ class RemoteEmbedder:
                 round((time.monotonic() - started) * 1000),
                 type(exc).__name__,
             )
+            _record_embedding_trace(
+                request_id=request_id,
+                source=normalized_source,
+                query="\n".join(str(item) for item in texts),
+                result={},
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+                error=str(exc),
+            )
             raise
 
 
@@ -141,3 +172,33 @@ def _normalize_source(source: str) -> str:
     if not value:
         return "unknown"
     return "".join(char if char.isalnum() or char in "._-" else "_" for char in value)
+
+
+def _record_embedding_trace(
+    *,
+    request_id: str,
+    source: str,
+    query: str,
+    result: dict,
+    elapsed_ms: int,
+    error: str = "",
+) -> None:
+    try:
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        metadata = dict(result.get("trace") or {})
+        metadata.update({
+            "model": result.get("model", ""),
+            "dimension": result.get("dim"),
+            "total_ms": elapsed_ms,
+        })
+        record_vector_trace(
+            source=source,
+            phase="embedding",
+            query=query,
+            metadata=metadata,
+            status="error" if error else "ok",
+            error=error,
+            trace_id=request_id,
+        )
+    except Exception:
+        logger.debug("Unable to record embedding trace", exc_info=True)

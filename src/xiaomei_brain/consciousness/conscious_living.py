@@ -367,6 +367,30 @@ class ConsciousLiving(Living):
         else:
             llm._trace_callback = _record_model_trace
 
+        # Vector diagnostics are append-only JSONL rather than business data.
+        # Candidate scores stay in this Agent's directory; the shared
+        # embedding service only contributes timing and cache facts.
+        from ..base.vector_trace import (
+            VectorTraceStore,
+            set_vector_trace_callback,
+        )
+
+        def _publish_vector_trace(event: str, payload: dict[str, Any]) -> None:
+            event_payload = dict(payload)
+            event_payload["_agent_global"] = True
+            self._event_hub.publish(
+                event,
+                event_payload,
+                session_id=str(payload.get("session_id") or ""),
+                turn_id=str(payload.get("turn_id") or ""),
+            )
+
+        self.vector_trace_store = VectorTraceStore(
+            os.path.join(agent_base_dir, "logs", "vector-traces.jsonl"),
+            on_change=_publish_vector_trace,
+        )
+        set_vector_trace_callback(self.vector_trace_store.append)
+
         # CronScheduler（闹钟系统）
         from ..schedule import CronScheduler
         self.cron_scheduler = CronScheduler(self._agent_id)

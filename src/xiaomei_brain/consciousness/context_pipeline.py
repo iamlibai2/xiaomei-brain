@@ -159,6 +159,45 @@ def build_context(
     inner_voice_mode: str = "",
     user_message_id: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Build a turn while attributing every retrieval to its execution scene."""
+    from xiaomei_brain.base.vector_trace import vector_trace_context
+    with vector_trace_context(
+        person_id=str(getattr(agent, "user_id", "") or ""),
+        session_id=str(getattr(agent, "session_id", "") or ""),
+        turn_id=str(getattr(agent, "turn_id", "") or ""),
+    ):
+        return _build_context_impl(
+            agent,
+            user_input,
+            consciousness_state=consciousness_state,
+            intent_context=intent_context,
+            max_tokens=max_tokens,
+            assemble=assemble,
+            images=images,
+            attachments=attachments,
+            image_analysis=image_analysis,
+            self_image=self_image,
+            force_mode=force_mode,
+            inner_voice_mode=inner_voice_mode,
+            user_message_id=user_message_id,
+        )
+
+
+def _build_context_impl(
+    agent: Any,
+    user_input: str,
+    consciousness_state: dict | None = None,
+    intent_context: str = "",
+    max_tokens: int = 50000,
+    assemble: bool = True,
+    images: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    image_analysis: str = "",
+    self_image: Any = None,
+    force_mode: str = "",
+    inner_voice_mode: str = "",
+    user_message_id: int | None = None,
+) -> list[dict[str, Any]]:
     """组装完整上下文，返回可直接传入 ReAct 引擎的消息列表。
 
     assemble=False 时跳过所有组装，只记录消息 + 返回裸消息列表。
@@ -433,6 +472,31 @@ def build_context(
 # ── 轻量上下文 ──────────────────────────────────────
 
 def build_simple_context(
+    consciousness,
+    mode: str = "daily",
+    user_input: str = "",
+    profile=None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Build an internal context under its explicit Person and Session scope."""
+    from xiaomei_brain.base.vector_trace import vector_trace_context
+    with vector_trace_context(
+        person_id=str(user_id or ""),
+        session_id=str(session_id or ""),
+        turn_id="",
+    ):
+        return _build_simple_context_impl(
+            consciousness,
+            mode=mode,
+            user_input=user_input,
+            profile=profile,
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+
+def _build_simple_context_impl(
     consciousness,
     mode: str = "daily",
     user_input: str = "",

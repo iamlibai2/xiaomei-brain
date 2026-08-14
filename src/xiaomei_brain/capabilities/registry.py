@@ -197,12 +197,14 @@ class CapabilityRegistry:
         best: dict[str, tuple[float, dict[str, Any]]] = {}
         for entry in entries:
             score = self._cosine_similarity(query_vector, entry["vector"])
-            if min_score is not None and score < min_score:
-                continue
             current = best.get(entry["capability_id"])
             if current is None or score > current[0]:
                 best[entry["capability_id"]] = (score, entry)
-        ranked = sorted(best.values(), key=lambda item: (-item[0], item[1]["capability_id"]))
+        all_ranked = sorted(best.values(), key=lambda item: (-item[0], item[1]["capability_id"]))
+        ranked = [
+            item for item in all_ranked
+            if min_score is None or item[0] >= min_score
+        ]
         skill_names = self._load_skill_names()
         result: list[dict[str, Any]] = []
         for score, entry in ranked[:max(1, int(limit or 1))]:
@@ -212,6 +214,23 @@ class CapabilityRegistry:
                 "outcome_id": entry["outcome_id"],
                 "score": round(score, 4),
             })
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        selected_ids = [item["view"].id for item in result]
+        record_vector_trace(
+            source="capability.discover",
+            phase="retrieval",
+            query=normalized,
+            candidates=[{
+                "id": entry["capability_id"],
+                "name": self._definitions[entry["capability_id"]].name,
+                "score": round(score, 4),
+                "outcome_id": entry["outcome_id"],
+                "selected": entry["capability_id"] in selected_ids,
+            } for score, entry in all_ranked[:50]],
+            selected=selected_ids,
+            threshold=min_score,
+            metadata={"top_k": limit, "metric": "cosine_similarity"},
+        )
         return result
 
     def _ensure_discovery_entries(self) -> list[dict[str, Any]]:

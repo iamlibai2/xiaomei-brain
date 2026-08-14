@@ -257,6 +257,15 @@ class Agent:
             category=category,
         )
 
+    def _vector_trace_scope(self):
+        """Attribute retrieval work to this isolated execution scene."""
+        from xiaomei_brain.base.vector_trace import vector_trace_context
+        return vector_trace_context(
+            person_id=self.user_id,
+            session_id=self.session_id,
+            turn_id=self.turn_id,
+        )
+
     @staticmethod
     def _internal_usage_category(label: str) -> str:
         value = str(label or "").strip().lower()
@@ -526,7 +535,8 @@ class Agent:
         _pre_count = len(self.messages)
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        messages, _accumulated_context = prepare_execution_selection(self, messages)
+        with self._vector_trace_scope():
+            messages, _accumulated_context = prepare_execution_selection(self, messages)
         _selection_progress: list[str] = []
 
         try:
@@ -572,7 +582,8 @@ class Agent:
                         _accumulated_context,
                         _selection_progress,
                     )
-                    openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
+                    with self._vector_trace_scope():
+                        openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
                 else:
                     openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
                     tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}
@@ -1344,7 +1355,8 @@ class Agent:
         _idx = 0
 
         # 动态工具加载：累积上下文供每步 embed 召回
-        messages, _accumulated_context = prepare_execution_selection(self, messages)
+        with self._vector_trace_scope():
+            messages, _accumulated_context = prepare_execution_selection(self, messages)
         _selection_progress: list[str] = []
 
         for step in range(max_steps):
@@ -1359,7 +1371,8 @@ class Agent:
                     _accumulated_context,
                     _selection_progress,
                 )
-                openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
+                with self._vector_trace_scope():
+                    openai_tools, tool_selection = self._dynamic_loader.select_openai_tools_with_selection(selection_context, step=step)
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
                 tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}

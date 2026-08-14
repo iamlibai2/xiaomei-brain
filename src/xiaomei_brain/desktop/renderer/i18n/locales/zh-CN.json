@@ -375,6 +375,7 @@
       "executionAnalysis": "执行分析",
       "promptAnalysis": "提示词分析",
       "contextControl": "上下文管理",
+      "vectorTrace": "向量检索",
       "window": "窗口(W)",
       "reload": "重新加载",
       "close": "关闭窗口",
@@ -562,6 +563,44 @@
       "source": {
         "capability": "能力依赖",
         "semantic": "语义召回"
+      }
+    },
+    "vectorTrace": {
+      "title": "向量检索分析",
+      "subtitle": "查看向量推理性能、召回候选、相似度和最终选择",
+      "currentAgentSession": "当前 Agent：{{name}} · Session：{{session}}",
+      "currentSessionOnly": "仅当前会话",
+      "allSources": "全部来源",
+      "requests": "跟踪记录",
+      "retrievals": "检索决策",
+      "totalTime": "累计耗时",
+      "cacheRate": "缓存命中率",
+      "queueTime": "排队时间",
+      "inferenceTime": "推理时间",
+      "cache": "向量缓存",
+      "cacheHits": "命中 {{hits}} · 未命中 {{misses}}",
+      "embedding": "向量推理",
+      "retrieval": "候选检索",
+      "candidateCount": "{{count}} 个候选",
+      "query": "查询内容",
+      "threshold": "选择阈值",
+      "candidates": "召回候选",
+      "selected": "已选择",
+      "unnamed": "未命名候选",
+      "noQuery": "没有记录查询文本",
+      "noCandidates": "这条记录没有候选结果",
+      "empty": "还没有向量检索记录。重启 Agent 后执行一次对话即可开始记录。",
+      "selectHint": "选择一条记录查看检索详情",
+      "loadFailed": "无法读取向量检索记录",
+      "clear": "清空记录",
+      "clearConfirm": "确定清空当前 Agent 的向量检索记录吗？",
+      "clearFailed": "无法清空向量检索记录",
+      "source": {
+        "memory_recall": "长期记忆",
+        "tool_prefetch": "工具预取",
+        "skill_search": "Skill 搜索",
+        "capability_discover": "能力发现",
+        "procedure_match": "Procedure 匹配"
       }
     },
     "contextControl": {

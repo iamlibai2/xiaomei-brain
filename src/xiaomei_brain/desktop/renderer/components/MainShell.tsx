@@ -10,6 +10,7 @@ import { ModelContextDialog } from "./ModelContextDialog";
 import { ExecutionAnalysisPanel } from "./ExecutionAnalysisPanel";
 import { PromptAnalysisPanel } from "./PromptAnalysisPanel";
 import { ContextControlPanel } from "./ContextControlPanel";
+import { VectorTracePanel } from "./VectorTracePanel";
 import { MusicPlayer } from "./music-player/MusicPlayer";
 import { MediaLibraryDialog } from "./music-player/MediaLibraryDialog";
 import { VideoPlayer } from "./media-player/VideoPlayer";
@@ -19,7 +20,7 @@ export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
-  const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | "prompt" | "context" | null>(null);
+  const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | "prompt" | "context" | "vector" | null>(null);
   const modelContextOpen = analysisPanel === "model-context";
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
   const newSession = useCoreStore((state) => state.newSession);
@@ -120,6 +121,11 @@ export function MainShell() {
       setAnalysisPanel("context");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
+    const openVectorTrace = () => {
+      setSurface("chat");
+      setAnalysisPanel("vector");
+      window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+    };
     window.addEventListener("xiaomei:model-context-open", openComparison);
     window.addEventListener("xiaomei:model-context-toggle", toggleComparison);
     window.addEventListener("xiaomei:model-context-close", closeComparison);
@@ -127,6 +133,7 @@ export function MainShell() {
     window.addEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
     window.addEventListener("xiaomei:prompt-analysis-open", openPromptAnalysis);
     window.addEventListener("xiaomei:context-control-open", openContextControl);
+    window.addEventListener("xiaomei:vector-trace-open", openVectorTrace);
     return () => {
       window.removeEventListener("xiaomei:model-context-open", openComparison);
       window.removeEventListener("xiaomei:model-context-toggle", toggleComparison);
@@ -135,6 +142,7 @@ export function MainShell() {
       window.removeEventListener("xiaomei:execution-analysis-toggle", toggleExecution);
       window.removeEventListener("xiaomei:prompt-analysis-open", openPromptAnalysis);
       window.removeEventListener("xiaomei:context-control-open", openContextControl);
+      window.removeEventListener("xiaomei:vector-trace-open", openVectorTrace);
     };
   }, []);
 
@@ -223,6 +231,11 @@ export function MainShell() {
       {analysisPanel === "context" && (
         <div className="model-context-dock">
           <ContextControlPanel onClose={() => setAnalysisPanel(null)} />
+        </div>
+      )}
+      {analysisPanel === "vector" && (
+        <div className="model-context-dock">
+          <VectorTracePanel onClose={() => setAnalysisPanel(null)} />
         </div>
       )}
       </div>

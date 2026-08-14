@@ -33,6 +33,7 @@ from .methods import (
     SessionMethods,
     ToolServiceMethods,
     UsageMethods,
+    VectorTraceMethods,
     WorkspaceMethods,
 )
 from .protocol import ErrorCode, build_error
@@ -74,6 +75,7 @@ class MethodRouter:
         self._media_service_methods = MediaServiceMethods(living, self._identity_contexts)
         self._tool_service_methods = ToolServiceMethods(living)
         self._usage_methods = UsageMethods(living)
+        self._vector_trace_methods = VectorTraceMethods(living)
         self._identity_methods = IdentityMethods(
             living,
             self._connected_sessions,
@@ -117,6 +119,7 @@ class MethodRouter:
             self._media_service_methods,
             self._tool_service_methods,
             self._usage_methods,
+            self._vector_trace_methods,
             self._identity_methods,
             self._artifact_methods,
             self._assignment_methods,
@@ -240,6 +243,8 @@ class MethodRouter:
             "usage.read": {"usage.summary", "usage.list"},
             "model.trace.read": {"model.trace.list", "model.trace.get"},
             "model.trace.manage": {"model.trace.clear"},
+            "vector.trace.read": {"vector.trace.list"},
+            "vector.trace.manage": {"vector.trace.clear"},
             "capability.read": {"capability.list", "capability.get"},
             "capability.activation": {"capability.enable", "capability.disable"},
             "capability.setup": {

@@ -375,6 +375,7 @@
       "executionAnalysis": "Execution Analysis",
       "promptAnalysis": "Prompt Analysis",
       "contextControl": "Context Management",
+      "vectorTrace": "Vector Retrieval",
       "window": "Window(W)",
       "reload": "Reload",
       "close": "Close Window",
@@ -562,6 +563,44 @@
       "source": {
         "capability": "Capability dependency",
         "semantic": "Semantic retrieval"
+      }
+    },
+    "vectorTrace": {
+      "title": "Vector Retrieval Analysis",
+      "subtitle": "Inspect embedding performance, retrieval candidates, scores, and final selections",
+      "currentAgentSession": "Current Agent: {{name}} · Session: {{session}}",
+      "currentSessionOnly": "Current session only",
+      "allSources": "All sources",
+      "requests": "Trace records",
+      "retrievals": "Retrieval decisions",
+      "totalTime": "Total time",
+      "cacheRate": "Cache hit rate",
+      "queueTime": "Queue time",
+      "inferenceTime": "Inference time",
+      "cache": "Vector cache",
+      "cacheHits": "{{hits}} hits · {{misses}} misses",
+      "embedding": "Embedding",
+      "retrieval": "Retrieval",
+      "candidateCount": "{{count}} candidates",
+      "query": "Query",
+      "threshold": "Selection threshold",
+      "candidates": "Candidates",
+      "selected": "Selected",
+      "unnamed": "Unnamed candidate",
+      "noQuery": "No query text was recorded",
+      "noCandidates": "This record has no candidate results",
+      "empty": "No vector traces yet. Restart the Agent and run a conversation to begin tracing.",
+      "selectHint": "Select a record to inspect retrieval details",
+      "loadFailed": "Unable to load vector traces",
+      "clear": "Clear records",
+      "clearConfirm": "Clear vector traces for the current Agent?",
+      "clearFailed": "Unable to clear vector traces",
+      "source": {
+        "memory_recall": "Long-term memory",
+        "tool_prefetch": "Tool prefetch",
+        "skill_search": "Skill search",
+        "capability_discover": "Capability discovery",
+        "procedure_match": "Procedure matching"
       }
     },
     "contextControl": {

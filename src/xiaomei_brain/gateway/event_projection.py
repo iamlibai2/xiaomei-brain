@@ -67,6 +67,7 @@ class GatewayEventProjection:
         "usage.updated",
         "model.trace.created",
         "model.trace.updated",
+        "vector.trace.created",
         "memory.changed",
     })
 
@@ -94,6 +95,7 @@ class GatewayEventProjection:
         is_agent_speech_event = event.name.startswith("agent.speech.")
         is_usage_event = event.name.startswith("usage.")
         is_model_trace_event = event.name.startswith("model.trace.")
+        is_vector_trace_event = event.name.startswith("vector.trace.")
         is_memory_event = event.name.startswith("memory.")
         if event.name not in self.PUBLIC_EVENTS or (
             not event.session_id
@@ -108,6 +110,7 @@ class GatewayEventProjection:
             and not is_agent_speech_event
             and not is_usage_event
             and not is_model_trace_event
+            and not is_vector_trace_event
             and not is_memory_event
         ):
             if event.name in {
@@ -130,7 +133,7 @@ class GatewayEventProjection:
 
         router = self._router_getter()
         if (
-            (is_activity_event or is_agent_state_event or is_agent_speech_event or is_usage_event or is_model_trace_event or is_memory_event)
+            (is_activity_event or is_agent_state_event or is_agent_speech_event or is_usage_event or is_model_trace_event or is_vector_trace_event or is_memory_event)
             and event.payload.get("_agent_global")
             and router is not None
             and hasattr(router, "broadcast_event")

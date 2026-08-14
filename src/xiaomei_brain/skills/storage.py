@@ -437,7 +437,22 @@ class SkillStorage(SQLiteStore):
             if item["name"] not in seen:
                 ranked.append(item)
                 seen.add(item["name"])
-        return ranked[:top_k]
+        selected = ranked[:top_k]
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        record_vector_trace(
+            source="skill.search",
+            phase="retrieval",
+            query=query,
+            candidates=[{
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or ""),
+                "distance": item.get("_distance"),
+                "selected": item in selected,
+            } for item in ranked],
+            selected=[str(item.get("name") or "") for item in selected],
+            metadata={"top_k": top_k, "metric": "l2_distance"},
+        )
+        return selected
 
     @staticmethod
     def _search_terms(value: str) -> set[str]:

@@ -62,6 +62,8 @@ const CHANNEL_MAP = {
     listModelTraces: { invoke: "gateway:listModelTraces" },
     getModelTrace: { invoke: "gateway:getModelTrace" },
     clearModelTraces: { invoke: "gateway:clearModelTraces" },
+    listVectorTraces: { invoke: "gateway:listVectorTraces" },
+    clearVectorTraces: { invoke: "gateway:clearVectorTraces" },
     listCapabilities: { invoke: "gateway:listCapabilities" },
     getCapability: { invoke: "gateway:getCapability" },
     setCapabilityEnabled: { invoke: "gateway:setCapabilityEnabled" },

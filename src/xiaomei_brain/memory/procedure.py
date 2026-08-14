@@ -463,6 +463,7 @@ class ProcedureMatcher:
             return self._keyword_match(user_message, all_active, top_k)
 
         scored = []
+        traced = []
         for proc in all_active:
             try:
                 cached_vector = self._vectors.get(proc["id"])
@@ -484,12 +485,33 @@ class ProcedureMatcher:
             if _match_trigger_config(config, user_message):
                 sim *= 1.3
 
+            weighted_score = sim * proc.get("weight", 0.5)
+            traced.append({
+                "id": str(proc.get("id") or ""),
+                "name": str(proc.get("name") or ""),
+                "score": round(weighted_score, 4),
+                "similarity": round(sim, 4),
+                "selected": False,
+            })
             if sim >= threshold:
-                weight = proc.get("weight", 0.5)
-                scored.append((proc, sim * weight))
+                scored.append((proc, weighted_score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [p for p, _ in scored[:top_k]]
+        selected = [p for p, _ in scored[:top_k]]
+        selected_ids = [str(item.get("id") or "") for item in selected]
+        for item in traced:
+            item["selected"] = item["id"] in selected_ids
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        record_vector_trace(
+            source="procedure.match",
+            phase="retrieval",
+            query=user_message,
+            candidates=sorted(traced, key=lambda item: -float(item["score"])),
+            selected=selected_ids,
+            threshold=threshold,
+            metadata={"top_k": top_k, "metric": "cosine_similarity"},
+        )
+        return selected
 
     def _keyword_match(
         self,

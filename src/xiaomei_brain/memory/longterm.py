@@ -1370,7 +1370,23 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         # Try vector search first
         try:
             result = self._vector_recall(query, user_id, top_k, sources, scene, time_range, context, type_weights, mem_type)
-            return result if result is not None else []
+            from xiaomei_brain.base.vector_trace import record_vector_trace
+            recalled = result if result is not None else []
+            record_vector_trace(
+                source="memory.recall",
+                phase="retrieval",
+                query=query,
+                candidates=[{
+                    "id": str(item.get("id") or item.get("memory_id") or ""),
+                    "name": str(item.get("content") or "")[:180],
+                    "score": item.get("score", item.get("_distance")),
+                    "selected": True,
+                    "source": item.get("source", ""),
+                } for item in recalled],
+                selected=[str(item.get("id") or item.get("memory_id") or "") for item in recalled],
+                metadata={"top_k": top_k, "memory_user_id": user_id, "sources": sources or []},
+            )
+            return recalled
         except Exception as e:
             logger.warning(
                 "[Memory RECALL] Vector search failed, falling back to keywords: %s", e,

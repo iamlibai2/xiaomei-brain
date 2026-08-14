@@ -797,18 +797,19 @@ class ConversationDriver:
                         ) if part
                     )
 
-                    assembled = build_context(
-                        agent, current_msg.content,
-                        consciousness_state=cs, intent_context=effective_context,
-                        assemble=getattr(parent, "assemble_context", True),
-                        images=routed_images,
-                        attachments=getattr(current_msg, "attachments", None),
-                        image_analysis=image_analysis,
-                        self_image=si,
-                        force_mode=getattr(parent, "force_mode", ""),
-                        inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
-                        user_message_id=getattr(current_msg, "message_id", None),
-                    )
+                    with agent._vector_trace_scope():
+                        assembled = build_context(
+                            agent, current_msg.content,
+                            consciousness_state=cs, intent_context=effective_context,
+                            assemble=getattr(parent, "assemble_context", True),
+                            images=routed_images,
+                            attachments=getattr(current_msg, "attachments", None),
+                            image_analysis=image_analysis,
+                            self_image=si,
+                            force_mode=getattr(parent, "force_mode", ""),
+                            inner_voice_mode=self._inner_voice.get_last_mode() if self._inner_voice else "",
+                            user_message_id=getattr(current_msg, "message_id", None),
+                        )
                     turn_memory_references = list(
                         getattr(agent, "current_memory_references", []) or [],
                     )

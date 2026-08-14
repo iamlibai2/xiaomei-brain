@@ -586,6 +586,7 @@ class DynamicToolLoader:
         query_text = str(query or "").casefold().strip()
         query_terms = self._search_terms(query_text)
         scores: dict[str, float] = {}
+        semantic_distances: dict[str, float] = {}
 
         # Lexical matching protects exact tool names and domain vocabulary from
         # being displaced by semantically similar neighbours.
@@ -633,6 +634,7 @@ class DynamicToolLoader:
                             continue
                         if distance > MAX_SEMANTIC_L2_DISTANCE:
                             continue
+                        semantic_distances[name] = distance
                         # Reciprocal rank is stable across LanceDB distance
                         # ordering and combines cleanly with lexical evidence.
                         scores[name] = scores.get(name, 0.0) + 6.0 / (semantic_rank + 1)
@@ -647,7 +649,28 @@ class DynamicToolLoader:
             scores.items(),
             key=lambda item: (-item[1], item[0]),
         )
-        return [name_to_tool[name] for name, _score in ranked[:limit]]
+        selected_names = [name for name, _score in ranked[:limit]]
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        record_vector_trace(
+            source="tool.prefetch",
+            phase="retrieval",
+            query=query,
+            candidates=[{
+                "id": name,
+                "name": name,
+                "score": round(score, 4),
+                "distance": semantic_distances.get(name),
+                "selected": name in selected_names,
+            } for name, score in ranked[:50]],
+            selected=selected_names,
+            threshold=MAX_SEMANTIC_L2_DISTANCE,
+            metadata={
+                "top_k": limit,
+                "threshold_metric": "max_l2_distance",
+                "excluded": sorted(excluded_names),
+            },
+        )
+        return [name_to_tool[name] for name in selected_names]
 
     def search_and_activate(self, query: str, limit: int = 5) -> dict[str, Any]:
         """Discover tools after model reasoning and expose them next step."""

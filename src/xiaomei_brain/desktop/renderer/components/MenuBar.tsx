@@ -90,6 +90,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
             action: () => window.dispatchEvent(new CustomEvent("xiaomei:context-control-open")),
             disabled: !activeAgent,
           },
+          {
+            label: t("menu.vectorTrace"),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:vector-trace-open")),
+            disabled: !activeAgent,
+          },
         ],
       },
       { separator: true, label: "" },

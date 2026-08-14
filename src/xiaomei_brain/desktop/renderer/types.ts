@@ -580,6 +580,34 @@ export interface ExecutionSelection {
   };
 }
 
+export interface VectorTraceCandidate {
+  id?: string;
+  name?: string;
+  score?: number | null;
+  similarity?: number | null;
+  distance?: number | null;
+  selected?: boolean;
+  source?: string;
+  outcome_id?: string;
+}
+
+export interface VectorTraceRecord {
+  id: string;
+  created_at: number;
+  source: string;
+  phase: "embedding" | "retrieval" | string;
+  person_id: string;
+  session_id: string;
+  turn_id: string;
+  query: string;
+  candidates: VectorTraceCandidate[];
+  selected: string[];
+  threshold?: number | null;
+  status: string;
+  error: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface ModelTraceRecord extends ModelTraceSummary {
   request: Record<string, unknown>;
   response?: Record<string, unknown> | null;
@@ -711,6 +739,11 @@ export interface GatewayBridge {
   }): Promise<JsonRpcResponse>;
   getModelTrace(args: { agentId: string; traceId: string }): Promise<JsonRpcResponse>;
   clearModelTraces(args: { agentId: string }): Promise<JsonRpcResponse>;
+  listVectorTraces(args: {
+    agentId: string; sessionId?: string; source?: string; phase?: string;
+    limit?: number; offset?: number;
+  }): Promise<JsonRpcResponse>;
+  clearVectorTraces(args: { agentId: string }): Promise<JsonRpcResponse>;
   listCapabilities(args: { agentId: string }): Promise<JsonRpcResponse>;
   getCapability(args: { agentId: string; capabilityId: string }): Promise<JsonRpcResponse>;
   setCapabilityEnabled(args: {

@@ -24,6 +24,7 @@ from .search import SearchMethods
 from .sessions import SessionMethods
 from .tools import ToolServiceMethods
 from .usage import UsageMethods
+from .vector_traces import VectorTraceMethods
 from .workspaces import WorkspaceMethods
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "SessionMethods",
     "ToolServiceMethods",
     "UsageMethods",
+    "VectorTraceMethods",
     "WorkspaceMethods",
 ]
