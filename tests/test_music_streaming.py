@@ -79,6 +79,45 @@ def test_music_provider_keeps_new_tail_from_final_snapshot(monkeypatch) -> None:
     ]
 
 
+def test_music_provider_keeps_audio_when_chunked_stream_ends_prematurely(monkeypatch) -> None:
+    class PrematureResponse(_StreamingResponse):
+        def iter_lines(self, decode_unicode: bool = False):
+            yield 'data: {"data":{"audio":"01000200","status":1},"base_resp":{"status_code":0}}'
+            raise provider_module.requests.exceptions.ChunkedEncodingError(
+                "Response ended prematurely"
+            )
+
+    response = PrematureResponse()
+    monkeypatch.setattr(provider_module.requests, "post", lambda *_args, **_kwargs: response)
+    provider = provider_module.MusicProvider("secret")
+
+    assert list(provider.generate_streaming("warm pop", "[verse] hello")) == [
+        b"\x01\x00\x02\x00",
+    ]
+    assert response.closed is True
+
+
+def test_music_provider_rejects_premature_stream_without_audio(monkeypatch) -> None:
+    class EmptyPrematureResponse(_StreamingResponse):
+        def iter_lines(self, decode_unicode: bool = False):
+            raise provider_module.requests.exceptions.ChunkedEncodingError(
+                "Response ended prematurely"
+            )
+            yield  # pragma: no cover - keep this method a generator
+
+    response = EmptyPrematureResponse()
+    monkeypatch.setattr(provider_module.requests, "post", lambda *_args, **_kwargs: response)
+    provider = provider_module.MusicProvider("secret")
+
+    try:
+        list(provider.generate_streaming("warm pop", "[verse] hello"))
+    except ValueError as exc:
+        assert "未返回音频数据" in str(exc)
+    else:
+        raise AssertionError("a stream that produced no audio must still fail")
+    assert response.closed is True
+
+
 def test_music_provider_builds_documented_instrumental_payload() -> None:
     provider = provider_module.MusicProvider("secret", model="music-3.0")
 

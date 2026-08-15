@@ -17,6 +17,22 @@ DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_BITRATE = 256000
 
 
+def _iter_stream_lines(response):
+    """Yield MiniMax SSE lines while tolerating its non-standard final EOF.
+
+    Some successful music streams omit the terminating HTTP chunk.  The caller
+    still validates that at least one audio segment was received, so an empty
+    or genuinely failed response cannot be mistaken for a successful song.
+    """
+    try:
+        yield from response.iter_lines(decode_unicode=True)
+    except requests.exceptions.ChunkedEncodingError:
+        logger.warning(
+            "MiniMax music stream ended without a terminal HTTP chunk; "
+            "preserving received audio"
+        )
+
+
 @dataclass
 class MusicAudioConfig:
     """Music audio output configuration."""
@@ -170,7 +186,7 @@ class MusicProvider:
             response.raise_for_status()
             received_audio = False
             incremental_audio = bytearray()
-            for raw_line in response.iter_lines(decode_unicode=True):
+            for raw_line in _iter_stream_lines(response):
                 if isinstance(raw_line, bytes):
                     raw_line = raw_line.decode("utf-8", errors="replace")
                 line = (raw_line or "").strip()
