@@ -27,8 +27,8 @@ from ..memory.milestone import extract_milestones
 logger = logging.getLogger(__name__)
 
 # Latency experiment: keep attention selection/rendering active, but temporarily
-# disconnect attention text from vector encoding and semantic recall. Set this
-# back to True to restore narrative + common-memory attention channels.
+# disconnect attention text from vector encoding and semantic recall. Narrative
+# memories still use the current user input and therefore remain in context.
 _ENABLE_ATTENTION_VECTOR_RECALL = False
 
 _SEMANTIC_PREP_EXECUTOR = ThreadPoolExecutor(
@@ -46,9 +46,9 @@ def _semantic_memory_channels(
 ) -> dict[str, Any]:
     """Prepare the three independent semantic memory channels together.
 
-    The current message and attention state are embedded in one batch.  The
-    resulting vectors are then reused by both the narrative and common-memory
-    indexes, avoiding repeated HTTP/model work while preserving every channel.
+    The current message and, when enabled, attention state are embedded in one
+    batch. The current-message vector is shared by narrative and common-memory
+    recall, avoiding another model request without dropping narrative context.
     """
     started = time.perf_counter()
     result: dict[str, Any] = {
@@ -86,15 +86,15 @@ def _semantic_memory_channels(
             supports_preembedded = False
 
     def narrative() -> list[dict]:
-        if not vector_attention_query:
+        if not user_input:
             return []
         kwargs = {
-            "query": vector_attention_query,
+            "query": user_input,
             "user_id": user_id,
             "top_k": 5,
         }
         if supports_preembedded:
-            kwargs["_query_vector"] = vectors.get(vector_attention_query)
+            kwargs["_query_vector"] = vectors.get(user_input)
         return longterm.search_narratives(**kwargs) or []
 
     def current_input() -> list[dict]:

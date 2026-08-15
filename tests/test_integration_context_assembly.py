@@ -313,7 +313,7 @@ def test_memory_window_batches_and_reuses_semantic_query_vectors(monkeypatch):
     ]
     assert longterm.recall_vectors["写一份报告"] == [1.0]
     assert longterm.recall_vectors["认知欲偏高"] == [2.0]
-    assert longterm.narrative_vector == [2.0]
+    assert longterm.narrative_vector == [1.0]
     assert result["narratives"] == [{"id": "narrative"}]
     assert result["user"] == [{"id": "写一份报告"}]
     assert result["attention"] == [{"id": "认知欲偏高"}]
@@ -342,7 +342,7 @@ def test_memory_window_skips_attention_vector_recall_by_default():
 
         def search_narratives(self, *, query, **_kwargs):
             self.narrative_queries.append(query)
-            return []
+            return [{"id": "narrative"}]
 
         def recall(self, query, **_kwargs):
             self.recall_queries.append(query)
@@ -361,8 +361,8 @@ def test_memory_window_skips_attention_vector_recall_by_default():
         (["写一份报告"], "memory.window.recall"),
     ]
     assert longterm.recall_queries == ["写一份报告"]
-    assert longterm.narrative_queries == []
-    assert result["narratives"] == []
+    assert longterm.narrative_queries == ["写一份报告"]
+    assert result["narratives"] == [{"id": "narrative"}]
     assert result["attention"] == []
 
 

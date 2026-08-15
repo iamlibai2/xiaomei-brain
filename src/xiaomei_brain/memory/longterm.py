@@ -244,6 +244,7 @@ class LongTermMemory(SQLiteStore):
                 self._lance_db.drop_table("narratives")
             else:
                 self._narrative_lance_table = tbl
+                self._ensure_lance_vector_index(tbl, table_name="narratives")
                 logger.info("LanceDB narratives table opened: %s", self._lance_dir)
                 return self._narrative_lance_table
         schema = pa.schema([
@@ -256,6 +257,10 @@ class LongTermMemory(SQLiteStore):
 
         # Rebuild vectors from SQLite narrative_memories（fresh table or schema migration）
         self._rebuild_narrative_lancedb()
+        self._ensure_lance_vector_index(
+            self._narrative_lance_table,
+            table_name="narratives",
+        )
         return self._narrative_lance_table
 
     def _add_narrative_vector(self, nm_id: str, content: str, user_id: str) -> None:
@@ -599,6 +604,7 @@ class LongTermMemory(SQLiteStore):
 
         safe_user_id = self._safe_user_id(user_id)
         results = table.search(query_vector) \
+            .metric("cosine") \
             .where(f"user_id = '{safe_user_id}' OR user_id = 'global'") \
             .limit(top_k * 3) \
             .to_list()
