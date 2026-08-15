@@ -32,9 +32,21 @@ class DiscoveryService:
 
     def prefetch(self, query: str, *, person_id: str = "") -> dict[str, Any]:
         """Return compact semantic candidates; never activate capability dependencies."""
+        candidate_search = getattr(self._capabilities, "discover_candidates", None)
+        candidate_renderer = getattr(self._capabilities, "render_candidate_context", None)
+        if callable(candidate_search):
+            candidates = candidate_search(query, limit=3, min_score=0.50)
+            return {
+                "capabilities": candidates[:2],
+                "context": candidate_renderer(candidates) if callable(candidate_renderer) else "",
+                "skills": [],
+            }
+
+        # Compatibility path for small integrations and test doubles that do
+        # not yet expose the static candidate API.
         capability_candidates = self._capabilities.discover(
             query,
-            limit=max(2, len(getattr(self._capabilities, "_definitions", {}))),
+            limit=3,
             person_id=person_id,
             min_score=0.50,
         )

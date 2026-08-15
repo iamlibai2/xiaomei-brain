@@ -86,6 +86,47 @@ def _service(skills):
     return service, dynamic
 
 
+def test_prefetch_uses_static_candidates_without_live_capability_inspection():
+    class StaticCapabilities(_Capabilities):
+        def __init__(self):
+            self.live_discovery_calls = 0
+
+        def discover(self, query, *, limit, person_id, min_score=0.50):
+            self.live_discovery_calls += 1
+            raise AssertionError("realtime prefetch must not inspect live runtimes")
+
+        def discover_candidates(self, query, *, limit, min_score=0.50):
+            assert limit == 3
+            return [{
+                "id": "office_documents",
+                "name": "办公文档",
+                "summary": "创建和修改办公文档",
+                "outcome_id": "presentation",
+                "outcome": "PowerPoint 演示文稿",
+                "description": "创建 PPTX",
+                "score": 0.91,
+            }]
+
+        @staticmethod
+        def render_candidate_context(candidates):
+            return "<相关能力>办公文档</相关能力>" if candidates else ""
+
+    registry = ToolRegistry()
+    capabilities = StaticCapabilities()
+    service = DiscoveryService(
+        capability_registry=capabilities,
+        skill_loader=_Skills([]),
+        dynamic_tool_loader=_Dynamic(),
+        tool_registry=registry,
+    )
+
+    result = service.prefetch("帮我做个 PPT", person_id="person-1")
+
+    assert result["capabilities"][0]["id"] == "office_documents"
+    assert "办公文档" in result["context"]
+    assert capabilities.live_discovery_calls == 0
+
+
 def test_discover_does_not_invent_platform_capability_for_generic_file_request():
     service, dynamic = _service([])
 

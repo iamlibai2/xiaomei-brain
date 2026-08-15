@@ -177,36 +177,10 @@ class CapabilityRegistry:
         two-character overlap such as ``file`` must not silently become a
         platform route such as Feishu Office when semantic retrieval is down.
         """
-        normalized = self._normalized_text(query)
-        if not normalized:
+        ranked_result = self._rank_discovery(query, min_score=min_score)
+        if ranked_result is None:
             return []
-        try:
-            if self._vector_index is not None and self._discovery_entries is None:
-                self.start_discovery_index_build()
-                return []
-            entries = self._ensure_discovery_entries()
-            from xiaomei_brain.base.selection_query import embed_selection_query
-            from xiaomei_brain.base.shared_embedder import SharedEmbedder
-            query_vector = embed_selection_query(
-                SharedEmbedder.get_or_create(),
-                normalized,
-                source="capability.discover",
-            )
-        except Exception:
-            logger.warning("[Capability] semantic discovery unavailable", exc_info=True)
-            return []
-
-        best: dict[str, tuple[float, dict[str, Any]]] = {}
-        for entry in entries:
-            score = self._cosine_similarity(query_vector, entry["vector"])
-            current = best.get(entry["capability_id"])
-            if current is None or score > current[0]:
-                best[entry["capability_id"]] = (score, entry)
-        all_ranked = sorted(best.values(), key=lambda item: (-item[0], item[1]["capability_id"]))
-        ranked = [
-            item for item in all_ranked
-            if min_score is None or item[0] >= min_score
-        ]
+        normalized, all_ranked, ranked = ranked_result
         skill_names = self._load_skill_names()
         result: list[dict[str, Any]] = []
         for score, entry in ranked[:max(1, int(limit or 1))]:
@@ -234,6 +208,122 @@ class CapabilityRegistry:
             metadata={"top_k": limit, "metric": "cosine_similarity"},
         )
         return result
+
+    def discover_candidates(
+        self,
+        query: str,
+        *,
+        limit: int = 3,
+        min_score: float | None = 0.50,
+    ) -> list[dict[str, Any]]:
+        """Return semantic candidates without probing external runtimes.
+
+        This is the realtime prefetch path. Runtime probes may execute a CLI,
+        refresh an OAuth token, or contact a remote service, so they must not
+        block every conversation before the first LLM request. Explicit
+        ``discover`` and capability management still build the truthful live
+        view through :meth:`discover`.
+        """
+        ranked_result = self._rank_discovery(query, min_score=min_score)
+        if ranked_result is None:
+            return []
+        normalized, all_ranked, ranked = ranked_result
+        result: list[dict[str, Any]] = []
+        for score, entry in ranked[:max(1, int(limit or 1))]:
+            definition = self._definitions[entry["capability_id"]]
+            outcome = next(
+                (item for item in definition.outcomes if item.id == entry["outcome_id"]),
+                None,
+            )
+            result.append({
+                "id": definition.id,
+                "name": definition.name,
+                "summary": definition.summary,
+                "category": definition.category,
+                "outcome_id": entry["outcome_id"],
+                "outcome": outcome.name if outcome is not None else "",
+                "description": outcome.description if outcome is not None else definition.summary,
+                "score": round(score, 4),
+            })
+        from xiaomei_brain.base.vector_trace import record_vector_trace
+        selected_ids = [item["id"] for item in result]
+        record_vector_trace(
+            source="capability.discover",
+            phase="retrieval",
+            query=normalized,
+            candidates=[{
+                "id": entry["capability_id"],
+                "name": self._definitions[entry["capability_id"]].name,
+                "score": round(score, 4),
+                "outcome_id": entry["outcome_id"],
+                "selected": entry["capability_id"] in selected_ids,
+            } for score, entry in all_ranked[:50]],
+            selected=selected_ids,
+            threshold=min_score,
+            metadata={"top_k": limit, "metric": "cosine_similarity", "runtime_probes": False},
+        )
+        return result
+
+    @staticmethod
+    def render_candidate_context(candidates: Iterable[dict[str, Any]]) -> str:
+        """Render lightweight semantic hints without claiming live readiness."""
+        candidates = list(candidates)
+        if not candidates:
+            return ""
+        lines = [
+            "<相关能力>",
+            "以下是与当前请求语义相关的能力线索，不代表外部账户或运行组件已经就绪。"
+            "优先使用本轮已提供的 Skill 和工具；只有确实缺少执行能力或依赖外部服务时，才调用 discover 检查并启用。",
+        ]
+        for item in candidates:
+            outcome = str(item.get("outcome") or "").strip()
+            suffix = f"；相关结果：{outcome}" if outcome else ""
+            lines.append(f"- {item.get('name', '')}：{item.get('summary', '')}{suffix}。")
+        lines.append("</相关能力>")
+        return "\n".join(lines)
+
+    def _rank_discovery(
+        self,
+        query: str,
+        *,
+        min_score: float | None,
+    ) -> tuple[
+        str,
+        list[tuple[float, dict[str, Any]]],
+        list[tuple[float, dict[str, Any]]],
+    ] | None:
+        """Rank static capability descriptors without inspecting components."""
+        normalized = self._normalized_text(query)
+        if not normalized:
+            return None
+        try:
+            if self._vector_index is not None and self._discovery_entries is None:
+                self.start_discovery_index_build()
+                return None
+            entries = self._ensure_discovery_entries()
+            from xiaomei_brain.base.selection_query import embed_selection_query
+            from xiaomei_brain.base.shared_embedder import SharedEmbedder
+            query_vector = embed_selection_query(
+                SharedEmbedder.get_or_create(),
+                normalized,
+                source="capability.discover",
+            )
+        except Exception:
+            logger.warning("[Capability] semantic discovery unavailable", exc_info=True)
+            return None
+
+        best: dict[str, tuple[float, dict[str, Any]]] = {}
+        for entry in entries:
+            score = self._cosine_similarity(query_vector, entry["vector"])
+            current = best.get(entry["capability_id"])
+            if current is None or score > current[0]:
+                best[entry["capability_id"]] = (score, entry)
+        all_ranked = sorted(best.values(), key=lambda item: (-item[0], item[1]["capability_id"]))
+        ranked = [
+            item for item in all_ranked
+            if min_score is None or item[0] >= min_score
+        ]
+        return normalized, all_ranked, ranked
 
     def _ensure_discovery_entries(self) -> list[dict[str, Any]]:
         if self._discovery_entries is not None:
