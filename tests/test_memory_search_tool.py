@@ -40,6 +40,7 @@ def test_memory_search_uses_current_person_scope():
         "top_k": 5,
     }]
     assert "user_id" not in memory_search.parameters["properties"]
+    assert memory_search.max_calls_per_run == 4
 
 
 def test_memory_search_falls_back_to_runtime_memory_scope():

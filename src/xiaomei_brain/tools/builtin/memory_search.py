@@ -37,10 +37,11 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
 
     @tool(
         name="memory_search",
+        max_calls_per_run=4,
         description=(
             "通用的'想一想'工具。当你对一件事不确定、记不清、或者需要回忆相关经验时使用。"
             "不是简单关键词搜索——会从当前线索扩散激活，找到关联记忆。"
-            "日常场景：不确定的事、不知道该说什么、对方提到之前聊过的事但记不清时使用。"
+            "适用于对方明确询问过去发生的事、既往约定或历史经验，而当前上下文不足以回答的场景。"
         ),
     )
     def memory_search(query: str, top_k: int = 5) -> str:

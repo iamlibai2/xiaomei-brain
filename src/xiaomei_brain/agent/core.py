@@ -528,6 +528,7 @@ class Agent:
         _blocked_tool_retries = 0
         _repeated_failure_stop = False
         _repeated_result_guard = _RepeatedToolResultGuard()
+        _tool_call_counts: dict[str, int] = {}
         _blocked_repeated_results = 0
         _repeated_result_stop = False
         _completion_guard_retries: dict[str, int] = {}
@@ -590,6 +591,18 @@ class Agent:
                 else:
                     openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
                     tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}
+                if openai_tools and self.tools:
+                    openai_tools = [
+                        tool_spec for tool_spec in openai_tools
+                        if (
+                            (definition := self.tools.get(
+                                tool_spec.get("function", {}).get("name", "")
+                            )) is None
+                            or definition.max_calls_per_run is None
+                            or _tool_call_counts.get(definition.name, 0)
+                            < definition.max_calls_per_run
+                        )
+                    ] or None
 
                 all_messages = list(messages) + self.messages[_pre_count:]
 
@@ -686,15 +699,35 @@ class Agent:
                         # 重试检测：同一工具+参数失败超过2次则拦截
                         call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                         fail_count = _tool_failure_counts.get(call_key, 0)
-                        repeated_result_blocked = _repeated_result_guard.should_block(call_key)
+                        tool_definition = self.tools.get(tc.name) if self.tools else None
+                        call_limit = (
+                            tool_definition.max_calls_per_run
+                            if tool_definition is not None else None
+                        )
+                        call_count = _tool_call_counts.get(tc.name, 0)
+                        budget_blocked = bool(
+                            call_limit is not None and call_count >= call_limit
+                        )
+                        repeated_result_blocked = (
+                            budget_blocked
+                            or _repeated_result_guard.should_block(call_key)
+                        )
                         if repeated_result_blocked:
                             _blocked_repeated_results += 1
-                            result = (
-                                f"Blocked repeated call: {tc.name} with the same arguments "
-                                "already returned the same result twice. Do NOT retry it "
-                                "unchanged. Use the existing result, change the arguments or "
-                                "tool, or answer the user."
-                            )
+                            if budget_blocked:
+                                result = (
+                                    f"Blocked repeated call: {tc.name} already reached its "
+                                    f"per-run limit of {call_limit} calls. Do NOT call it again "
+                                    "in this turn. Use the information already returned and "
+                                    "answer the user."
+                                )
+                            else:
+                                result = (
+                                    f"Blocked repeated call: {tc.name} with the same arguments "
+                                    "already returned the same result twice. Do NOT retry it "
+                                    "unchanged. Use the existing result, change the arguments or "
+                                    "tool, or answer the user."
+                                )
                             logger.warning(
                                 "[Agent] blocked repeated no-progress tool call: %s",
                                 tc.name,
@@ -720,6 +753,7 @@ class Agent:
                                 result = "Error: ToolRegistry not initialized. Please restart the agent."
                                 logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                             else:
+                                _tool_call_counts[tc.name] = call_count + 1
                                 result = self._execute_tool_call(
                                     tc.id,
                                     tc.name,
@@ -1348,6 +1382,7 @@ class Agent:
         _tool_failure_counts: dict[tuple, int] = {}
         _blocked_tool_retries = 0
         _repeated_result_guard = _RepeatedToolResultGuard()
+        _tool_call_counts: dict[str, int] = {}
         _blocked_repeated_results = 0
         _idx = 0
 
@@ -1373,6 +1408,18 @@ class Agent:
             else:
                 openai_tools = self.tools.to_openai_tools() if self.tools and self.tools.list_tools() else None
                 tool_selection = {"step": step, "core": [], "required": [], "discovered": [], "semantic": []}
+            if openai_tools and self.tools:
+                openai_tools = [
+                    tool_spec for tool_spec in openai_tools
+                    if (
+                        (definition := self.tools.get(
+                            tool_spec.get("function", {}).get("name", "")
+                        )) is None
+                        or definition.max_calls_per_run is None
+                        or _tool_call_counts.get(definition.name, 0)
+                        < definition.max_calls_per_run
+                    )
+                ] or None
             if openai_tools and excluded_tool_names:
                 openai_tools = [
                     tool_spec for tool_spec in openai_tools
@@ -1441,15 +1488,35 @@ class Agent:
 
                     call_key = (tc.name, json.dumps(args_dict, sort_keys=True))
                     fail_count = _tool_failure_counts.get(call_key, 0)
-                    repeated_result_blocked = _repeated_result_guard.should_block(call_key)
+                    tool_definition = self.tools.get(tc.name) if self.tools else None
+                    call_limit = (
+                        tool_definition.max_calls_per_run
+                        if tool_definition is not None else None
+                    )
+                    call_count = _tool_call_counts.get(tc.name, 0)
+                    budget_blocked = bool(
+                        call_limit is not None and call_count >= call_limit
+                    )
+                    repeated_result_blocked = (
+                        budget_blocked
+                        or _repeated_result_guard.should_block(call_key)
+                    )
                     if repeated_result_blocked:
                         _blocked_repeated_results += 1
-                        result = (
-                            f"Blocked repeated call: {tc.name} with the same arguments "
-                            "already returned the same result twice. Do NOT retry it "
-                            "unchanged. Use the existing result, change the arguments or "
-                            "tool, or produce the final response."
-                        )
+                        if budget_blocked:
+                            result = (
+                                f"Blocked repeated call: {tc.name} already reached its "
+                                f"per-run limit of {call_limit} calls. Do NOT call it again "
+                                "in this turn. Use the information already returned and "
+                                "produce the final response."
+                            )
+                        else:
+                            result = (
+                                f"Blocked repeated call: {tc.name} with the same arguments "
+                                "already returned the same result twice. Do NOT retry it "
+                                "unchanged. Use the existing result, change the arguments or "
+                                "tool, or produce the final response."
+                            )
                         logger.warning(
                             "[Agent] react_nodb blocked repeated no-progress tool call: %s",
                             tc.name,
@@ -1471,6 +1538,7 @@ class Agent:
                             result = "Error: ToolRegistry not initialized. Please restart the agent."
                             logger.error("[Agent] self.tools is None, cannot execute %s", tc.name)
                         else:
+                            _tool_call_counts[tc.name] = call_count + 1
                             result = self._execute_tool_call(
                                 tc.id,
                                 tc.name,

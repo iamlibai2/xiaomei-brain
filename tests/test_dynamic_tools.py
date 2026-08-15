@@ -397,6 +397,12 @@ def test_core_tools_always_included():
         assert core in names, f"Core tool '{core}' missing from selection"
 
 
+def test_memory_search_is_deferred_instead_of_permanent_core():
+    from xiaomei_brain.tools.dynamic import _CORE_TOOL_NAMES
+
+    assert "memory_search" not in _CORE_TOOL_NAMES
+
+
 def test_core_tools_first():
     """Core tools should appear before dynamic tools."""
     reg = _registry_with_tools(

@@ -21,6 +21,7 @@ class Tool:
     optional: bool = False          # True → 需在 tools.allow 中显式列出
     emoji: str = ""
     category: str = ""              # "fs" | "web" | "memory" | "media" | "internal" ...
+    max_calls_per_run: int | None = None  # Optional ReAct-loop safety budget
 
     def execute(self, **kwargs: Any) -> Any:
         """Execute the tool with given arguments."""
@@ -97,7 +98,12 @@ def _resolve_annotated_type(type_str: str) -> Any:
         return str
 
 
-def tool(name: str | None = None, description: str | None = None) -> Callable:
+def tool(
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    max_calls_per_run: int | None = None,
+) -> Callable:
     """Decorator to create a Tool from a function.
 
     Usage:
@@ -134,6 +140,7 @@ def tool(name: str | None = None, description: str | None = None) -> Callable:
             description=tool_desc,
             parameters=parameters,
             func=func,
+            max_calls_per_run=max_calls_per_run,
         )
 
     return decorator

@@ -254,6 +254,96 @@ def test_react_nodb_stops_repeating_successful_call_with_identical_result(
     assert mock_llm.chat.call_count == 4
 
 
+def test_agent_enforces_per_tool_run_budget_across_different_arguments(
+    mock_llm,
+    registry,
+):
+    """Changing arguments must not bypass a tool's per-run safety budget."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(
+        name="bounded_search",
+        description="Search a bounded source",
+        max_calls_per_run=2,
+    )
+    def bounded_search(query: str) -> str:
+        executions["count"] += 1
+        return f"result for {query}"
+
+    registry.register(bounded_search)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+
+    def vary_query(*_args, **_kwargs):
+        call_number = mock_llm.chat_stream.call_count
+        mock_llm._last_stream_response = NormalizedResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id=f"bounded-{call_number}",
+                name="bounded_search",
+                arguments=json.dumps({"query": f"query-{call_number}"}),
+            )],
+            finish_reason="tool_calls",
+        )
+        return iter(())
+
+    mock_llm.chat_stream.side_effect = vary_query
+    mock_llm._reasoning_end_yielded = False
+
+    response = _chat(agent, "Keep changing the query")
+
+    assert response == REPEATED_TOOL_LOOP_MESSAGE
+    assert executions["count"] == 2
+    assert mock_llm.chat_stream.call_count == 4
+
+
+def test_react_nodb_enforces_per_tool_run_budget_across_different_arguments(
+    mock_llm,
+    registry,
+):
+    """Internal runtimes share the same per-tool safety boundary."""
+    from xiaomei_brain.tools import tool
+
+    executions = {"count": 0}
+
+    @tool(
+        name="bounded_internal_search",
+        description="Search a bounded source",
+        max_calls_per_run=2,
+    )
+    def bounded_internal_search(query: str) -> str:
+        executions["count"] += 1
+        return f"result for {query}"
+
+    registry.register(bounded_internal_search)
+    agent = Agent(llm=mock_llm, tools=registry, max_steps=20)
+
+    def vary_query(*_args, **_kwargs):
+        call_number = mock_llm.chat.call_count
+        return NormalizedResponse(
+            content="",
+            tool_calls=[ToolCall(
+                id=f"bounded-internal-{call_number}",
+                name="bounded_internal_search",
+                arguments=json.dumps({"query": f"query-{call_number}"}),
+            )],
+            finish_reason="tool_calls",
+        )
+
+    mock_llm.chat.side_effect = vary_query
+
+    response = agent.react_nodb(
+        [{"role": "user", "content": "Keep changing the query"}],
+        max_steps=20,
+        quiet=True,
+    )
+
+    assert response == REPEATED_TOOL_LOOP_MESSAGE
+    assert executions["count"] == 2
+    assert mock_llm.chat.call_count == 4
+
+
 def test_stream_preserves_empty_reasoning_for_tool_result(mock_llm, registry):
     """The realtime ReAct loop must keep an empty reasoning field for providers."""
     from xiaomei_brain.tools import tool
@@ -730,7 +820,10 @@ def test_steer_injected_at_tool_batch_boundary(mock_llm, registry):
 
     agent = Agent(llm=mock_llm, tools=registry, max_steps=5)
     dynamic_loader = Mock()
-    dynamic_loader.select_openai_tools.return_value = None
+    dynamic_loader.select_openai_tools_with_selection.return_value = (
+        None,
+        {"step": 0, "core": [], "required": [], "discovered": [], "semantic": []},
+    )
     agent._dynamic_loader = dynamic_loader
     calls: list[list[dict]] = []
 
@@ -755,7 +848,9 @@ def test_steer_injected_at_tool_batch_boundary(mock_llm, registry):
     assert len(calls) == 2
     # The steer message must appear before the second LLM call.
     assert any("interrupt now" in c for c in _user_contents(calls[1]))
-    second_selection_context = dynamic_loader.select_openai_tools.call_args_list[1].args[0]
+    second_selection_context = (
+        dynamic_loader.select_openai_tools_with_selection.call_args_list[1].args[0]
+    )
     assert "interrupt now" in second_selection_context
 
 
