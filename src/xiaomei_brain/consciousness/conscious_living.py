@@ -1102,7 +1102,11 @@ class ConsciousLiving(Living):
                 type=IntentType.ALARM,
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
-                params={"user_id": self.user_id, "session_id": self.session_id},
+                params={
+                    "scope_type": job.scope_type,
+                    "user_id": job.person_id,
+                    "session_id": job.session_id,
+                },
             )
             if self.consciousness.self_image is not None:
                 self.consciousness.self_image.contribute_intent(intent.to_dict())
@@ -2340,9 +2344,9 @@ class ConsciousLiving(Living):
             self.consciousness._last_intent_time = time.time()
             self.consciousness._last_emerge_time = time.time()
             self.consciousness._last_l3_time = time.time()
-            # 清理跨会话残留 intent（快照恢复的旧 intent 不应跨会话生效）
-            self.consciousness.intent_slot.intent_buffer.clear()
-            self.consciousness.intent_slot.urgent_intents.clear()
+            # Intent records are durable work owned by an Agent, Person or
+            # Session.  Waking up must not erase another person's deferred
+            # work; completed/stale records are removed by their consumers.
             # 调用意识系统的 on_wake，生成问候意图（基于梦境报告）
             logger.info("[ConsciousLiving._on_wake] 调用 consciousness.on_wake()")
             self.consciousness.on_wake()

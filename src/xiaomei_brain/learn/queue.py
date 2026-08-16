@@ -158,6 +158,21 @@ class LearningQueue:
                     item["topic"], item.get("priority", 0), item.get("source", ""))
         return item
 
+    def pop_topic(self, topic: str) -> dict | None:
+        """Consume one exact topic without changing the selected LEARN intent."""
+        normalized = str(topic or "").strip()
+        if not normalized:
+            return None
+        for index, item in enumerate(self._queue):
+            if str(item.get("topic") or "").strip() != normalized:
+                continue
+            selected = self._queue.pop(index)
+            if self._storage:
+                self._storage.mark_learning_done(normalized)
+            logger.info("[LearningQueue] 消费指定主题: %s", normalized)
+            return selected
+        return None
+
     # ── 查询 ──────────────────────────────────────────────
 
     def __len__(self) -> int:

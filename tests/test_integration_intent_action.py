@@ -98,20 +98,18 @@ def test_express_intent_produces_proactive():
     assert queue[0].metadata.get("intent_type") == "EXPRESS"
 
 
-def test_act_intent_produces_proactive():
+def test_reserved_act_intent_has_no_execution_rule():
     drive, si, dispatcher = _setup()
     _push_intent(si, "ACT")
     queue = dispatcher.tick(si)
-    assert len(queue) == 1
-    assert queue[0].metadata.get("intent_type") == "ACT"
+    assert queue == []
 
 
-def test_talk_intent_produces_talk_to_agent():
+def test_deferred_talk_agent_intent_has_no_execution_rule():
     drive, si, dispatcher = _setup()
     _push_intent(si, "TALK_AGENT")
     queue = dispatcher.tick(si)
-    assert len(queue) == 1
-    assert queue[0].action_type.value == "talk_to_agent"
+    assert queue == []
 
 
 def test_alarm_intent_produces_alarm_action():
@@ -231,14 +229,12 @@ def test_energy_low_allows_intent():
 
 # ── Idle trigger ──────────────────────────────────────────────────────
 
-def test_idle_trigger():
+def test_unowned_idle_rule_does_not_create_external_action():
     drive, si, dispatcher = _setup()
-    # Set idle duration above default threshold (1800s)
     si.perception.user_idle_duration = 3600
     queue = dispatcher.tick(si)
     idle_actions = [a for a in queue if a.source == "idle"]
-    assert len(idle_actions) == 1
-    assert idle_actions[0].action_type.value == "proactive"
+    assert idle_actions == []
 
 
 def test_idle_below_threshold_no_trigger():

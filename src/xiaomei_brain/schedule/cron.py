@@ -46,6 +46,9 @@ class CronJob:
     next_fire_at: float = 0.0           # 预计算的下次触发时间
     enabled: bool = True
     round_interval: int = 0             # round: 每N轮触发
+    scope_type: str = "agent"          # "agent" | "person" | "session"
+    person_id: str = ""                # 创建闹钟的人物
+    session_id: str = ""               # 仅 session 作用域使用
 
     def to_dict(self) -> dict:
         d = {
@@ -60,6 +63,9 @@ class CronJob:
             "last_fired_at": self.last_fired_at,
             "next_fire_at": self.next_fire_at,
             "enabled": self.enabled,
+            "scope_type": self.scope_type,
+            "person_id": self.person_id,
+            "session_id": self.session_id,
         }
         if self.round_interval:
             d["round_interval"] = self.round_interval
@@ -80,6 +86,9 @@ class CronJob:
             next_fire_at=data.get("next_fire_at", 0),
             enabled=data.get("enabled", True),
             round_interval=data.get("round_interval", 0),
+            scope_type=data.get("scope_type", "agent"),
+            person_id=data.get("person_id", ""),
+            session_id=data.get("session_id", ""),
         )
 
     def fire_and_reschedule(self) -> None:
@@ -214,6 +223,9 @@ class CronScheduler:
         reason: str = "",
         action_hint: str = "",
         round_interval: int = 0,
+        scope_type: str = "agent",
+        person_id: str = "",
+        session_id: str = "",
     ) -> CronJob:
         """添加闹钟。"""
         now = time.time()
@@ -239,6 +251,9 @@ class CronScheduler:
             action_hint=action_hint,
             next_fire_at=next_fire,
             round_interval=round_interval,
+            scope_type=scope_type,
+            person_id=person_id,
+            session_id=session_id,
         )
         self._crons[job.id] = job
         self._save()
@@ -374,7 +389,24 @@ def create_cron_tools(agent: Any = None) -> list:
         s = _scheduler()
         if s is None:
             return "闹钟系统尚未初始化。"
-        return _handle_schedule_alarm(s, when, reason, action)
+        from xiaomei_brain.tools.execution_context import current_tool_execution
+
+        execution = current_tool_execution()
+        person_id = execution.person_id if execution is not None else ""
+        session_id = execution.session_id if execution is not None else ""
+        return _handle_schedule_alarm(
+            s,
+            when,
+            reason,
+            action,
+            scope_type=(
+                "session" if person_id and session_id
+                else "person" if person_id
+                else "agent"
+            ),
+            person_id=person_id,
+            session_id=session_id,
+        )
 
     @tool(
         name="list_alarms",
@@ -384,7 +416,17 @@ def create_cron_tools(agent: Any = None) -> list:
         s = _scheduler()
         if s is None:
             return "闹钟系统尚未初始化。"
-        jobs = s.list_all()
+        from xiaomei_brain.tools.execution_context import current_tool_execution
+
+        execution = current_tool_execution()
+        person_id = execution.person_id if execution is not None else ""
+        jobs = [
+            job for job in s.list_all()
+            if (
+                (person_id and job.person_id == person_id)
+                or (not person_id and job.scope_type == "agent")
+            )
+        ]
         if not jobs:
             return "你还没有设任何闹钟。"
         lines = ["你的闹钟：", ""]
@@ -401,6 +443,15 @@ def create_cron_tools(agent: Any = None) -> list:
         s = _scheduler()
         if s is None:
             return "闹钟系统尚未初始化。"
+        from xiaomei_brain.tools.execution_context import current_tool_execution
+
+        execution = current_tool_execution()
+        person_id = execution.person_id if execution is not None else ""
+        job = s.get(alarm_id)
+        if job is None:
+            return f"未找到闹钟 {alarm_id}。"
+        if job.scope_type != "agent" and job.person_id != person_id:
+            return f"未找到闹钟 {alarm_id}。"
         if s.remove(alarm_id):
             return f"闹钟 {alarm_id} 已取消。"
         return f"未找到闹钟 {alarm_id}。"
@@ -496,7 +547,16 @@ def _ts_str(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def _handle_schedule_alarm(scheduler: CronScheduler, when: str, reason: str, action: str) -> str:
+def _handle_schedule_alarm(
+    scheduler: CronScheduler,
+    when: str,
+    reason: str,
+    action: str,
+    *,
+    scope_type: str = "agent",
+    person_id: str = "",
+    session_id: str = "",
+) -> str:
     """处理设闹钟请求。"""
     s_type, trigger_at, cron_expr = _parse_when(when)
 
@@ -524,6 +584,9 @@ def _handle_schedule_alarm(scheduler: CronScheduler, when: str, reason: str, act
             reason=reason,
             action_hint=action,
             round_interval=round_interval,
+            scope_type=scope_type,
+            person_id=person_id,
+            session_id=session_id,
         )
     except ValueError as e:
         return f"设闹钟失败：{e}"

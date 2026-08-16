@@ -64,6 +64,16 @@ class L2Engine:
         IntentType.TALK,
     }
 
+    # Reserved vocabulary whose execution semantics have not been implemented.
+    # Keep the enum/API stable, but do not let these records accumulate in the
+    # live action queue until a real consumer exists.
+    _INACTIVE_INTENTS = {
+        IntentType.REMIND,
+        IntentType.RECALL,
+        IntentType.ACT,
+        IntentType.DREAM,
+    }
+
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
@@ -527,24 +537,33 @@ class L2Engine:
         system_prompt = build_simple_context(c, mode="internal")
         has_goal = c.purpose and c.purpose.get_current() is not None
 
-        # 查询目标 tag 的记忆
+        # 查询各人物及 Agent 自身的待办记忆。人物归属随候选一起交给
+        # L2，避免 WORK 到执行阶段才猜测应该为谁工作。
         goal_memories = []
         longterm = getattr(c.agent, "longterm_memory", None)
         if longterm:
             try:
+                scope_ids = {
+                    "global",
+                    str(c._agent_id or ""),
+                    *(person.person_id for person in self._person_candidates()),
+                }
+                scope_ids.discard("")
+                placeholders = ",".join("?" for _ in scope_ids)
                 conn = longterm._get_conn()
                 rows = conn.execute(
-                    """SELECT m.content, m.created_at FROM memories m
+                    f"""SELECT m.content, m.created_at, m.user_id FROM memories m
                        JOIN memory_tags mt ON m.id = mt.memory_id
-                       WHERE m.user_id = ? AND m.status != 'EXTINCT'
+                       WHERE m.user_id IN ({placeholders}) AND m.status != 'EXTINCT'
                        AND mt.tag IN ('目标', '任务')
-                       ORDER BY m.created_at DESC LIMIT 10""",
-                    (c._agent_id,),
+                       ORDER BY m.created_at DESC LIMIT 20""",
+                    tuple(scope_ids),
                 ).fetchall()
                 for r in rows:
                     goal_memories.append({
                         "content": r["content"],
                         "created_at": r["created_at"],
+                        "user_id": r["user_id"],
                     })
             except Exception as e:
                 logger.warning("查询目标相关记忆失败: %s", e)
@@ -611,7 +630,7 @@ class L2Engine:
             else:
                 context_note = context_map.get(context, f"触发原因：{context}")
 
-        intents = "wait / greet / care / learn / express / work / talk / talk_agent"
+        intents = "wait / greet / care / learn / express / work / talk"
         if has_goal:
             intents += " / progress"
         intents += " / reflect / sleep"
@@ -619,7 +638,6 @@ class L2Engine:
             "基于你的自我认知，请判断你此刻应该做什么。你可以使用工具来辅助判断（如搜索、读文件等）。\n\n"
             + "意图说明：\n"
             + "- talk：想和用户进行更深入的对话交流（区别于 greet 的简短问候）\n"
-            + "- talk_agent：想和其他 agent 聊天交流\n"
             + "- sleep：能量已经很困了，或者手头确实无事可做，主动进入休眠节省资源\n"
             + f"可选意图：{intents}\n"
         )
@@ -631,6 +649,10 @@ class L2Engine:
             )
         if goal_memories:
             lines = []
+            people_by_id = {
+                person.person_id: person.display_name
+                for person in self._person_candidates()
+            }
             for i, m in enumerate(goal_memories, 1):
                 created_raw = m.get("created_at")
                 created = ""
@@ -643,9 +665,17 @@ class L2Engine:
                     except Exception:
                         created = ""
                 time_tag = f"（{created}）" if created else ""
-                lines.append(f"  {i}. {m.get('content', '')[:120]}{time_tag}")
+                owner_id = str(m.get("user_id") or "")
+                owner = people_by_id.get(owner_id, "Agent 自身")
+                owner_hint = f"{owner} | {owner_id}" if owner_id in people_by_id else owner
+                lines.append(
+                    f"  {i}. [归属: {owner_hint}] {m.get('content', '')[:120]}{time_tag}"
+                )
             prompt += f"\n待办事项：\n" + "\n".join(lines) + "\n"
-            prompt += "如果你判断应该推进工作，选择 work 意图。"
+            prompt += (
+                "如果你判断应该推进工作，选择 work 意图。属于人物的任务必须把该人物的 "
+                "person_id 写入 TARGET_USER；Agent 自身任务的 TARGET_USER 填 '-'。"
+            )
         if context_note:
             prompt += f"\n{context_note}\n"
 
@@ -669,7 +699,7 @@ class L2Engine:
             desire_hints = []
             # 欲望偏高 → 建议满足
             if bo.desire_belonging > 0.6:
-                desire_hints.append(f"归属欲偏高（{bo.desire_belonging:.0%}），建议 talk/talk_agent/express")
+                desire_hints.append(f"归属欲偏高（{bo.desire_belonging:.0%}），建议 talk/express")
             if bo.desire_cognition > 0.6:
                 desire_hints.append(f"认知欲偏高（{bo.desire_cognition:.0%}），建议 learn")
             if bo.desire_achievement > 0.6:
@@ -713,7 +743,8 @@ class L2Engine:
                    "---INTENT---\n"
                    "INTENT: <意图类型>\n"
                    "REASON: <理由，一句话>\n"
-                   "TARGET_USER: <目标用户ID>（greet/care/express/talk 等主动消息必填，其他意图填 \"-\"）\n"
+                   "TARGET_USER: <目标用户ID>（greet/care/express/talk 以及人物所属 work 必填；"
+                   "Agent 自身 work 和其他意图填 \"-\"）\n"
                    "TOPIC: <学习主题>（LEARN 意图必填！从你的 REASON 中提取要学什么，必须填）\n"
                    "MESSAGE: <对话内容>（greet/care/express/talk 意图必填！直接输出你想说的话，50-300字，"
                    "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
@@ -745,7 +776,22 @@ class L2Engine:
 
     def _prepare_intent_for_buffer(self, intent: Intent | None) -> Intent | None:
         """Resolve a Person-directed intent before it becomes executable."""
-        if intent is None or intent.type not in self._PERSON_DIRECTED_INTENTS:
+        if intent is None:
+            return None
+        if intent.type in self._INACTIVE_INTENTS:
+            logger.info(
+                "[Consciousness L2] 保留但暂不入队的意图: %s",
+                intent.type.value,
+            )
+            self._c.intent_slot.urgent_intents.discard(intent.type.value)
+            return None
+        # WORK without a target is the Agent's own work. A targeted WORK is
+        # resolved exactly like a proactive Person-directed intent.
+        if intent.type == IntentType.WORK and not str(
+            (intent.params or {}).get("user_id") or ""
+        ).strip():
+            return intent
+        if intent.type not in self._PERSON_DIRECTED_INTENTS and intent.type != IntentType.WORK:
             return intent
 
         params = dict(intent.params or {})

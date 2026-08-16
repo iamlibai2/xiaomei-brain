@@ -227,7 +227,20 @@ class ActionExecutor:
             result = agent_core.react_nodb(messages=messages, cancel_check=self._cancel_check(), max_steps=50, label="alarm",
                                            exp_stream=es, summarize=True)
 
-            # 消费已执行的 ALARM intent（避免 cooldown 过后重复触发）
+            scope_type = item.metadata.get("scope_type", "agent")
+            if scope_type in ("session", "person") and result:
+                delivered = cl._send_proactive(
+                    result,
+                    user_id=item.metadata.get("user_id") or None,
+                    session_id=item.metadata.get("session_id") or None,
+                )
+                if not delivered:
+                    logger.info(
+                        "[ActionExecutor] alarm result retained for retry: target unavailable"
+                    )
+                    return False
+
+            # 人物闹钟成功投递、Agent 自身闹钟完成后才消费意图。
             intent_type = item.metadata.get("intent_type", "")
             if intent_type:
                 self._consume_intent(item)
@@ -998,7 +1011,9 @@ class ActionExecutor:
                 "正在选择主题并进行自主学习",
                 current_step="learning",
             )
+            params = dict(item.metadata.get("intent_params") or {})
             ok = engine.learn(
+                topic=str(params.get("learn_topic") or ""),
                 runtime=self._agent_core(),
                 cancel_check=self._cancel_check(),
             )

@@ -47,8 +47,6 @@ class EmotionProcessor:
         changes: dict[str, float] = {}
 
         if "---EMOTION---" not in full_report:
-            if cs.self_image:
-                cs.self_image.contribute_intent(create_wait_intent().to_dict())
             return changes
 
         try:
@@ -60,8 +58,6 @@ class EmotionProcessor:
             data = json.loads(after.strip())
         except (json.JSONDecodeError, ValueError):
             logger.warning("[EmotionProcessor] JSON 解析失败")
-            if cs.self_image:
-                cs.self_image.contribute_intent(create_wait_intent().to_dict())
             return changes
 
         # 应用欲望变更
@@ -102,13 +98,26 @@ class EmotionProcessor:
 
         # 携带目标用户 ID（用于多用户路由）
         target_user_id = data.get("target_user_id")
+        person_directed = intent_type in {"greet", "care", "express"}
         if target_user_id and target_user_id != "null":
             intent_dict = intent.to_dict()
-            intent_dict["user_id"] = target_user_id
+            intent_dict.update({
+                "scope_type": "person",
+                "user_id": target_user_id,
+                "session_id": "",
+            })
+            intent_dict["params"].update({
+                "scope_type": "person",
+                "user_id": target_user_id,
+                "session_id": "",
+            })
         else:
             intent_dict = intent.to_dict()
 
-        if cs.self_image:
+        # WAIT is a retained semantic, not executable work. Likewise an
+        # outward dream follow-up without a concrete Person stays internal.
+        should_queue = intent_type != "wait" and not (person_directed and not target_user_id)
+        if cs.self_image and should_queue:
             cs.self_image.contribute_intent(intent_dict)
 
         logger.info(

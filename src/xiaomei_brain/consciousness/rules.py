@@ -170,20 +170,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_reflect", ac.intent_reflect_cooldown)
     )
 
-    # ACT 意图 → 主动行动
-    RULES.append(
-        Rule.when(lambda si: _has_intent(si, "ACT"))
-            .then(ActionItem(
-                action_type=ActionType.PROACTIVE,
-                priority=0.6,
-                content="",
-                reason="收到 ACT 意图",
-                source="intent",
-                cooldown_key="intent_act",
-                metadata={"intent_type": "ACT"},
-            ))
-            .cooldown("intent_act", ac.intent_act_cooldown)
-    )
+    # ACT 语义保留，尚未定义安全、明确的动作协议，暂不注册执行规则。
 
     # LEARN 意图 → 主动学习（learn_enabled 控制）
     RULES.append(
@@ -260,20 +247,8 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_alarm", 60)
     )
 
-    # 用户空闲 → 主动问候
-    RULES.append(
-        Rule.when(lambda si, t=ac.idle_trigger_seconds: si.perception.user_idle_duration > t)
-            .then(ActionItem(
-                action_type=ActionType.PROACTIVE,
-                priority=0.7,
-                content="",
-                reason=f"对方空闲超过 {int(ac.idle_trigger_seconds)} 秒",
-                source="idle",
-                cooldown_key="idle_greet",
-                metadata={"source": "idle", "idle_duration": ac.idle_trigger_seconds},
-            ))
-            .cooldown("idle_greet", ac.idle_greet_cooldown)
-    )
+    # 空闲问候由 L2 先选择明确人物，再生成 GREET/TALK 意图。
+    # 旧规则只有 idle_duration，没有人物归属，不能安全地向外投递。
 
     # TALK 意图 → 和用户深入对话
     RULES.append(
@@ -290,20 +265,7 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             .cooldown("intent_talk", 60)
     )
 
-    # TALK_AGENT 意图 → 主动和其他 agent 聊天
-    RULES.append(
-        Rule.when(lambda si: _has_intent(si, "TALK_AGENT"))
-            .then(ActionItem(
-                action_type=ActionType.TALK_TO_AGENT,
-                priority=0.65,
-                content="",
-                reason="收到 TALK_AGENT 意图，想和其他 agent 交流",
-                source="intent",
-                cooldown_key="intent_talk_agent",
-                metadata={"intent_type": "TALK_AGENT"},
-            ))
-            .cooldown("intent_talk_agent", ac.desire_talk_to_agent_cooldown)
-    )
+    # TALK_AGENT 的处理器保留给未来多 Agent 阶段，当前不注册入口。
 
     # ── Desire 驱动 ─────────────────────────────────────
 

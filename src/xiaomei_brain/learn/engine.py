@@ -47,13 +47,13 @@ class LearningEngine:
 
     # ── 主入口 ────────────────────────────────────────────
 
-    def learn(self, *, runtime=None, cancel_check=None) -> bool:
+    def learn(self, *, topic: str = "", runtime=None, cancel_check=None) -> bool:
         """执行一次完整的学习循环：选题 → ReAct → 保存。
 
         Returns:
             True 表示学习成功
         """
-        topic = self._select_topic()
+        topic = self._select_topic(topic)
         if not topic:
             logger.debug("[LearningEngine] 无学习主题")
             return False
@@ -106,8 +106,14 @@ class LearningEngine:
 
     # ── 主题选择 ──────────────────────────────────────────
 
-    def _select_topic(self) -> str | None:
+    def _select_topic(self, selected_topic: str = "") -> str | None:
         """选择学习主题。优先级：队列 → LEARN intent TOPIC → Purpose → 兴趣 → 已有知识轮换 → 兜底"""
+        selected_topic = str(selected_topic or "").strip()
+        if selected_topic:
+            if self._queue:
+                self._queue.pop_topic(selected_topic)
+            return selected_topic
+
         # 1. 学习队列（优先）
         if self._queue:
             item = self._queue.pop()

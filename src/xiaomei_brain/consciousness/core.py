@@ -34,7 +34,7 @@ from typing import Any, Callable
 
 from .self_image_proxy import SelfImage
 from .self_modules import Being, SelfBody, SelfPerception, SelfMind, SelfHistory
-from .intent import Intent, IntentType, create_wait_intent, create_greet_intent, create_reflect_intent, create_dream_intent, create_care_intent
+from .intent import Intent, IntentType
 
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
@@ -1100,8 +1100,9 @@ class Consciousness:
                 priority=85,
                 content=f"闹钟「{job.name}」响了。{job.action_hint or job.reason}",
                 params={
-                    "user_id": getattr(self.agent, "user_id", ""),
-                    "session_id": getattr(self.agent, "session_id", ""),
+                    "scope_type": job.scope_type,
+                    "user_id": job.person_id,
+                    "session_id": job.session_id,
                 },
             )
             if self.self_image is not None:
@@ -1193,9 +1194,6 @@ class Consciousness:
         # 如果梦境报告关闭，直接走 fallback（梦境燃烧不受影响）
         if not self._cc.dream_report_enabled:
             report = self._fallback_light_report()
-            wait_intent = create_wait_intent()
-            if self.self_image is not None:
-                self.self_image.contribute_intent(wait_intent.to_dict())
             return report
 
         # 如果有梦境报告，直接使用
@@ -1211,11 +1209,8 @@ class Consciousness:
 
             # 苏醒叙事（仅日志，不写入内部叙事——状态切换不是思考）
 
-            # 仅在梦境有实质内容时（非纯时间戳）才生成问候意图
-            if not _is_placeholder_dream(dream_summary):
-                greet_intent = create_greet_intent(dream_summary[:50], priority=80)
-                if self.self_image is not None:
-                    self.self_image.contribute_intent(greet_intent.to_dict())
+            # 梦境报告属于 Agent 自身。没有明确人物归属时只保留内部
+            # 报告，不能生成一个随后必然投递失败的外部问候。
 
             # 同步到 self_image（如果是从 growth 恢复的）
             if not si.history.last_dream_summary:
@@ -1224,13 +1219,9 @@ class Consciousness:
             logger.info("[Consciousness] 苏醒，使用梦境报告")
             return report
 
-        # 没有梦境报告，生成 WAIT intent（不需要 L3 沉思）
+        # 没有梦境报告时返回轻量报告；WAIT 是保留语义，不进入执行队列。
         # L3 只在 SLEEPING/DREAMING 循环里自然触发，不由 on_wake() 触发
         report = self._fallback_light_report()
-        # 生成等待意图，不阻塞
-        wait_intent = create_wait_intent()
-        if self.self_image is not None:
-            self.self_image.contribute_intent(wait_intent.to_dict())
         return report
 
 
