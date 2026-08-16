@@ -10,7 +10,7 @@ import socket
 import unicodedata
 from dataclasses import dataclass
 from typing import Generator
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -24,6 +24,7 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
+PROXY_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
 @dataclass
@@ -42,26 +43,35 @@ class GetResult:
 def _is_private_url(url: str) -> bool:
     """Check if URL resolves to a private/internal IP (covers IPv4 and IPv6)."""
     try:
-        host = re.sub(r":\d+$", "", url.split("://", 1)[-1].split("/", 1)[0])
-        # IPv6 hostnames arrive as `[::1]` in the URL — strip brackets
-        if host.startswith("[") and host.endswith("]"):
-            host = host[1:-1]
+        host = urlsplit(url).hostname or ""
         if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
             return True
-        # 任意一个解析结果命中内网/loopback/link-local/AWS metadata
-        # 就视为私有地址。getaddrinfo 同时返回 IPv4 + IPv6，所以
-        # IPv6 主机名（如 `fc00::/7` ULA、`fe80::/10` link-local）也被覆盖。
+
+        # Literal IPs never receive the proxy Fake-IP exception. Only a
+        # hostname resolved by a local proxy may use 198.18.0.0/15.
+        literal_ip = None
         try:
-            ipaddress.ip_address(host)
-            # 用 5 元组占位让下方 for 解包保持一致：synthetic sockaddr 是 (host, 0)
-            addresses = [(socket.AF_UNSPEC, socket.SOCK_STREAM, 0, "", (host, 0))]
+            literal_ip = ipaddress.ip_address(host)
+            resolved_ips = [literal_ip]
         except ValueError:
             try:
                 addresses = socket.getaddrinfo(host, None)
             except (socket.gaierror, ValueError):
                 return False
-        for _family, _, _, _, sockaddr in addresses:
-            ip = ipaddress.ip_address(sockaddr[0])
+            resolved_ips = [ipaddress.ip_address(item[4][0]) for item in addresses]
+
+        for ip in resolved_ips:
+            if (
+                literal_ip is None
+                and isinstance(ip, ipaddress.IPv4Address)
+                and ip in PROXY_FAKE_IP_NETWORK
+            ):
+                logger.debug(
+                    "SSRF check accepted proxy Fake-IP: host=%s ip=%s",
+                    host,
+                    ip,
+                )
+                continue
             if (
                 ip.is_private
                 or ip.is_loopback
