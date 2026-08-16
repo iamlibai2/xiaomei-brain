@@ -457,6 +457,79 @@ class ConversationDB(SQLiteStore):
         )
         conn.commit()
 
+    def initialize_memory_review_checkpoints(self, review_type: str) -> None:
+        """Start a new review stream after existing history.
+
+        This is called during Agent startup, before new messages are accepted,
+        so enabling a new background reviewer does not replay years of old
+        conversations on its first tick.
+        """
+        normalized_type = str(review_type or "").strip()
+        if not normalized_type:
+            raise ValueError("review_type cannot be empty")
+        conn = self._get_conn()
+        marker = conn.execute(
+            """SELECT 1 FROM memory_review_checkpoints
+               WHERE person_id = '__review_initializer__'
+                 AND session_id = '__review_initializer__'
+                 AND review_type = ?""",
+            (normalized_type,),
+        ).fetchone()
+        if marker:
+            return
+        conn.execute(
+            """INSERT OR IGNORE INTO memory_review_checkpoints (
+                   person_id, session_id, review_type, last_message_id,
+                   reviewed_turn_count, updated_at
+               )
+               SELECT user_id, session_id, ?, MAX(id), 0, ?
+               FROM messages
+               WHERE user_id NOT IN ('', 'global', 'system')
+                 AND session_id <> ''
+                 AND role IN ('user', 'assistant')
+               GROUP BY user_id, session_id""",
+            (normalized_type, time.time()),
+        )
+        conn.execute(
+            """INSERT INTO memory_review_checkpoints (
+                   person_id, session_id, review_type, last_message_id,
+                   reviewed_turn_count, updated_at
+               ) VALUES ('__review_initializer__', '__review_initializer__', ?, 0, 0, ?)""",
+            (normalized_type, time.time()),
+        )
+        conn.commit()
+
+    def list_pending_memory_review_scopes(
+        self,
+        *,
+        review_type: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List Person/Session scopes with messages beyond their cursor."""
+        normalized_type = str(review_type or "").strip()
+        if not normalized_type:
+            return []
+        bounded_limit = max(1, min(int(limit), 100))
+        rows = self._get_conn().execute(
+            """SELECT m.user_id AS person_id, m.session_id,
+                      MIN(m.id) AS first_message_id,
+                      MAX(m.id) AS latest_message_id
+               FROM messages AS m
+               LEFT JOIN memory_review_checkpoints AS c
+                 ON c.person_id = m.user_id
+                AND c.session_id = m.session_id
+                AND c.review_type = ?
+               WHERE m.user_id NOT IN ('', 'global', 'system')
+                 AND m.session_id <> ''
+                 AND m.role IN ('user', 'assistant')
+                 AND m.id > COALESCE(c.last_message_id, 0)
+               GROUP BY m.user_id, m.session_id
+               ORDER BY first_message_id ASC
+               LIMIT ?""",
+            (normalized_type, bounded_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def latest_session_for_person(self, person_id: str) -> str:
         """Resolve the most recently active session for the manual CLI wrapper."""
         row = self._get_conn().execute(

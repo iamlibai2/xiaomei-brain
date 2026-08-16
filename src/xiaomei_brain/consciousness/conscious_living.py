@@ -436,8 +436,15 @@ class ConsciousLiving(Living):
             drive=self.drive,
             exp_stream=getattr(agent_instance, "exp_stream", None),
             longterm_memory=getattr(agent_instance, "longterm_memory", None),
-            user_id=user_id,
         )
+        conversation_db = getattr(agent_instance, "conversation_db", None)
+        initialize_checkpoints = getattr(
+            conversation_db,
+            "initialize_memory_review_checkpoints",
+            None,
+        )
+        if callable(initialize_checkpoints):
+            initialize_checkpoints("social_cognition")
 
         # ── [Layer 2] Experience Memory: 经验记忆 ──
         from ..memory.experience import ExperienceMemory
@@ -546,7 +553,7 @@ class ConsciousLiving(Living):
         # SocialCognition → SelfImage 连接
         if self._social_cognition:
             self._social_cognition._self_image = si
-        # 注入到 Consciousness（用于 tick_social_cognition 委托）
+        # 注入到 Consciousness（用于按 Person/Session 调度社会认知复盘）
         self.consciousness._social_cognition = self._social_cognition
         self._social_cognition._consciousness = self.consciousness
         # ProjectMentalModel / ExperienceMemory / LearningQueue → SelfImage

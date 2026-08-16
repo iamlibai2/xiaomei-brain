@@ -382,6 +382,7 @@ def _build_living_config(data: dict):
             dream_report_enabled=cc.get("dream_report_enabled", True),
             energy_low_threshold=cc.get("energy_low_threshold", 0.1),
             energy_silent_threshold=cc.get("energy_silent_threshold", 0.15),
+            sc_enabled=cc.get("sc_enabled", True),
             sc_cooldown=cc.get("sc_cooldown", 900.0),
             sc_interval=cc.get("sc_interval", 3600.0),
             sc_energy_threshold=cc.get("sc_energy_threshold", 0.25),
@@ -680,8 +681,9 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"  l4_timeout:           {consciousness.get('l4_timeout', 28800.0)}  # L4 定期兜底（秒）")
     _w(f"  l4_desire_threshold:  {consciousness.get('l4_desire_threshold', 0.7)}  # 欲望张力阈值")
     _w(f"  l4_cortisol_threshold: {consciousness.get('l4_cortisol_threshold', 0.6)}  # 皮质醇张力阈值")
-    _w(f"  sc_cooldown:          {consciousness.get('sc_cooldown', 900.0)}    # social_cognition 冷却（秒）")
-    _w(f"  sc_interval:          {consciousness.get('sc_interval', 3600.0)}   # social_cognition 定期兜底（秒）")
+    _w(f"  sc_enabled:           {str(consciousness.get('sc_enabled', True)).lower()}   # 是否启用社会认知复盘")
+    _w(f"  sc_cooldown:          {consciousness.get('sc_cooldown', 900.0)}    # social_cognition 最短间隔（秒）")
+    _w(f"  sc_interval:          {consciousness.get('sc_interval', 3600.0)}   # legacy compatibility; no empty periodic review")
     _w(f"  sc_energy_threshold:  {consciousness.get('sc_energy_threshold', 0.25)}   # social_cognition 最低能量")
     _w(f"  energy_low_threshold: {consciousness.get('energy_low_threshold', 0.1)}    # 能量极低阈值（低于→flow 最小上下文）")
     _w(f"  energy_silent_threshold: {consciousness.get('energy_silent_threshold', 0.15)}  # 能量沉寂阈值（低于→禁止主动行为）")

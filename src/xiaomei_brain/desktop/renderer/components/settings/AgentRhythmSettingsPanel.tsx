@@ -26,6 +26,9 @@ type RhythmValues = {
   emergence_periodic_interval_minutes: number;
   emergence_changes_trigger: number;
   emergence_energy_threshold_percent: number;
+  social_cognition_enabled: boolean;
+  social_cognition_min_interval_minutes: number;
+  social_cognition_energy_threshold_percent: number;
   reflection_enabled: boolean;
   reflection_min_interval_minutes: number;
   reflection_periodic_interval_minutes: number;
@@ -62,6 +65,9 @@ const DEFAULT_VALUES: RhythmValues = {
   emergence_periodic_interval_minutes: 30,
   emergence_changes_trigger: 5,
   emergence_energy_threshold_percent: 20,
+  social_cognition_enabled: true,
+  social_cognition_min_interval_minutes: 15,
+  social_cognition_energy_threshold_percent: 25,
   reflection_enabled: true,
   reflection_min_interval_minutes: 30,
   reflection_periodic_interval_minutes: 360,
@@ -384,6 +390,45 @@ export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
               label={t("rhythmSettingsUi.energy")}
               value={draft.emergence_energy_threshold_percent}
               onChange={(value) => updateNumber("emergence_energy_threshold_percent", value)}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-heading">
+          <div>
+            <h3>{t("rhythmSettingsUi.socialCognitionTitle")}</h3>
+            <p>{t("rhythmSettingsUi.socialCognitionHint")}</p>
+          </div>
+        </div>
+        <SwitchRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.socialCognitionEnabled")}
+          description={t("rhythmSettingsUi.socialCognitionEnabledHint")}
+          checked={draft.social_cognition_enabled}
+          onChange={(value) => updateBoolean("social_cognition_enabled", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.socialCognitionMinInterval")}
+          description={t("rhythmSettingsUi.socialCognitionMinIntervalHint")}
+          value={draft.social_cognition_min_interval_minutes}
+          unit={t("rhythmSettingsUi.minutes")}
+          min={0.5}
+          max={10080}
+          onChange={(value) => updateNumber("social_cognition_min_interval_minutes", value)}
+        />
+        <div className="rhythm-thresholds">
+          <div className="rhythm-thresholds-heading">
+            <strong>{t("rhythmSettingsUi.socialCognitionEnergy")}</strong>
+            <p>{t("rhythmSettingsUi.socialCognitionEnergyHint")}</p>
+          </div>
+          <div className="rhythm-threshold-grid">
+            <ThresholdRow
+              label={t("rhythmSettingsUi.energy")}
+              value={draft.social_cognition_energy_threshold_percent}
+              onChange={(value) => updateNumber("social_cognition_energy_threshold_percent", value)}
             />
           </div>
         </div>

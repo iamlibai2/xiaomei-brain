@@ -41,8 +41,9 @@ class ConsciousnessConfig:
     l4_timeout: float = 28800.0        # L4 定期兜底（秒，默认 8 小时）
     l4_desire_threshold: float = 0.7   # L4 欲望张力触发阈值
     l4_cortisol_threshold: float = 0.6 # L4 皮质醇张力触发阈值
-    sc_cooldown: float = 900.0              # social_cognition 冷却时间（秒）
-    sc_interval: float = 3600.0             # social_cognition 定期兜底间隔（秒）
+    sc_enabled: bool = True                 # 是否启用对话后的社会认知复盘
+    sc_cooldown: float = 900.0              # social_cognition 最短间隔（秒）
+    sc_interval: float = 3600.0             # [legacy] 不再用于无对话定期兜底
     sc_energy_threshold: float = 0.25       # social_cognition 最低能量阈值
     l2_check_interval: float = 10.0     # Layer 2 检查间隔（秒）
     l1_anomaly_enabled: bool = False   # L1 异常检测开关（False 时跳过所有异常检测）

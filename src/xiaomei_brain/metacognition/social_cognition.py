@@ -10,7 +10,7 @@
 输入：consciousness 上下文 + 最近对话
 输出：
 - EVENTS → Drive（praise/criticism/goal/curiosity/expression）
-- PERCEPTION → SelfImage.mind.social_perceptions
+- PERCEPTION → 当前 Person 的暂时社会感知叙事
 - SIGNAL → Drive + relationship_engine
 """
 
@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..consciousness.context_pipeline import build_simple_context
@@ -32,6 +33,24 @@ SOCIAL_SIGNAL_TYPES = [
     "user_low_mood", "user_enthusiastic", "user_cold",
     "user_angry", "user_happy", "user_stressed", "user_trusting",
 ]
+
+
+@dataclass(frozen=True)
+class SocialCognitionResult:
+    """One Person/Session-scoped social review result."""
+
+    status: str
+    person_id: str
+    session_id: str
+    events: list[str] = field(default_factory=list)
+    perceptions: list[str] = field(default_factory=list)
+    signal_type: str = ""
+    signal_intensity: float = 0.0
+    error: str = ""
+
+    @property
+    def completed(self) -> bool:
+        return self.status == "completed"
 
 
 class SocialCognition:
@@ -49,7 +68,6 @@ class SocialCognition:
         drive: Any = None,
         exp_stream: Any = None,
         longterm_memory: Any = None,
-        user_id: str = "global",
     ) -> None:
         self._llm = llm
         self._self_image = self_image
@@ -57,12 +75,19 @@ class SocialCognition:
         self._drive = drive
         self._exp_stream = exp_stream
         self._longterm_memory = longterm_memory
-        self._user_id = user_id
 
     # ── 公共入口 ──────────────────────────────────────────────
 
-    def reflect(self, context: str = "", user_name: str = "对方",
-                recent_conversation: str = "") -> str | None:
+    def reflect(
+        self,
+        context: str = "",
+        user_name: str = "对方",
+        recent_conversation: str = "",
+        *,
+        person_id: str,
+        session_id: str,
+        relationship_engine: Any = None,
+    ) -> SocialCognitionResult:
         """执行一次社会认知反思。
 
         Args:
@@ -71,37 +96,78 @@ class SocialCognition:
             recent_conversation: 最近对话文本（由调用方从 ConversationDB 查询传入）
 
         Returns:
-            LLM 原始响应文本，或 None（调用失败）
+            结构化、带人物与会话作用域的复盘结果。
         """
+        person_id = str(person_id or "").strip()
+        session_id = str(session_id or "").strip()
+        if not person_id or person_id in {"global", "system"} or not session_id:
+            return SocialCognitionResult(
+                status="invalid_scope",
+                person_id=person_id,
+                session_id=session_id,
+            )
         if not self._llm or not self._self_image:
-            return None
+            return SocialCognitionResult(
+                status="unavailable", person_id=person_id, session_id=session_id,
+            )
 
         # 构建 prompt
-        prompt = self._build_prompt(context, user_name, recent_conversation)
+        prompt = self._build_prompt(
+            context,
+            user_name,
+            recent_conversation,
+            person_id=person_id,
+            session_id=session_id,
+        )
         if not prompt:
-            return None
+            return SocialCognitionResult(
+                status="no_data", person_id=person_id, session_id=session_id,
+            )
 
         # 调用 LLM
         raw = self._call_llm(prompt)
         if not raw:
-            return None
+            return SocialCognitionResult(
+                status="failed",
+                person_id=person_id,
+                session_id=session_id,
+                error="empty model response",
+            )
 
         # 解析响应
-        self._parse_and_route(raw)
-
-        return raw
+        return self._parse_and_route(
+            raw,
+            person_id=person_id,
+            session_id=session_id,
+            relationship_engine=relationship_engine,
+        )
 
     # ── Prompt 构建 ───────────────────────────────────────────
 
-    def _build_prompt(self, context: str, user_name: str,
-                      recent_conversation: str = "") -> str | None:
+    def _build_prompt(
+        self,
+        context: str,
+        user_name: str,
+        recent_conversation: str = "",
+        *,
+        person_id: str,
+        session_id: str,
+    ) -> str | None:
         """构建 social_cognition prompt。
 
         包含：consciousness 上下文 + 最近对话 + EVENTS/PERCEPTION/SIGNAL 要求。
         """
-        consciousness_context = build_simple_context(self._consciousness, mode="internal")
+        consciousness_context = build_simple_context(
+            self._consciousness,
+            mode="internal",
+            user_input=recent_conversation[-500:],
+            user_id=person_id,
+            session_id=session_id,
+        )
 
-        recent = recent_conversation or self._get_recent_conversation()
+        # The caller owns the Person/Session boundary. Falling back to the
+        # shared SelfImage dialog would silently mix another person's session.
+        recent = str(recent_conversation or "").strip()
         if not recent or recent == "（无对话数据）":
             return None  # 没有对话就不触发，纯对话驱动
 
@@ -110,24 +176,6 @@ class SocialCognition:
             user_name=user_name,
             recent=recent,
         )
-
-    def _get_recent_conversation(self) -> str:
-        """获取最近对话文本（fallback：从 SelfImage.memory.recent_dialog）。"""
-        si = self._self_image
-        if si:
-            recent_dialog = getattr(si.memory, "recent_dialog", [])
-            if recent_dialog:
-                lines = []
-                for d in recent_dialog:
-                    role = d.get("role", "")
-                    content = d.get("content", "")
-                    if content:
-                        label = "对方" if role == "user" else ("我" if role == "assistant" else role)
-                        lines.append(f"{label}：{content[:200]}")
-                if lines:
-                    return "\n".join(lines)
-
-        return "（无对话数据）"
 
     # ── LLM 调用 ──────────────────────────────────────────────
 
@@ -147,8 +195,24 @@ class SocialCognition:
 
     # ── 解析与路由 ────────────────────────────────────────────
 
-    def _parse_and_route(self, raw: str) -> None:
+    def _parse_and_route(
+        self,
+        raw: str,
+        *,
+        person_id: str,
+        session_id: str,
+        relationship_engine: Any = None,
+    ) -> SocialCognitionResult:
         """解析 LLM 响应并路由到各子系统。"""
+        self.last_events_summary = []
+        self.last_perception = ""
+        self.last_signal_type = ""
+        self.last_signal_intensity = 0.0
+
+        has_sections = any(
+            marker in raw
+            for marker in ("---EVENTS---", "---PERCEPTION---", "---SIGNAL---")
+        )
         # 1. 分离 EVENTS
         _, events_json = self._split_events(raw)
 
@@ -158,26 +222,54 @@ class SocialCognition:
         # 3. 分离 SIGNAL
         _, signal_json = self._split_signal(raw)
 
+        if not has_sections:
+            return SocialCognitionResult(
+                status="malformed",
+                person_id=person_id,
+                session_id=session_id,
+                error="model response contains no social cognition sections",
+            )
+        for section_name, payload in (
+            ("EVENTS", events_json),
+            ("SIGNAL", signal_json),
+        ):
+            if payload and not self._valid_json_object(payload):
+                return SocialCognitionResult(
+                    status="malformed",
+                    person_id=person_id,
+                    session_id=session_id,
+                    error=f"invalid {section_name} JSON",
+                )
+
         # 路由 SIGNAL → Drive + relationship_engine（先执行——感知用户情绪）
         if signal_json and self._drive:
             try:
-                self._apply_social_signal(signal_json)
+                self._apply_social_signal(
+                    signal_json,
+                    person_id=person_id,
+                    relationship_engine=relationship_engine,
+                )
             except Exception as e:
                 logger.warning("[SocialCognition] SIGNAL 应用失败: %s", e)
 
         # 路由 EVENTS → Drive（后执行——边界侵犯等覆盖社交信号）
         if events_json and self._drive:
             try:
-                self._apply_drive_events(events_json)
+                self._apply_drive_events(
+                    events_json,
+                    person_id=person_id,
+                    session_id=session_id,
+                )
             except Exception as e:
                 logger.warning("[SocialCognition] EVENTS 应用失败: %s", e)
 
-        # 路由 PERCEPTION → SelfImage.mind.social_perceptions
+        # PERCEPTION 是对某个 Person 的暂时理解，不再写入共享 SelfImage。
         if perceptions:
-            try:
-                self._self_image.contribute_social_perception(perceptions)
-            except Exception as e:
-                logger.warning("[SocialCognition] PERCEPTION 写入失败: %s", e)
+            self._store_person_perceptions(
+                perceptions,
+                person_id=person_id,
+                session_id=session_id,
+            )
 
         # 存储 PERCEPTION 文本供 InternalDisplay 展示（取第一条）
         if perceptions:
@@ -199,15 +291,64 @@ class SocialCognition:
                     type="internal_reflection",
                     content=" | ".join(parts),
                     importance=0.5,
-                    metadata={"source": "social_cognition"},
+                    metadata={
+                        "source": "social_cognition",
+                        "person_id": person_id,
+                        "session_id": session_id,
+                    },
                 )
             except Exception as e:
                 logger.debug("[SocialCognition] ExpStream 写入失败: %s", e)
 
         logger.info(
-            "[SocialCognition] 完成: events=%s, perceptions=%d, signal=%s",
-            bool(events_json), len(perceptions), bool(signal_json),
+            "[SocialCognition] 完成: person=%s session=%s events=%s perceptions=%d signal=%s",
+            person_id, session_id, bool(events_json), len(perceptions), bool(signal_json),
         )
+        return SocialCognitionResult(
+            status="completed",
+            person_id=person_id,
+            session_id=session_id,
+            events=list(getattr(self, "last_events_summary", []) or []),
+            perceptions=[str(item.get("content") or "") for item in perceptions],
+            signal_type=str(getattr(self, "last_signal_type", "") or ""),
+            signal_intensity=float(getattr(self, "last_signal_intensity", 0.0) or 0.0),
+        )
+
+    @staticmethod
+    def _valid_json_object(payload: str) -> bool:
+        match = re.search(r"\{[\s\S]*\}", payload)
+        if not match:
+            return False
+        try:
+            return isinstance(json.loads(match.group()), dict)
+        except json.JSONDecodeError:
+            return False
+
+    def _store_person_perceptions(
+        self,
+        perceptions: list[dict],
+        *,
+        person_id: str,
+        session_id: str,
+    ) -> None:
+        if not self._longterm_memory:
+            return
+        content = "\n".join(
+            f"- 暂时感知：{str(item.get('content') or '').strip()}"
+            for item in perceptions
+            if str(item.get("content") or "").strip()
+        )
+        if not content:
+            return
+        try:
+            self._longterm_memory.store_narrative(
+                content=content[:500],
+                trigger="social_perception",
+                conversation_summary=f"source_session={session_id}",
+                user_id=person_id,
+            )
+        except Exception as exc:
+            logger.warning("[SocialCognition] 人物感知写入失败: %s", exc)
 
     # ── 分隔符解析（从 l2_engine.py 搬过来）──────────────────
 
@@ -272,7 +413,13 @@ class SocialCognition:
 
     # ── Drive 事件应用（从 l2_engine.py 搬过来）──────────────
 
-    def _apply_drive_events(self, events_text: str) -> None:
+    def _apply_drive_events(
+        self,
+        events_text: str,
+        *,
+        person_id: str,
+        session_id: str,
+    ) -> None:
         """从 EVENTS JSON 解析语义事件并应用到 Drive。"""
         try:
             json_match = re.search(r"\{[\s\S]*\}", events_text)
@@ -359,15 +506,16 @@ class SocialCognition:
             parts.append(f"对方越界/冒犯了我（强度{boundary:.1f}）")
         if summary:
             parts.append(summary)
-        content = "；".join(parts) if parts else summary or "social_cognition 事件分析"
+        content = "；".join(parts)
 
-        if self._longterm_memory:
+        if self._longterm_memory and content:
             try:
                 self._longterm_memory.store_narrative(
                     content=content[:300],
                     trigger='social_cognition',
                     drive_summary=json.dumps(tags),
-                    user_id=self._user_id,
+                    conversation_summary=f"source_session={session_id}",
+                    user_id=person_id,
                 )
             except Exception as e:
                 logger.debug("[SocialCognition] 记忆写入失败: %s", e)
@@ -378,7 +526,13 @@ class SocialCognition:
             praise, criticism, goal_progress, curiosity, expression, boundary, tags,
         )
 
-    def _apply_social_signal(self, signal_text: str) -> None:
+    def _apply_social_signal(
+        self,
+        signal_text: str,
+        *,
+        person_id: str,
+        relationship_engine: Any = None,
+    ) -> None:
         """从 SIGNAL JSON 解析社交信号并应用到 Drive + relationship_engine。"""
         if not self._drive:
             return
@@ -410,10 +564,13 @@ class SocialCognition:
                 logger.warning("[SocialCognition] SIGNAL 应用失败: %s", e)
 
             # 同步到关系引擎（trust 变化）
-            if self._self_image:
-                engine = getattr(self._self_image.being, '_relationship_engine', None)
-                if engine:
-                    try:
-                        engine.on_social_signal(signal_type, min(intensity, 1.0))
-                    except Exception as e:
-                        logger.debug("[SocialCognition] 关系引擎应用失败: %s", e)
+            engine = relationship_engine
+            if engine:
+                try:
+                    engine.on_social_signal_for(
+                        person_id,
+                        signal_type,
+                        min(intensity, 1.0),
+                    )
+                except Exception as e:
+                    logger.debug("[SocialCognition] 关系引擎应用失败: %s", e)

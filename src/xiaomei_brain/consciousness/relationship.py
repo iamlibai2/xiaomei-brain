@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -108,6 +109,7 @@ class RelationshipEngine:
         self.last_interaction_time: float = 0.0
         self._last_decay_time: float = time.time()
         self._loaded = False
+        self._scope_lock = threading.RLock()
 
     # ── 初始化 / 用户切换 ──────────────────────────────
 
@@ -203,6 +205,61 @@ class RelationshipEngine:
                         0.02 * intensity, self.closeness)
 
         self.save()
+
+    def on_social_signal_for(
+        self,
+        user_id: str,
+        signal_type: str,
+        intensity: float,
+    ) -> dict[str, Any]:
+        """Apply one signal to a Person without switching shared active state."""
+        normalized_user = str(user_id or "").strip()
+        if not normalized_user or normalized_user in {"global", "system"}:
+            raise ValueError("social signal requires a Person")
+        bounded_intensity = max(0.0, min(1.0, float(intensity)))
+        with self._scope_lock:
+            values = self._storage.load(normalized_user) or {}
+            depth = float(values.get("depth", 0.0))
+            trust = float(values.get("trust", 0.1))
+            closeness = float(values.get("closeness", 0.0))
+            interaction_count = int(values.get("interaction_count", 0))
+            last_interaction_time = float(values.get("last_interaction_time", 0.0))
+            last_decay_time = float(values.get("last_decay_time", time.time()))
+
+            delta = SIGNAL_TRUST_MAP.get(signal_type, 0.0)
+            trust = max(0.0, min(1.0, trust + delta * bounded_intensity))
+            if signal_type == "user_trusting" and depth > 0.3:
+                closeness = min(1.0, closeness + 0.02 * bounded_intensity)
+
+            self._storage.save(
+                normalized_user,
+                depth,
+                trust,
+                closeness,
+                interaction_count,
+                last_interaction_time,
+                last_decay_time,
+            )
+            if normalized_user == self._user_id and self._loaded:
+                self.depth = depth
+                self.trust = trust
+                self.closeness = closeness
+
+        logger.info(
+            "[Relationship] scoped social signal: user=%s signal=%s trust=%.2f closeness=%.2f",
+            normalized_user,
+            signal_type,
+            trust,
+            closeness,
+        )
+        return {
+            "user_id": normalized_user,
+            "depth": depth,
+            "trust": trust,
+            "closeness": closeness,
+            "interaction_count": interaction_count,
+            "last_interaction_time": last_interaction_time,
+        }
 
     def tick(self, idle_duration: float) -> None:
         """L1 周期调用：检查空闲衰减。

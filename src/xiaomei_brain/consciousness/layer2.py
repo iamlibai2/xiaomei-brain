@@ -108,12 +108,20 @@ class Layer2DefaultNetwork:
         if intent:
             display.record_intent(intent.type.value, intent.content or "")
         if sc_result:
-            if sc_result.get("signal"):
-                display.record_social_cognition(sc_result["signal"])
-            if sc_result.get("events"):
-                display.record_social_events(sc_result["events"])
-            if sc_result.get("perception"):
-                display.record_social_perception(sc_result["perception"])
+            signal_type = str(getattr(sc_result, "signal_type", "") or "")
+            signal_intensity = float(
+                getattr(sc_result, "signal_intensity", 0.0) or 0.0
+            )
+            if signal_type and signal_intensity > 0:
+                display.record_social_cognition(
+                    f"{signal_type}({min(signal_intensity, 1.0):.1f})"
+                )
+            events = list(getattr(sc_result, "events", []) or [])
+            if events:
+                display.record_social_events(events)
+            perceptions = list(getattr(sc_result, "perceptions", []) or [])
+            if perceptions:
+                display.record_social_perception(perceptions[0])
         stored = getattr(c, "_last_emergence_stored", 0)
         if stored:
             display.record_emergence_stored(stored)
@@ -257,14 +265,26 @@ class Layer2DefaultNetwork:
                         self._log(f"{ts} L2 跳过 [条件不满足] state={agent_state}")
 
                     # social_cognition: 对话后社会感知（社会认知 + 心理理论）
-                    if self._c._should_social_cognition(agent_state):
+                    social_batch = self._c._next_social_cognition_batch(agent_state)
+                    if social_batch:
                         self._log(f"{ts} social_cognition 触发 agent_state={agent_state}")
-                        logger.info("[Layer2] social_cognition 触发（agent_state=%s）", agent_state)
+                        logger.info(
+                            "[Layer2] social_cognition 触发（agent_state=%s person=%s session=%s）",
+                            agent_state,
+                            social_batch.get("person_id"),
+                            social_batch.get("session_id"),
+                        )
                         self._observe_state("social_reflection", "正在整理最近的社会感知")
                         try:
-                            sc_result = self._c.tick_social_cognition(agent_state)
-                            self._display_internal(sc_result=sc_result)
-                            self._log(f"{ts} social_cognition 完成")
+                            sc_result = self._c.request_social_cognition(
+                                social_batch,
+                                source="scheduler",
+                            )
+                            if sc_result.completed:
+                                self._display_internal(sc_result=sc_result)
+                            self._log(
+                                f"{ts} social_cognition status={sc_result.status}"
+                            )
                         except Exception as e:
                             self._log(f"{ts} social_cognition ERROR: {e}")
                             logger.warning("[Layer2] social_cognition 出错: %s", e)

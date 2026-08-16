@@ -83,7 +83,10 @@ consciousness:
   l4_timeout:           28800.0
   l4_desire_threshold:  0.7
   l4_cortisol_threshold: 0.6
-  sc_interval:          3600.0
+  sc_enabled:           true
+  sc_cooldown:          900.0
+  sc_interval:          3600.0  # legacy compatibility; no empty periodic review
+  sc_energy_threshold:  0.25
   energy_low_threshold: 0.1
   energy_silent_threshold: 0.15
   living:

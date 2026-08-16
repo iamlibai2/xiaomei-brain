@@ -219,6 +219,9 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert current["values"]["emergence_periodic_interval_minutes"] == 30.0
     assert current["values"]["emergence_changes_trigger"] == 5.0
     assert current["values"]["emergence_energy_threshold_percent"] == 20.0
+    assert current["values"]["social_cognition_enabled"] is True
+    assert current["values"]["social_cognition_min_interval_minutes"] == 15.0
+    assert current["values"]["social_cognition_energy_threshold_percent"] == 25.0
     assert current["values"]["reflection_enabled"] is True
     assert current["values"]["reflection_min_interval_minutes"] == 30.0
     assert current["values"]["reflection_periodic_interval_minutes"] == 360.0
@@ -254,6 +257,9 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
                 "emergence_periodic_interval_minutes": 60,
                 "emergence_changes_trigger": 7,
                 "emergence_energy_threshold_percent": 25,
+                "social_cognition_enabled": False,
+                "social_cognition_min_interval_minutes": 18,
+                "social_cognition_energy_threshold_percent": 35,
                 "reflection_enabled": True,
                 "reflection_min_interval_minutes": 45,
                 "reflection_periodic_interval_minutes": 480,
@@ -290,6 +296,9 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert living._config.consciousness.l2_emergence_interval == 3600.0
     assert living._config.consciousness.l2_emergence_changes_trigger == 7
     assert living._config.consciousness.l2_emergence_energy_threshold == 0.25
+    assert living._config.consciousness.sc_enabled is False
+    assert living._config.consciousness.sc_cooldown == 1080.0
+    assert living._config.consciousness.sc_energy_threshold == 0.35
     assert living._config.consciousness.l3_enabled is True
     assert living._config.consciousness.l3_cooldown == 2700.0
     assert living._config.consciousness.l3_interval == 28800.0
@@ -317,6 +326,9 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert consciousness["l2_emergence_interval"] == 3600.0
     assert consciousness["l2_emergence_changes_trigger"] == 7
     assert consciousness["l2_emergence_energy_threshold"] == 0.25
+    assert consciousness["sc_enabled"] is False
+    assert consciousness["sc_cooldown"] == 1080.0
+    assert consciousness["sc_energy_threshold"] == 0.35
     assert consciousness["l3_enabled"] is True
     assert consciousness["l3_cooldown"] == 2700.0
     assert consciousness["l3_interval"] == 28800.0

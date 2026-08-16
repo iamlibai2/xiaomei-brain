@@ -362,10 +362,6 @@ def _v1_mind(si) -> list[str]:
             lines.append(f"{label}：{n.get('content', '')}")
         if len(recent) > 1:
             lines.append("（以上是你近期的思考。不要重复，去找新的角度或更深的变化。）")
-    if m.social_perceptions:
-        lines.append("你之前感觉到的：")
-        for sp in m.social_perceptions[-5:]:
-            lines.append(f"- {sp.get('content', '')}")
     if m.self_doubts:
         lines.append("你对自己有些不确定：")
         for sd in m.self_doubts[-5:]:

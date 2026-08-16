@@ -25,6 +25,7 @@ from __future__ import annotations
 from enum import Enum
 
 import logging
+import threading
 
 import time
 from dataclasses import dataclass, field
@@ -171,6 +172,7 @@ class Consciousness:
         self._last_l3_time: float = time.time()        # 启动后等冷却才触发 L3
         self._last_sc_time: float = time.time()        # 上次 social_cognition 时间（冷却用）
         self._social_cognition: Any = None             # SocialCognition 实例（由 ConsciousLiving 注入）
+        self._social_cognition_lock = threading.Lock()
         self._agent_state: str = "awake"             # 当前生命状态（主循环写入，Layer 2 读取）
         self._dream_signal: bool = False             # Layer 2 设置的入梦信号（主循环读取）
         self._queue_depth: int = 0                   # 消息队列深度（Living._heartbeat 写入，Layer0 读取）
@@ -513,75 +515,104 @@ class Consciousness:
             self._l2_engine = L2Engine(self)
         return self._l2_engine.tick_emergence(context)
 
-    def tick_social_cognition(self, context: str) -> dict | None:
-        """委托 SocialCognition 进行对话后社会感知。
-
-        从 ConversationDB 读取 _last_sc_time 到现在的增量对话，
-        格式化为对话文本传给 SocialCognition 分析。
-
-        Returns:
-            结构化结果 dict，供 InternalDisplay 展示，或 None
-        """
-        if self._social_cognition is None:
+    def _next_social_cognition_batch(
+        self,
+        agent_state: str = "awake",
+    ) -> dict[str, Any] | None:
+        """Return one complete Person/Session batch eligible for review."""
+        if not bool(getattr(self._cc, "sc_enabled", True)):
             return None
-
-        user_name = "对方"
+        if agent_state != "idle" or self._social_cognition is None:
+            return None
+        if self.self_image.body.energy < self._cc.sc_energy_threshold:
+            return None
+        if time.time() - self._last_sc_time < self._cc.sc_cooldown:
+            return None
+        db = getattr(self.agent, "conversation_db", None)
+        if db is None:
+            return None
         try:
-            agent_core = self.agent._get_agent()
-            user_name = getattr(agent_core, 'user_display_name', '对方')
+            for scope in db.list_pending_memory_review_scopes(
+                review_type="social_cognition",
+            ):
+                batch = db.get_next_memory_review_batch(
+                    scope["person_id"],
+                    scope["session_id"],
+                    batch_turns=5,
+                    minimum_turns=1,
+                    review_type="social_cognition",
+                )
+                if batch:
+                    return batch
         except Exception:
-            pass
+            logger.exception("[Consciousness] social cognition batch lookup failed")
+        return None
 
-        # 查询上次 SC 之后的增量对话
-        recent_conv = self._get_recent_conversation_since(self._last_sc_time)
-        self._last_sc_time = time.time()  # 更新冷却时间（对话快照已取，即使 LLM 失败也更新）
+    def request_social_cognition(
+        self,
+        batch: dict[str, Any],
+        *,
+        source: str = "scheduler",
+    ) -> Any:
+        """Review one scoped batch and advance its cursor only on success."""
+        from ..metacognition.social_cognition import SocialCognitionResult
 
+        person_id = str(batch.get("person_id") or "").strip()
+        session_id = str(batch.get("session_id") or "").strip()
+        if not self._social_cognition_lock.acquire(blocking=False):
+            return SocialCognitionResult("busy", person_id, session_id)
         try:
-            self._social_cognition.reflect(
-                context=context, user_name=user_name,
-                recent_conversation=recent_conv,
+            # One attempt owns the normal cooldown even when the model returns
+            # empty or malformed output. The durable cursor remains unchanged.
+            self._last_sc_time = time.time()
+            identity_mgr = getattr(
+                getattr(self.agent, "_get_agent", lambda: None)(),
+                "identity_mgr",
+                None,
             )
-        except Exception as e:
-            logger.warning("[Consciousness] social_cognition 调用失败: %s", e)
-            return None
-
-        sc = self._social_cognition
-        signal_type = getattr(sc, 'last_signal_type', '')
-        intensity = getattr(sc, 'last_signal_intensity', 0)
-        events_summary = getattr(sc, 'last_events_summary', [])
-        perception = getattr(sc, 'last_perception', '')
-        if not signal_type or intensity <= 0:
-            signal_type = ""
-        result: dict = {}
-        if signal_type:
-            result["signal"] = f"{signal_type}({min(intensity, 1.0):.1f})"
-        if events_summary:
-            result["events"] = events_summary
-        if perception:
-            result["perception"] = perception
-        return result if result else None
-
-    def _get_recent_conversation_since(self, since: float) -> str:
-        """获取从 since 时间戳到现在的对话文本（从 ConversationDB 读取）。"""
-        if not self.agent or not hasattr(self.agent, "conversation_db"):
-            return ""
-        db = self.agent.conversation_db
-        if not db:
-            return ""
-        try:
-            recent = db.get_recent(50, user_id=self._agent_id, since=since)
-            lines = []
-            for m in recent:
-                role = m.get("role", "unknown")
-                content = m.get("content", "")
+            user_name = (
+                identity_mgr.get_display_name(person_id)
+                if identity_mgr is not None
+                else person_id
+            )
+            lines: list[str] = []
+            for message in batch.get("messages") or []:
+                content = str(message.get("content") or "").strip()
+                if not content:
+                    continue
+                role = str(message.get("role") or "")
                 if role == "user":
-                    lines.append(f"对方：{content[:200]}")
+                    lines.append(f"{user_name}：{content[:500]}")
                 elif role == "assistant":
-                    lines.append(f"{self.being.name or '我'}：{content[:200]}")
-            return "\n".join(lines) if lines else ""
-        except Exception as e:
-            logger.warning("[Consciousness] 增量对话查询失败: %s", e)
-            return ""
+                    lines.append(f"{self.being.name or '我'}：{content[:500]}")
+            result = self._social_cognition.reflect(
+                context=source,
+                user_name=user_name,
+                recent_conversation="\n".join(lines),
+                person_id=person_id,
+                session_id=session_id,
+                relationship_engine=getattr(
+                    self.self_image.being,
+                    "_relationship_engine",
+                    None,
+                ),
+            )
+            if result.completed:
+                self.agent.conversation_db.advance_memory_review_checkpoint(
+                    person_id,
+                    session_id,
+                    last_message_id=int(batch["max_message_id"]),
+                    reviewed_turn_count=int(batch["turn_count"]),
+                    review_type="social_cognition",
+                )
+            return result
+        except Exception as exc:
+            logger.exception("[Consciousness] social cognition failed")
+            return SocialCognitionResult(
+                "failed", person_id, session_id, error=str(exc),
+            )
+        finally:
+            self._social_cognition_lock.release()
 
     # ── Memory / Helpers（L2 依赖，也供其他层使用）───────────────
 
@@ -689,12 +720,20 @@ class Consciousness:
     def _apply_drive_events(self, events_text: str) -> None:
         """应用驱动事件 → SocialCognition。"""
         if self._social_cognition:
-            self._social_cognition._apply_drive_events(events_text)
+            self._social_cognition._apply_drive_events(
+                events_text,
+                person_id="global",
+                session_id="being-tool",
+            )
 
     def _apply_social_signal(self, signal_text: str) -> None:
         """应用社交信号到 Drive → SocialCognition。"""
         if self._social_cognition:
-            self._social_cognition._apply_social_signal(signal_text)
+            self._social_cognition._apply_social_signal(
+                signal_text,
+                person_id="global",
+                relationship_engine=None,
+            )
 
     def _build_intent_prompt(self, context: str, has_goal: bool = False, goal_memories: list[dict] | None = None) -> str:
         """构建意图决策 prompt → L2Engine。"""
@@ -986,41 +1025,8 @@ class Consciousness:
         return self._emergence_trigger_context(agent_state) is not None
 
     def _should_social_cognition(self, agent_state: str = "awake") -> bool:
-        """判断是否应触发 social_cognition（对话后社会感知）。
-
-        人类 DMN 在 TPN（任务正相关网络）活跃时被抑制，空闲时才接管。
-        所以 social_cognition 是 IDLE 驱动的——对话结束后，静下来时反思社交互动。
-
-        SLEEPING/DREAMING 中不触发。
-        """
-        si = self.self_image
-        elapsed = time.time() - self._last_sc_time
-
-        # SLEEPING/DREAMING 中不触发
-        if agent_state in ("sleeping", "dreaming", "working"):
-            return False
-
-        # 只在 IDLE 时触发（DMN 在任务态被 TPN 抑制）
-        if agent_state != "idle":
-            return False
-
-        # 能量阈值
-        if si.body.energy < self._cc.sc_energy_threshold:
-            return False
-
-        # 冷却检查
-        if elapsed < self._cc.sc_cooldown:
-            return False
-
-        # 对话驱动：用户在上次 SC 之后有过活动，说明有新对话值得反思
-        if si.perception.last_user_activity_time > self._last_sc_time:
-            return True
-
-        # 定期兜底：即使没新对话，够久了也检查一下
-        if elapsed >= self._cc.sc_interval:
-            return True
-
-        return False
+        """Compatibility predicate; scheduling uses the scoped batch itself."""
+        return self._next_social_cognition_batch(agent_state) is not None
 
     # [deprecated] _should_l2 kept for backward compatibility
     def _should_l2(self, agent_state: str = "awake") -> bool:

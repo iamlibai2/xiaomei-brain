@@ -33,6 +33,9 @@ class RhythmConfigurationSection:
         "emergence_periodic_interval_minutes": 30.0,
         "emergence_changes_trigger": 5.0,
         "emergence_energy_threshold_percent": 20.0,
+        "social_cognition_enabled": True,
+        "social_cognition_min_interval_minutes": 15.0,
+        "social_cognition_energy_threshold_percent": 25.0,
         "reflection_enabled": True,
         "reflection_min_interval_minutes": 30.0,
         "reflection_periodic_interval_minutes": 360.0,
@@ -60,6 +63,8 @@ class RhythmConfigurationSection:
         "emergence_periodic_interval_minutes": (1.0, 10080.0),
         "emergence_changes_trigger": (1.0, 30.0),
         "emergence_energy_threshold_percent": (0.0, 100.0),
+        "social_cognition_min_interval_minutes": (0.5, 10080.0),
+        "social_cognition_energy_threshold_percent": (0.0, 100.0),
         "reflection_min_interval_minutes": (0.5, 10080.0),
         "reflection_periodic_interval_minutes": (1.0, 20160.0),
         "reflection_changes_trigger": (1.0, 30.0),
@@ -192,6 +197,18 @@ class RhythmConfigurationSection:
                 "consciousness.l2_emergence_energy_threshold",
                 float(self._DEFAULTS["emergence_energy_threshold_percent"]),
             ),
+            "social_cognition_enabled": boolean(
+                "consciousness.sc_enabled",
+                bool(self._DEFAULTS["social_cognition_enabled"]),
+            ),
+            "social_cognition_min_interval_minutes": seconds(
+                "consciousness.sc_cooldown",
+                float(self._DEFAULTS["social_cognition_min_interval_minutes"]),
+            ),
+            "social_cognition_energy_threshold_percent": percent(
+                "consciousness.sc_energy_threshold",
+                float(self._DEFAULTS["social_cognition_energy_threshold_percent"]),
+            ),
             "reflection_enabled": boolean(
                 "consciousness.l3_enabled",
                 bool(self._DEFAULTS["reflection_enabled"]),
@@ -291,6 +308,9 @@ class RhythmConfigurationSection:
                 "l2_emergence_interval": float(values["emergence_periodic_interval_minutes"]) * 60.0,
                 "l2_emergence_changes_trigger": int(values["emergence_changes_trigger"]),
                 "l2_emergence_energy_threshold": float(values["emergence_energy_threshold_percent"]) / 100.0,
+                "sc_enabled": bool(values["social_cognition_enabled"]),
+                "sc_cooldown": float(values["social_cognition_min_interval_minutes"]) * 60.0,
+                "sc_energy_threshold": float(values["social_cognition_energy_threshold_percent"]) / 100.0,
                 "l3_enabled": bool(values["reflection_enabled"]),
                 "l3_cooldown": float(values["reflection_min_interval_minutes"]) * 60.0,
                 "l3_interval": float(values["reflection_periodic_interval_minutes"]) * 60.0,
@@ -336,6 +356,9 @@ class RhythmConfigurationSection:
         config.consciousness.l2_emergence_interval = float(values["emergence_periodic_interval_minutes"]) * 60.0
         config.consciousness.l2_emergence_changes_trigger = int(values["emergence_changes_trigger"])
         config.consciousness.l2_emergence_energy_threshold = float(values["emergence_energy_threshold_percent"]) / 100.0
+        config.consciousness.sc_enabled = bool(values["social_cognition_enabled"])
+        config.consciousness.sc_cooldown = float(values["social_cognition_min_interval_minutes"]) * 60.0
+        config.consciousness.sc_energy_threshold = float(values["social_cognition_energy_threshold_percent"]) / 100.0
         config.consciousness.l3_enabled = bool(values["reflection_enabled"])
         config.consciousness.l3_cooldown = float(values["reflection_min_interval_minutes"]) * 60.0
         config.consciousness.l3_interval = float(values["reflection_periodic_interval_minutes"]) * 60.0
@@ -369,6 +392,9 @@ class RhythmConfigurationSection:
             consciousness_config.l2_emergence_interval = float(values["emergence_periodic_interval_minutes"]) * 60.0
             consciousness_config.l2_emergence_changes_trigger = int(values["emergence_changes_trigger"])
             consciousness_config.l2_emergence_energy_threshold = float(values["emergence_energy_threshold_percent"]) / 100.0
+            consciousness_config.sc_enabled = bool(values["social_cognition_enabled"])
+            consciousness_config.sc_cooldown = float(values["social_cognition_min_interval_minutes"]) * 60.0
+            consciousness_config.sc_energy_threshold = float(values["social_cognition_energy_threshold_percent"]) / 100.0
             consciousness_config.l3_enabled = bool(values["reflection_enabled"])
             consciousness_config.l3_cooldown = float(values["reflection_min_interval_minutes"]) * 60.0
             consciousness_config.l3_interval = float(values["reflection_periodic_interval_minutes"]) * 60.0
