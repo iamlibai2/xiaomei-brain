@@ -38,6 +38,63 @@ def _count_total(messages: list[dict]) -> int:
     return sum(_count_msg_tokens(m) for m in messages)
 
 
+def _group_protocol_units(messages: list[dict]) -> list[list[dict]]:
+    """Build protocol-valid atomic units from non-system messages.
+
+    One assistant message may request several tools.  The assistant request and
+    all of its consecutive tool results must therefore be retained or removed
+    together.  Orphan tool results are never safe to send to an OpenAI-style
+    provider and are discarded here.
+    """
+    units: list[list[dict]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        role = message.get("role")
+        tool_calls = message.get("tool_calls") or []
+
+        if role == "assistant" and tool_calls:
+            expected_ids = {
+                str(call.get("id") or "")
+                for call in tool_calls
+                if call.get("id")
+            }
+            unit = [message]
+            found_ids: set[str] = set()
+            cursor = index + 1
+            while cursor < len(messages) and messages[cursor].get("role") == "tool":
+                tool_message = messages[cursor]
+                tool_call_id = str(tool_message.get("tool_call_id") or "")
+                if tool_call_id in expected_ids:
+                    unit.append(tool_message)
+                    found_ids.add(tool_call_id)
+                cursor += 1
+
+            if expected_ids and found_ids == expected_ids:
+                units.append(unit)
+            else:
+                # Preserve any visible assistant text, but never send an
+                # incomplete tool request or its now-orphaned results.
+                clean_message = dict(message)
+                clean_message.pop("tool_calls", None)
+                units.append([clean_message])
+            index = cursor
+            continue
+
+        if role == "tool":
+            logger.warning(
+                "[ContextGuard] Dropped orphan tool result: %s",
+                message.get("tool_call_id") or "unknown",
+            )
+            index += 1
+            continue
+
+        units.append([message])
+        index += 1
+
+    return units
+
+
 def _trim_messages(messages: list[dict], max_tokens: int) -> list[dict]:
     """裁剪 messages 到指定 token 预算内。
 
@@ -57,52 +114,29 @@ def _trim_messages(messages: list[dict], max_tokens: int) -> list[dict]:
     if not messages:
         return messages
 
-    total = _count_total(messages)
-    if total <= max_tokens:
-        return messages
-
     # system prompt 不动
     system_msg = messages[0]
     system_tokens = _count_msg_tokens(system_msg)
     available = max_tokens - system_tokens
+    units = _group_protocol_units(messages[1:])
+    valid_messages = [system_msg] + [message for unit in units for message in unit]
+    total = _count_total(valid_messages)
+    if total <= max_tokens:
+        return valid_messages
 
-    # 从最新到最旧，累积可保留的消息
-    # tool_calls + tool 配对视为原子单元，不能拆分
-    kept: list[dict] = []
+    # 从最新到最旧累积；一个 assistant(tool_calls) 及其全部 tool
+    # results 已被组合为一个原子单元，裁剪时不会拆开。
+    kept_units: list[list[dict]] = []
     running = 0
-    i = len(messages) - 1
-
-    while i >= 1:
-        msg = messages[i]
-        msg_tokens = _count_msg_tokens(msg)
-
-        # 如果是 tool 消息，尝试把配对的 tool_calls 也一起纳入
-        if msg.get("role") == "tool":
-            if i - 1 >= 1:
-                prev_msg = messages[i - 1]
-                prev_tokens = _count_msg_tokens(prev_msg)
-                # 只有 tool_calls + tool 连续配对时才视为原子
-                if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
-                    if running + msg_tokens + prev_tokens <= available:
-                        kept.append(msg)
-                        kept.append(prev_msg)
-                        running += msg_tokens + prev_tokens
-                        i -= 2
-                        continue
-                    else:
-                        # 配对塞不进去，整组丢弃
-                        trimmed = i - 1  # 配对之前的消息都会被删
-                        i = 0
-                        break
-
-        # 普通消息：单独处理
-        if running + msg_tokens <= available:
-            kept.append(msg)
-            running += msg_tokens
-        else:
+    for unit in reversed(units):
+        unit_tokens = sum(_count_msg_tokens(message) for message in unit)
+        if running + unit_tokens > available:
             break
-        i -= 1
+        kept_units.append(unit)
+        running += unit_tokens
 
+    kept_units.reverse()
+    kept = [message for unit in kept_units for message in unit]
     trimmed = len(messages) - 1 - len(kept)
     if trimmed > 0:
         logger.warning(
@@ -110,7 +144,7 @@ def _trim_messages(messages: list[dict], max_tokens: int) -> list[dict]:
             trimmed, total, system_tokens + running,
         )
 
-    return [system_msg] + list(reversed(kept))
+    return [system_msg] + kept
 
 
 class ContextGuard:
