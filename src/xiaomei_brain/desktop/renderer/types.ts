@@ -20,6 +20,78 @@ export interface AgentEntry {
   localAgentId?: string;
 }
 
+export interface BrainMetric {
+  key: string;
+  label: string;
+  value: number;
+  description?: string;
+}
+
+export interface BrainBodySnapshot {
+  energy: number;
+  energy_description?: string;
+  mood_summary?: string;
+  emotions: BrainMetric[];
+  desires: BrainMetric[];
+  hormones: BrainMetric[];
+  somatic?: string;
+  contradictions?: string[];
+}
+
+export interface BrainActivitySnapshot {
+  id: string;
+  category: "work" | "cognition" | "sleep" | "communication";
+  kind: string;
+  title: string;
+  status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+  progress_summary?: string;
+  current_step?: string;
+  completed_steps?: number | null;
+  total_steps?: number | null;
+  pause_reason?: string;
+  result_summary?: string;
+  error_message?: string;
+  person_id?: string | null;
+  origin_session_id?: string;
+  created_at: number;
+  started_at?: number | null;
+  updated_at: number;
+  completed_at?: number | null;
+}
+
+export interface BrainIntentSnapshot {
+  id: string;
+  type: string;
+  content: string;
+  priority: number;
+  source: string;
+  scope_type: string;
+  person_id: string;
+  session_id: string;
+  trigger_time: number;
+  created_at: number;
+  status: "pending";
+}
+
+export interface BrainSnapshot {
+  revision: number;
+  observed_at: number;
+  living: {
+    living?: string;
+    living_since?: number;
+    focus?: string;
+    focus_summary?: string;
+    focus_since?: number;
+    last_intent?: { type?: string; summary?: string; actionable?: boolean; decided_at?: number } | null;
+  };
+  body: BrainBodySnapshot | null;
+  relationship?: Record<string, unknown> | null;
+  current_activity: BrainActivitySnapshot | null;
+  active_activities: BrainActivitySnapshot[];
+  pending_intents: BrainIntentSnapshot[];
+  recent_activities: BrainActivitySnapshot[];
+}
+
 export interface ChatAttachment {
   id: string;
   name: string;
@@ -720,6 +792,9 @@ export interface GatewayBridge {
   }): Promise<JsonRpcResponse>;
   getActivity(args: { agentId: string; activityId: string }): Promise<JsonRpcResponse>;
   getAgentState(args: { agentId: string }): Promise<JsonRpcResponse>;
+  getBrain(args: { agentId: string }): Promise<JsonRpcResponse>;
+  watchBrain(args: { agentId: string }): Promise<JsonRpcResponse>;
+  unwatchBrain(args: { agentId: string }): Promise<JsonRpcResponse>;
   getUsageSummary(args: { agentId: string; sessionId?: string; turnLimit?: number }): Promise<JsonRpcResponse>;
   listUsage(args: {
     agentId: string;

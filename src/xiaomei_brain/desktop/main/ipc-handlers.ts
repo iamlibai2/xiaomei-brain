@@ -1564,6 +1564,24 @@ export function registerIpcHandlers(
     return client.rpc("agent.state.get", {});
   });
 
+  ipcMain.handle("gateway:getBrain", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("brain.get", {});
+  });
+
+  ipcMain.handle("gateway:watchBrain", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("brain.watch", {});
+  });
+
+  ipcMain.handle("gateway:unwatchBrain", async (_event, args: { agentId: string }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("brain.unwatch", {});
+  });
+
   ipcMain.handle("gateway:getUsageSummary", async (_event, args: {
     agentId: string; sessionId?: string; turnLimit?: number;
   }) => {

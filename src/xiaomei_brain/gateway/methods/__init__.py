@@ -2,6 +2,7 @@
 
 from .activities import ActivityMethods
 from .agent_state import AgentStateMethods
+from .brain import BrainMethods
 from .attachments import AttachmentMethods
 from .artifacts import ArtifactMethods
 from .assignments import AssignmentMethods
@@ -30,6 +31,7 @@ from .workspaces import WorkspaceMethods
 __all__ = [
     "ActivityMethods",
     "AgentStateMethods",
+    "BrainMethods",
     "AttachmentMethods",
     "ArtifactMethods",
     "AssignmentMethods",

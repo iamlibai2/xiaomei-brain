@@ -312,3 +312,45 @@ class WSAdapter(ChannelAdapter):
                     self._conn_manager.send(conn_id, frame),
                     loop,
                 )
+
+    def send_connection_event(
+        self,
+        conn_id: str,
+        event: str,
+        payload: dict,
+        *,
+        timestamp: int = 0,
+    ) -> None:
+        """Send an observation event to one watching Desktop connection.
+
+        Most Gateway events are routed by conversation session.  Analysis
+        views are connection-scoped instead: opening a view on one Desktop
+        must not start a live feed on every Desktop signed in as the same
+        Person.  Keep a separate public sequence for that connection so the
+        renderer can still detect dropped or duplicated events.
+        """
+        if conn_id not in self._conn_manager.connections:
+            return
+        loop = self._loop
+        if loop is None:
+            logger.warning(
+                "[WSAdapter] Dropping connection event before loop is ready: event=%s",
+                event,
+            )
+            return
+        sequence_key = f"connection:{conn_id}"
+        session_id = self._conn_manager.get_session_id(conn_id) or sequence_key
+        with self._sequence_lock:
+            sequence = self._sequences.get(sequence_key, 0) + 1
+            self._sequences[sequence_key] = sequence
+        frame = build_event(
+            event,
+            payload,
+            session_id=session_id,
+            sequence=sequence,
+            timestamp=timestamp or int(time.time() * 1000),
+        )
+        asyncio.run_coroutine_threadsafe(
+            self._conn_manager.send(conn_id, frame),
+            loop,
+        )

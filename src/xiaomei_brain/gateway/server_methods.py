@@ -11,6 +11,7 @@ from .method_registry import MethodRegistry
 from .methods import (
     ActivityMethods,
     AgentStateMethods,
+    BrainMethods,
     AttachmentMethods,
     ArtifactMethods,
     AssignmentMethods,
@@ -92,6 +93,7 @@ class MethodRouter:
             living,
             self._identity_contexts,
         )
+        self._brain_methods = BrainMethods(living, self._identity_contexts)
         self._search_methods = SearchMethods(living, self._identity_contexts)
         self._channel_methods = ChannelMethods(living, self._identity_contexts)
 
@@ -127,6 +129,7 @@ class MethodRouter:
             self._project_methods,
             self._workspace_methods,
             self._agent_state_methods,
+            self._brain_methods,
             self._search_methods,
             self._channel_methods,
         ):
@@ -240,6 +243,7 @@ class MethodRouter:
             "workspace.events": {"workspace.get"},
             "memory.read": {"memory.list"},
             "agent.state": {"agent.state.get"},
+            "brain.read": {"brain.get", "brain.watch", "brain.unwatch"},
             "usage.read": {"usage.summary", "usage.list"},
             "model.trace.read": {"model.trace.list", "model.trace.get"},
             "model.trace.manage": {"model.trace.clear"},
@@ -325,6 +329,7 @@ class MethodRouter:
 
     def drop_session(self, conn_id: str) -> None:
         """断开连接时清除认证状态。"""
+        self._brain_methods.drop_connection(conn_id)
         self._embodiment_methods.drop_connection(conn_id)
         self._connected_sessions.discard(conn_id)
         self._auth_sessions.discard(conn_id)

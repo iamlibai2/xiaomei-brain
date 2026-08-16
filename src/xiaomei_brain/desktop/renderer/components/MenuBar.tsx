@@ -90,6 +90,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
             action: () => window.dispatchEvent(new CustomEvent("xiaomei:vector-trace-open")),
             disabled: !activeAgent,
           },
+          {
+            label: t("menu.brain"),
+            action: () => window.dispatchEvent(new CustomEvent("xiaomei:brain-open")),
+            disabled: !activeAgent,
+          },
         ],
       },
       { separator: true, label: "" },

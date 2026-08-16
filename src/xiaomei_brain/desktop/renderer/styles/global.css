@@ -110,6 +110,16 @@ body {
   background: var(--ui-bg-primary);
 }
 
+.main-shell.has-analysis-panel.has-brain-panel .main-shell-content > .main-content {
+  flex-basis: 50%;
+  width: 50%;
+}
+
+.model-context-dock.brain-dock {
+  width: 50%;
+  flex-basis: 50%;
+}
+
 /* ─── 平台分支 ─── */
 /* MenuBar 在 React app 内部，#root 不需要让位 */
 /* 窗口控件通过 menubar-spacer (flex:1) 自然靠右，无需额外 padding */

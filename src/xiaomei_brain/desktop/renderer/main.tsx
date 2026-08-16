@@ -16,6 +16,7 @@ import "./styles/execution-analysis.css";
 import "./styles/prompt-analysis.css";
 import "./styles/vector-trace.css";
 import "./styles/context-control.css";
+import "./styles/brain.css";
 import "./styles/sidebar.css";
 import "./styles/home.css";
 import "./styles/terminal.css";
