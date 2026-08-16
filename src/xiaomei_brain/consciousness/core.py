@@ -925,8 +925,8 @@ class Consciousness:
         """兼容旧调用；新调度使用 ``_intent_trigger_context`` 获取原因。"""
         return self._intent_trigger_context(agent_state) is not None
 
-    def _should_emerge(self, agent_state: str = "awake") -> bool:
-        """判断是否应做意识涌现（"我此刻怎样"）。
+    def _emergence_trigger_context(self, agent_state: str = "awake") -> str | None:
+        """返回意识涌现的真实触发原因，未触发时返回 ``None``。
 
         触发条件：
         - 定期节奏（内在节律，主要机制）
@@ -934,28 +934,36 @@ class Consciousness:
 
         欲望不驱动涌现——饿了不会让人写日记。
         """
+        if not getattr(self._cc, "l2_emergence_enabled", True):
+            return None
+
         si = self.self_image
         elapsed = time.time() - self._last_emerge_time
 
         # SLEEPING/DREAMING 中不做意识涌现
         if agent_state in ("sleeping", "dreaming", "working"):
-            return False
+            return None
 
-        if si.body.energy < 0.2:
-            return False
+        if si.body.energy < self._cc.l2_emergence_energy_threshold:
+            return None
 
         if elapsed < self._cc.l2_emergence_cooldown:
-            return False
+            return None
 
-        # 定期节奏
-        if elapsed > self._cc.l2_emergence_interval:
-            return True
+        # 有意义状态变化优先于定期兜底，便于日志和后续观察真实原因。
+        if self._state_buffer.should_trigger_l2(
+            self._cc.l2_emergence_changes_trigger
+        ):
+            return "state_changes"
 
-        # 状态变化积累够多
-        if self._state_buffer.should_trigger_l2():
-            return True
+        if elapsed >= self._cc.l2_emergence_interval:
+            return "periodic"
 
-        return False
+        return None
+
+    def _should_emerge(self, agent_state: str = "awake") -> bool:
+        """兼容旧调用；新调度使用触发原因。"""
+        return self._emergence_trigger_context(agent_state) is not None
 
     def _should_social_cognition(self, agent_state: str = "awake") -> bool:
         """判断是否应触发 social_cognition（对话后社会感知）。
@@ -1038,7 +1046,9 @@ class Consciousness:
 
         if si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             return "user_idle_long"
-        if agent_state == "sleeping" and self._state_buffer.should_trigger_l2():
+        if agent_state == "sleeping" and self._state_buffer.should_trigger_l2(
+            self._cc.l2_emergence_changes_trigger
+        ):
             return "accumulated_changes"
         if elapsed_since_last > self._cc.l2_periodic_interval:
             return "periodic"

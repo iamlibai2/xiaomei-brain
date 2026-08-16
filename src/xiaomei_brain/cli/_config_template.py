@@ -86,7 +86,6 @@ consciousness:
   l2_check_interval:    10.0    # L2 检查间隔（秒）
   l2_intent_enabled:    true    # 允许形成自主意图
   l2_idle_trigger:      60.0   # L2 空闲触发（用户空闲秒数）
-  l2_changes_trigger:   10     # L2 累积变化触发（条数）
   l2_cooldown:          300.0   # L2 冷却时间（秒）
   l2_periodic_interval: 1800.0  # L2 定期触发（秒）
   l2_desire_thresholds:
@@ -94,6 +93,11 @@ consciousness:
     cognition:  0.6
     achievement: 0.5
     expression: 0.6
+  l2_emergence_enabled: true
+  l2_emergence_cooldown: 600.0
+  l2_emergence_interval: 1800.0
+  l2_emergence_changes_trigger: 5
+  l2_emergence_energy_threshold: 0.2
   sleep_to_dream_threshold:    300.0   # 入梦触发（睡眠秒数→入梦）
   dream_report_enabled: true
   l3_cooldown:          1800.0  # L3 深度沉思冷却（秒）

@@ -21,6 +21,11 @@ type RhythmValues = {
   intent_cognition_threshold_percent: number;
   intent_achievement_threshold_percent: number;
   intent_expression_threshold_percent: number;
+  emergence_enabled: boolean;
+  emergence_min_interval_minutes: number;
+  emergence_periodic_interval_minutes: number;
+  emergence_changes_trigger: number;
+  emergence_energy_threshold_percent: number;
 };
 
 type RhythmResult = {
@@ -43,6 +48,11 @@ const DEFAULT_VALUES: RhythmValues = {
   intent_cognition_threshold_percent: 60,
   intent_achievement_threshold_percent: 50,
   intent_expression_threshold_percent: 60,
+  emergence_enabled: true,
+  emergence_min_interval_minutes: 10,
+  emergence_periodic_interval_minutes: 30,
+  emergence_changes_trigger: 5,
+  emergence_energy_threshold_percent: 20,
 };
 
 export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
@@ -292,6 +302,70 @@ export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
               label={t("rhythmSettingsUi.expression")}
               value={draft.intent_expression_threshold_percent}
               onChange={(value) => updateNumber("intent_expression_threshold_percent", value)}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-heading">
+          <div>
+            <h3>{t("rhythmSettingsUi.emergenceTitle")}</h3>
+            <p>{t("rhythmSettingsUi.emergenceHint")}</p>
+          </div>
+        </div>
+        <SwitchRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.emergenceEnabled")}
+          description={t("rhythmSettingsUi.emergenceEnabledHint")}
+          checked={draft.emergence_enabled}
+          onChange={(value) => updateBoolean("emergence_enabled", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.emergenceMinInterval")}
+          description={t("rhythmSettingsUi.emergenceMinIntervalHint")}
+          value={draft.emergence_min_interval_minutes}
+          unit={t("rhythmSettingsUi.minutes")}
+          min={0.5}
+          max={1440}
+          onChange={(value) => updateNumber("emergence_min_interval_minutes", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.emergencePeriodic")}
+          description={t("rhythmSettingsUi.emergencePeriodicHint", {
+            minutes: Math.max(
+              draft.emergence_min_interval_minutes,
+              draft.emergence_periodic_interval_minutes,
+            ),
+          })}
+          value={draft.emergence_periodic_interval_minutes}
+          unit={t("rhythmSettingsUi.minutes")}
+          min={1}
+          max={10080}
+          onChange={(value) => updateNumber("emergence_periodic_interval_minutes", value)}
+        />
+        <DurationRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.emergenceChanges")}
+          description={t("rhythmSettingsUi.emergenceChangesHint")}
+          value={draft.emergence_changes_trigger}
+          unit={t("rhythmSettingsUi.items")}
+          min={1}
+          max={30}
+          onChange={(value) => updateNumber("emergence_changes_trigger", value)}
+        />
+        <div className="rhythm-thresholds">
+          <div className="rhythm-thresholds-heading">
+            <strong>{t("rhythmSettingsUi.emergenceEnergy")}</strong>
+            <p>{t("rhythmSettingsUi.emergenceEnergyHint")}</p>
+          </div>
+          <div className="rhythm-threshold-grid">
+            <ThresholdRow
+              label={t("rhythmSettingsUi.energy")}
+              value={draft.emergence_energy_threshold_percent}
+              onChange={(value) => updateNumber("emergence_energy_threshold_percent", value)}
             />
           </div>
         </div>

@@ -18,7 +18,6 @@ class ConsciousnessConfig:
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
     l2_intent_enabled: bool = True      # 是否允许 L2 形成自主意图
     l2_idle_trigger: float = 300.0    # L2 空闲触发（用户空闲秒数）
-    l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
     l2_cooldown: float = 300.0         # L2 冷却时间（秒）
     l2_periodic_interval: float = 1800.0  # L2 意图决策定期兜底（秒）
     l2_desire_thresholds: dict = field(default_factory=lambda: {
@@ -27,8 +26,11 @@ class ConsciousnessConfig:
         "achievement": 0.5,
         "expression": 0.6,
     })                                 # L2 意图决策欲望驱动阈值
-    l2_emergence_interval: float = 1800.0   # 意识涌现定期间隔（秒）
-    l2_emergence_cooldown: float = 600.0    # 意识涌现冷却（秒）
+    l2_emergence_enabled: bool = True       # 是否允许形成内心独白
+    l2_emergence_cooldown: float = 600.0    # 两次意识涌现调用的最短间隔（秒）
+    l2_emergence_interval: float = 1800.0   # 无明显变化时的定期兜底（秒）
+    l2_emergence_changes_trigger: int = 5   # 有意义状态变化触发阈值（条数）
+    l2_emergence_energy_threshold: float = 0.2  # 意识涌现最低能量
     sleep_to_dream_threshold: float = 300.0  # 入梦触发（SLEEPING 持续秒数→入梦信号）
     l3_cooldown: float = 1800.0       # L3 沉思冷却（秒）
     l4_cooldown: float = 14400.0       # L4 深度联想冷却（秒，默认 4 小时）

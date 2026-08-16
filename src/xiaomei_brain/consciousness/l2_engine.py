@@ -261,7 +261,6 @@ class L2Engine:
                         print_markdown(display_text, style="color(144)")
 
                 # 清空累积变化
-                c._state_buffer.clear()
                 c.history.last_llm_fuel_time = time.time()
 
                 # 清空 PACE 反射缓冲
@@ -402,7 +401,6 @@ class L2Engine:
     def tick_emergence(self, context: str) -> str:
         """只做内心独白，不跑意图决策。用于 periodic 等需要自我表达的场景。"""
         c = self._c
-        c._last_emerge_time = time.time()
         c._refresh_memory_window()
 
         drive_snapshot = {}
@@ -481,6 +479,10 @@ class L2Engine:
                     logger.info("[Consciousness L2] 已消费 %d 条 PACE 反射", consumed)
             except Exception as e:
                 logger.warning("[Consciousness L2] 内心独白失败: %s", e)
+            finally:
+                # 一次 LLM 调用就是一次完整的涌现尝试。无论正文为空还是调用
+                # 失败，都消费本轮素材，不用相同状态在下个 cooldown 后重试。
+                c._state_buffer.clear()
 
         # 后处理
         self._store_emergence(emergence_text)
@@ -854,8 +856,8 @@ class L2Engine:
             excluded_tool_names=exclude_tools,
             reasoning_collector=all_reasoning,
             final_instruction=(
-                "请基于以上探索，输出你的内心独白。不要调用工具。"
-                + L2_EMERGENCE_FORMAT_APPENDIX
+                "请基于以上探索，按用户消息中已经给出的格式输出你的内心独白。"
+                "不要调用工具。允许内心独白正文为空。"
             ),
         )
         return content, all_reasoning

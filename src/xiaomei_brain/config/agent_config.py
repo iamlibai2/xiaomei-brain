@@ -356,13 +356,17 @@ def _build_living_config(data: dict):
             l1_threshold=cc.get("l1_threshold", 60),
             l2_intent_enabled=cc.get("l2_intent_enabled", True),
             l2_idle_trigger=cc.get("l2_idle_trigger", 300.0),
-            l2_changes_trigger=cc.get("l2_changes_trigger", 10),
             l2_cooldown=cc.get("l2_cooldown", 300.0),
             l2_periodic_interval=cc.get("l2_periodic_interval", 1800.0),
             l2_desire_thresholds={
                 **ConsciousnessConfig().l2_desire_thresholds,
                 **(cc.get("l2_desire_thresholds", {}) or {}),
             },
+            l2_emergence_enabled=cc.get("l2_emergence_enabled", True),
+            l2_emergence_cooldown=cc.get("l2_emergence_cooldown", 600.0),
+            l2_emergence_interval=cc.get("l2_emergence_interval", 1800.0),
+            l2_emergence_changes_trigger=cc.get("l2_emergence_changes_trigger", 5),
+            l2_emergence_energy_threshold=cc.get("l2_emergence_energy_threshold", 0.2),
             sleep_to_dream_threshold=cc.get("sleep_to_dream_threshold", cc.get("l3_dream_interval", 300.0)),
             l3_cooldown=cc.get("l3_cooldown", 1800.0),
             l2_check_interval=cc.get("l2_check_interval", 10.0),
@@ -644,7 +648,6 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"  l2_check_interval:    {consciousness.get('l2_check_interval', 10.0)}    # L2 检查间隔（秒）")
     _w(f"  l2_intent_enabled:    {str(consciousness.get('l2_intent_enabled', True)).lower()}  # 允许形成自主意图")
     _w(f"  l2_idle_trigger:      {consciousness.get('l2_idle_trigger', 300.0)}   # L2 空闲触发（用户空闲秒数）")
-    _w(f"  l2_changes_trigger:   {consciousness.get('l2_changes_trigger', 10)}     # L2 累积变化触发（条数）")
     _w(f"  l2_cooldown:          {consciousness.get('l2_cooldown', 300.0)}   # L2 冷却时间（秒）")
     _w(f"  l2_periodic_interval: {consciousness.get('l2_periodic_interval', 1800.0)}  # L2 定期触发（秒）")
     desire_thresholds = consciousness.get('l2_desire_thresholds', {}) or {}
@@ -653,6 +656,11 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"    cognition:  {desire_thresholds.get('cognition', 0.6)}")
     _w(f"    achievement: {desire_thresholds.get('achievement', 0.5)}")
     _w(f"    expression: {desire_thresholds.get('expression', 0.6)}")
+    _w(f"  l2_emergence_enabled: {str(consciousness.get('l2_emergence_enabled', True)).lower()}  # 允许形成内心独白")
+    _w(f"  l2_emergence_cooldown: {consciousness.get('l2_emergence_cooldown', 600.0)}  # 意识涌现冷却（秒）")
+    _w(f"  l2_emergence_interval: {consciousness.get('l2_emergence_interval', 1800.0)}  # 意识涌现定期兜底（秒）")
+    _w(f"  l2_emergence_changes_trigger: {consciousness.get('l2_emergence_changes_trigger', 5)}  # 有意义变化触发（条数）")
+    _w(f"  l2_emergence_energy_threshold: {consciousness.get('l2_emergence_energy_threshold', 0.2)}  # 最低能量")
     _w(f"  sleep_to_dream_threshold: {consciousness.get('sleep_to_dream_threshold', consciousness.get('l3_dream_interval', 300.0))}   # 入梦触发（睡眠秒数→入梦）")
     _w(f"  dream_report_enabled: {str(consciousness.get('dream_report_enabled', True)).lower()}  # 醒来时使用最近梦境报告")
     _w(f"  l3_cooldown:          {consciousness.get('l3_cooldown', 1800.0)}  # L3 沉思冷却（秒）")

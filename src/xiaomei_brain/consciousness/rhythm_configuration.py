@@ -28,6 +28,11 @@ class RhythmConfigurationSection:
         "intent_cognition_threshold_percent": 60.0,
         "intent_achievement_threshold_percent": 50.0,
         "intent_expression_threshold_percent": 60.0,
+        "emergence_enabled": True,
+        "emergence_min_interval_minutes": 10.0,
+        "emergence_periodic_interval_minutes": 30.0,
+        "emergence_changes_trigger": 5.0,
+        "emergence_energy_threshold_percent": 20.0,
     }
 
     _RANGES: dict[str, tuple[float, float]] = {
@@ -42,6 +47,10 @@ class RhythmConfigurationSection:
         "intent_cognition_threshold_percent": (0.0, 100.0),
         "intent_achievement_threshold_percent": (0.0, 100.0),
         "intent_expression_threshold_percent": (0.0, 100.0),
+        "emergence_min_interval_minutes": (0.5, 1440.0),
+        "emergence_periodic_interval_minutes": (1.0, 10080.0),
+        "emergence_changes_trigger": (1.0, 30.0),
+        "emergence_energy_threshold_percent": (0.0, 100.0),
     }
 
     def __init__(self, living: Any, brain_path: str | Path) -> None:
@@ -147,8 +156,34 @@ class RhythmConfigurationSection:
                 "consciousness.l2_desire_thresholds.expression",
                 float(self._DEFAULTS["intent_expression_threshold_percent"]),
             ),
+            "emergence_enabled": boolean(
+                "consciousness.l2_emergence_enabled",
+                bool(self._DEFAULTS["emergence_enabled"]),
+            ),
+            "emergence_min_interval_minutes": seconds(
+                "consciousness.l2_emergence_cooldown",
+                float(self._DEFAULTS["emergence_min_interval_minutes"]),
+            ),
+            "emergence_periodic_interval_minutes": seconds(
+                "consciousness.l2_emergence_interval",
+                float(self._DEFAULTS["emergence_periodic_interval_minutes"]),
+            ),
+            "emergence_changes_trigger": self._number(
+                "consciousness.l2_emergence_changes_trigger",
+                float(self._DEFAULTS["emergence_changes_trigger"]),
+            ),
+            "emergence_energy_threshold_percent": percent(
+                "consciousness.l2_emergence_energy_threshold",
+                float(self._DEFAULTS["emergence_energy_threshold_percent"]),
+            ),
         }
         return self._normalize(values, self._DEFAULTS)
+
+    def _number(self, path: str, default: float) -> float:
+        value = self._provider.get(path)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return default
+        return float(value)
 
     def _normalize(
         self,
@@ -172,7 +207,7 @@ class RhythmConfigurationSection:
                 minimum, maximum = self._RANGES[key]
                 if not minimum <= value <= maximum:
                     raise ConfigError(
-                        f"{key} must be between {minimum:g} and {maximum:g} minutes"
+                        f"{key} must be between {minimum:g} and {maximum:g}"
                     )
             result[key] = value
 
@@ -199,6 +234,11 @@ class RhythmConfigurationSection:
                     "achievement": float(values["intent_achievement_threshold_percent"]) / 100.0,
                     "expression": float(values["intent_expression_threshold_percent"]) / 100.0,
                 },
+                "l2_emergence_enabled": bool(values["emergence_enabled"]),
+                "l2_emergence_cooldown": float(values["emergence_min_interval_minutes"]) * 60.0,
+                "l2_emergence_interval": float(values["emergence_periodic_interval_minutes"]) * 60.0,
+                "l2_emergence_changes_trigger": int(values["emergence_changes_trigger"]),
+                "l2_emergence_energy_threshold": float(values["emergence_energy_threshold_percent"]) / 100.0,
             }
         }
 
@@ -230,6 +270,11 @@ class RhythmConfigurationSection:
             "achievement": float(values["intent_achievement_threshold_percent"]) / 100.0,
             "expression": float(values["intent_expression_threshold_percent"]) / 100.0,
         }
+        config.consciousness.l2_emergence_enabled = bool(values["emergence_enabled"])
+        config.consciousness.l2_emergence_cooldown = float(values["emergence_min_interval_minutes"]) * 60.0
+        config.consciousness.l2_emergence_interval = float(values["emergence_periodic_interval_minutes"]) * 60.0
+        config.consciousness.l2_emergence_changes_trigger = int(values["emergence_changes_trigger"])
+        config.consciousness.l2_emergence_energy_threshold = float(values["emergence_energy_threshold_percent"]) / 100.0
 
         # Living copies lifecycle thresholds during construction, so update the
         # live values as well. Consciousness and Rules retain references to the
@@ -249,6 +294,11 @@ class RhythmConfigurationSection:
             consciousness_config.l2_desire_thresholds = dict(
                 config.consciousness.l2_desire_thresholds
             )
+            consciousness_config.l2_emergence_enabled = bool(values["emergence_enabled"])
+            consciousness_config.l2_emergence_cooldown = float(values["emergence_min_interval_minutes"]) * 60.0
+            consciousness_config.l2_emergence_interval = float(values["emergence_periodic_interval_minutes"]) * 60.0
+            consciousness_config.l2_emergence_changes_trigger = int(values["emergence_changes_trigger"])
+            consciousness_config.l2_emergence_energy_threshold = float(values["emergence_energy_threshold_percent"]) / 100.0
 
     def _payload(self, values: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -30,7 +30,6 @@ class StateChangeBuffer:
 
     # 阈值配置
     L3_TRIGGER_COUNT: int = 15       # 累积超过此数量触发 L3
-    L2_CHANGES_TRIGGER: int = 5      # sleeping 时累积超过此数量触发 L2
     MAX_SIZE: int = 30               # 最多保留条数
 
     # diff 阈值
@@ -112,9 +111,21 @@ class StateChangeBuffer:
         """累积变化是否足够触发 L3 沉思。"""
         return len(self._changes) > self.L3_TRIGGER_COUNT
 
-    def should_trigger_l2(self) -> bool:
-        """sleeping 状态下累积变化是否足够触发 L2。"""
-        return len(self._changes) > self.L2_CHANGES_TRIGGER
+    def meaningful_count(self) -> int:
+        """返回可作为认知素材的变化数量。
+
+        ``time_elapsed`` 只是心跳自然推进，不应单独触发意识涌现；同一条记录
+        如果还包含状态、能量、记忆或目标变化，仍然属于有效素材。
+        """
+        return sum(
+            1
+            for item in self._changes
+            if any(key != "time_elapsed" for key in item.get("changes", {}))
+        )
+
+    def should_trigger_l2(self, threshold: int = 5) -> bool:
+        """有意义的累积变化是否达到意识涌现阈值。"""
+        return self.meaningful_count() >= max(1, int(threshold))
 
     # ── 消费（L2/L3 处理后）────────────────────────────
 

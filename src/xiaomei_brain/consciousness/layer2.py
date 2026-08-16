@@ -231,13 +231,21 @@ class Layer2DefaultNetwork:
                             self._observe_state("", "", intent)
 
                     # L2 意识涌现（"我此刻怎样"——内在节律 + 素材驱动）
-                    if self._c._should_emerge(agent_state):
-                        self._log(f"{ts} L2 意识涌现触发 agent_state={agent_state}")
-                        logger.info("[Layer2] L2 意识涌现（agent_state=%s）", agent_state)
+                    emergence_context = self._c._emergence_trigger_context(agent_state)
+                    if emergence_context:
+                        self._log(
+                            f"{ts} L2 意识涌现触发 "
+                            f"agent_state={agent_state} ctx={emergence_context}"
+                        )
+                        logger.info(
+                            "[Layer2] L2 意识涌现（agent_state=%s, ctx=%s）",
+                            agent_state,
+                            emergence_context,
+                        )
                         self._c._last_emerge_time = time.time()
                         self._observe_state("inner_reflection", "正在整理内在感受")
                         try:
-                            self._c.tick_L2_emergence(agent_state)
+                            self._c.tick_L2_emergence(emergence_context)
                             self._display_internal()
                             self._log(f"{ts} L2 tick_L2_emergence 完成")
                         except Exception as e:
