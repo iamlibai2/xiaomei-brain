@@ -222,6 +222,10 @@ class Living:
         # 消息队列。
         self._queue: queue.Queue[LivingMessage | None] = queue.Queue()
         self._last_active: float = 0
+        # ``idle_threshold`` is the time spent in IDLE before the automatic
+        # sleep fallback.  It deliberately does not reuse ``_last_active``:
+        # AWAKE -> IDLE and IDLE -> SLEEPING are two distinct life stages.
+        self._idle_started_at: float = 0.0
         self._running: bool = False
         self._cancel_requested: bool = False
         self._chatting = False
@@ -641,10 +645,30 @@ class Living:
 
     def _transition(self, new_state: LivingState) -> None:
         old = self.state
+        if old != new_state:
+            if new_state == LivingState.IDLE:
+                self._idle_started_at = time.time()
+            elif old == LivingState.IDLE:
+                self._idle_started_at = 0.0
         self.state = new_state
         if old != new_state:
             logger.info("[Living] 状态转换: %s -> %s", old.value, new_state.value)
         self._on_transition(old, new_state)
+
+    def _idle_duration(self) -> float:
+        """Return time spent in the current IDLE stage."""
+        if self.state != LivingState.IDLE:
+            return 0.0
+        if self._idle_started_at <= 0:
+            # Defensive fallback for restored/test states that did not enter
+            # IDLE through ``_transition``.
+            self._idle_started_at = time.time()
+            return 0.0
+        return max(0.0, time.time() - self._idle_started_at)
+
+    def _automatic_sleep_due(self) -> bool:
+        """Whether the deterministic IDLE -> SLEEPING fallback is due."""
+        return self._idle_duration() >= self.idle_threshold
 
     #---------------------------------------------------------------------------
     #   Prompt
@@ -697,11 +721,7 @@ class Living:
             return
 
         idle_time = time.time() - self._last_active
-        if idle_time >= self.idle_threshold:
-            logger.info("[Living/AWAKE] 空闲 %.1f秒 >= %.1f，进入 SLEEPING",
-                        idle_time, self.idle_threshold)
-            self._transition(LivingState.SLEEPING)
-        elif idle_time >= self.idle_short:
+        if idle_time >= self.idle_short:
             logger.info("[Living/AWAKE] 空闲 %.1f秒 >= %.1f，进入 IDLE",
                         idle_time, self.idle_short)
             self._transition(LivingState.IDLE)
@@ -729,10 +749,10 @@ class Living:
                 self._last_active = time.time()
                 return
 
-            idle_time = time.time() - self._last_active
-            if idle_time >= self.idle_threshold:
-                logger.info("[Living/IDLE] 空闲 %.1f秒 >= %.1f，进入 SLEEPING",
-                            idle_time, self.idle_threshold)
+            idle_duration = self._idle_duration()
+            if self._automatic_sleep_due():
+                logger.info("[Living/IDLE] 进入空闲 %.1f秒 >= %.1f，进入 SLEEPING",
+                            idle_duration, self.idle_threshold)
                 self._transition(LivingState.SLEEPING)
                 return
 

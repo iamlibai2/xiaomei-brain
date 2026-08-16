@@ -13,6 +13,12 @@ from xiaomei_brain.base.config_service import (
 from xiaomei_brain.consciousness.context_configuration import (
     ContextConfigurationSection,
 )
+from xiaomei_brain.consciousness.conversation_configuration import (
+    ConversationConfigurationSection,
+)
+from xiaomei_brain.consciousness.rhythm_configuration import (
+    RhythmConfigurationSection,
+)
 
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import ConfigGetParams, ConfigResetParams, ConfigUpdateParams, format_error
@@ -77,6 +83,18 @@ class ConfigMethods:
             service = ConfigService()
             service.register(
                 ContextConfigurationSection(
+                    self._living,
+                    self._agent_dir() / "brain.yaml",
+                )
+            )
+            service.register(
+                RhythmConfigurationSection(
+                    self._living,
+                    self._agent_dir() / "brain.yaml",
+                )
+            )
+            service.register(
+                ConversationConfigurationSection(
                     self._living,
                     self._agent_dir() / "brain.yaml",
                 )

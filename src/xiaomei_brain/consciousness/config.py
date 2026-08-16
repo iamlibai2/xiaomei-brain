@@ -16,6 +16,7 @@ class ConsciousnessConfig:
     """意识系统 L0-L3 参数"""
     l0_interval: float = 1.0          # L0 感知心跳间隔（秒）
     l1_threshold: int = 60             # L1 触发阈值（累积 L0 次数）
+    l2_intent_enabled: bool = True      # 是否允许 L2 形成自主意图
     l2_idle_trigger: float = 300.0    # L2 空闲触发（用户空闲秒数）
     l2_changes_trigger: int = 10       # L2 累积变化触发（条数）
     l2_cooldown: float = 300.0         # L2 冷却时间（秒）
@@ -52,8 +53,8 @@ class LivingParams:
     tick_interval: float = 1.0         # 心跳间隔（秒）
     surge_interval: float = 60.0       # 涌动间隔（秒）
     idle_short: float = 300.0         # 短空闲阈值（秒）→ IDLE
-    idle_threshold: float = 10800.0    # 长空闲阈值（秒）→ SLEEPING
-    dream_interval: float = 3000.0      # 梦境间隔（秒）
+    idle_threshold: float = 10800.0    # 进入 IDLE 后等待多久自动进入 SLEEPING（秒）
+    dream_interval: float = 3000.0     # 梦境分段处理间隔（秒，当前保留供后续多段梦境使用）
     max_context_tokens: int = 50000    # 上下文最大 token 数
     daily_token_budget: int = 0       # 每日 token 预算，0=不限制
     monthly_token_budget: int = 0     # 月度 token 预算，0=不限制

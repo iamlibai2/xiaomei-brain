@@ -6,6 +6,9 @@ import { IdentitySettingsDialog } from "../IdentitySettingsDialog";
 import { Button, Icon, type IconName } from "../ui";
 import { AgentManagementPanel } from "./AgentManagementPanel";
 import { AgentOverviewPanel } from "./AgentOverviewPanel";
+import { AgentRhythmSettingsPanel } from "./AgentRhythmSettingsPanel";
+import { ConversationUsageSettingsPanel } from "./ConversationUsageSettingsPanel";
+import { ContextControlPanel } from "../ContextControlPanel";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { CapabilitySettingsPanel } from "./CapabilitySettingsPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
@@ -35,6 +38,9 @@ const AGENT_NAVIGATION: Array<{
   icon: IconName;
 }> = [
   { id: "overview", labelKey: "settings.overview.label", descriptionKey: "settings.overview.description", icon: "info" },
+  { id: "rhythm", labelKey: "settings.rhythm.label", descriptionKey: "settings.rhythm.description", icon: "clock" },
+  { id: "conversation", labelKey: "settings.conversation.label", descriptionKey: "settings.conversation.description", icon: "chart-bar" },
+  { id: "context", labelKey: "settings.context.label", descriptionKey: "settings.context.description", icon: "file-text" },
   { id: "capabilities", labelKey: "settings.capabilities.label", descriptionKey: "settings.capabilities.description", icon: "file-text" },
   { id: "models", labelKey: "settings.models.label", descriptionKey: "settings.models.description", icon: "sparkles" },
   { id: "media", labelKey: "settings.media.label", descriptionKey: "settings.media.description", icon: "image" },
@@ -43,7 +49,7 @@ const AGENT_NAVIGATION: Array<{
   { id: "channels", labelKey: "settings.channels.label", descriptionKey: "settings.channels.description", icon: "bell" },
 ];
 
-const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "capabilities", "models", "media", "search", "execution", "channels"]);
+const AGENT_SECTIONS = new Set<SettingsSection>(["overview", "rhythm", "conversation", "context", "capabilities", "models", "media", "search", "execution", "channels"]);
 
 export function SettingsCenter() {
   const { t, i18n } = useTranslation();
@@ -240,6 +246,23 @@ export function SettingsCenter() {
             )}
             {section === "models" && settingsAgent && (
               <ModelSettingsPanel agentId={settingsAgent.id} connected={connected} />
+            )}
+            {section === "rhythm" && settingsAgent && (
+              <AgentRhythmSettingsPanel
+                agentId={settingsAgent.id}
+                connected={connected}
+              />
+            )}
+            {section === "conversation" && settingsAgent && (
+              <ConversationUsageSettingsPanel agentId={settingsAgent.id} connected={connected} />
+            )}
+            {section === "context" && settingsAgent && (
+              <ContextControlPanel
+                agentId={settingsAgent.id}
+                agentName={settingsAgent.name}
+                connected={connected}
+                embedded
+              />
             )}
             {section === "capabilities" && settingsAgent && (
               <CapabilitySettingsPanel

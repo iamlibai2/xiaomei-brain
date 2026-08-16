@@ -50,3 +50,27 @@ def test_transient_workspace_path_failure_is_not_stored_as_memory():
     assert ids == []
     assert content_to_id == {}
     extractor.ltm.store.assert_not_called()
+
+
+def test_numeric_relation_indexes_are_ignored_without_breaking_memory_formation():
+    extractor = object.__new__(MemoryExtractor)
+    extractor.ltm = MagicMock()
+
+    extractor._execute_json_relation(
+        {"from": 0, "to": 1, "type": "contrast"},
+        {"已经形成的短期记忆": 42},
+        "test_user",
+    )
+
+    extractor.ltm.recall.assert_not_called()
+    extractor.ltm.add_relation.assert_not_called()
+
+
+def test_non_object_relation_is_ignored():
+    extractor = object.__new__(MemoryExtractor)
+    extractor.ltm = MagicMock()
+
+    extractor._execute_json_relation("invalid", {}, "test_user")
+
+    extractor.ltm.recall.assert_not_called()
+    extractor.ltm.add_relation.assert_not_called()

@@ -84,12 +84,20 @@ consciousness:
   l1_threshold:         60      # L1 异常检测触发（累积 L0 次数）
   l1_anomaly_enabled:   false  # L1 异常检测开关
   l2_check_interval:    10.0    # L2 检查间隔（秒）
+  l2_intent_enabled:    true    # 允许形成自主意图
   l2_idle_trigger:      60.0   # L2 空闲触发（用户空闲秒数）
   l2_changes_trigger:   10     # L2 累积变化触发（条数）
   l2_cooldown:          300.0   # L2 冷却时间（秒）
   l2_periodic_interval: 1800.0  # L2 定期触发（秒）
+  l2_desire_thresholds:
+    belonging:  0.6
+    cognition:  0.6
+    achievement: 0.5
+    expression: 0.6
   sleep_to_dream_threshold:    300.0   # 入梦触发（睡眠秒数→入梦）
+  dream_report_enabled: true
   l3_cooldown:          1800.0  # L3 深度沉思冷却（秒）
+  sc_interval:          3600.0  # 社会认知定期间隔（秒）
   energy_low_threshold: 0.1    # 能量极低阈值（低于→flow 最小上下文）
   energy_silent_threshold: 0.15  # 能量沉寂阈值（低于→禁止主动行为）
   # ── 生命周期参数 ────────────────────────────────────────
@@ -97,8 +105,8 @@ consciousness:
     tick_interval:      1.0     # 心跳间隔（秒）
     surge_interval:     60.0    # 涌动间隔（秒）
     idle_short:         60.0   # 短空闲阈值（秒）→ IDLE
-    idle_threshold:     10800.0  # 长空闲阈值（秒）→ SLEEPING
-    dream_interval:     3000.0   # 梦境间隔（秒）
+    idle_threshold:     10800.0  # 进入 IDLE 后自动睡眠的等待时间（秒）
+    dream_interval:     3000.0   # 梦境分段处理间隔（秒）
     max_context_tokens: 50000  # 上下文最大 token 数
     daily_token_budget: 0      # 每日 token 预算（0=不限制）
     monthly_token_budget: 0    # 月度 token 预算（0=不限制）
@@ -122,6 +130,8 @@ consciousness:
     desire_achievement_cooldown: 3600.0  # 欲望成就冷却
     desire_express_cooldown:  3600.0  # 欲望表达冷却
     desire_talk_to_agent_cooldown: 60.0  # Agent 间聊天冷却
+    learn_enabled: true
+    pleasure_enabled: true
   # ── 上下文组装参数 ──────────────────────────────────────
   context:
     fresh_tail_count:      40   # daily 模式新鲜消息条数

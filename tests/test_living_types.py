@@ -1,6 +1,9 @@
 """Tests for consciousness/living.py -- enums and data types."""
 
 import pytest
+import xiaomei_brain.consciousness.living as living_module
+from types import SimpleNamespace
+from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
 from xiaomei_brain.consciousness.living import Living, LivingState, LivingMessage, PeriodicTask
 
 
@@ -134,3 +137,71 @@ def test_periodic_task():
 
     task.handler(None)
     assert len(calls) == 1
+
+
+def test_entering_idle_starts_a_separate_sleep_timer(monkeypatch):
+    living = Living(_AgentInstance(_SteerCore()), idle_threshold=1800)
+    clock = {"now": 100.0}
+    monkeypatch.setattr(living_module.time, "time", lambda: clock["now"])
+
+    living._transition(LivingState.AWAKE)
+    clock["now"] = 500.0
+    living._transition(LivingState.IDLE)
+
+    assert living._idle_started_at == 500.0
+    clock["now"] = 2299.0
+    assert living._automatic_sleep_due() is False
+    clock["now"] = 2300.0
+    assert living._automatic_sleep_due() is True
+
+
+def test_leaving_idle_clears_the_sleep_timer(monkeypatch):
+    living = Living(_AgentInstance(_SteerCore()))
+    monkeypatch.setattr(living_module.time, "time", lambda: 100.0)
+
+    living._transition(LivingState.IDLE)
+    living._transition(LivingState.AWAKE)
+
+    assert living._idle_started_at == 0.0
+
+
+def test_awake_transitions_to_idle_before_sleep(monkeypatch):
+    living = Living(
+        _AgentInstance(_SteerCore()),
+        idle_short=10,
+        idle_threshold=20,
+        tick_interval=0,
+    )
+    living.state = LivingState.AWAKE
+    living._last_active = 1.0
+    monkeypatch.setattr(living_module.time, "time", lambda: 100.0)
+    monkeypatch.setattr(living, "_wait_message", lambda timeout: None)
+
+    living._loop_awake()
+
+    assert living.state == LivingState.IDLE
+    assert living._idle_started_at == 100.0
+
+
+def test_token_budget_exhaustion_requests_sleep_without_an_llm_call():
+    living = object.__new__(ConsciousLiving)
+    living.drive = SimpleNamespace(
+        token_budget_daily=1000,
+        token_usage_today=1000,
+        token_budget_monthly=0,
+        token_usage_month=0,
+    )
+
+    assert living._token_sleep_reason() == "今日 Token 预算已用完，暂停自主活动"
+
+
+def test_unlimited_token_budget_does_not_force_sleep():
+    living = object.__new__(ConsciousLiving)
+    living.drive = SimpleNamespace(
+        token_budget_daily=0,
+        token_usage_today=999999,
+        token_budget_monthly=0,
+        token_usage_month=999999,
+    )
+
+    assert living._token_sleep_reason() == ""

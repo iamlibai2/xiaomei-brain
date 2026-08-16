@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useCoreStore } from "../store";
 import { Icon } from "./ui";
 
 const SECTION_GROUPS = [
@@ -29,10 +28,20 @@ type ContextConfigResult = {
   revision?: string;
 };
 
-export function ContextControlPanel({ onClose }: { onClose: () => void }) {
+export function ContextControlPanel({
+  agentId,
+  agentName,
+  connected = true,
+  embedded = false,
+  onClose,
+}: {
+  agentId: string;
+  agentName?: string;
+  connected?: boolean;
+  embedded?: boolean;
+  onClose?: () => void;
+}) {
   const { t } = useTranslation();
-  const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
-  const activeAgent = useCoreStore((state) => state.agents.find((item) => item.id === state.activeAgentId));
   const [sections, setSections] = useState<Record<string, boolean>>({});
   const [revision, setRevision] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,26 +54,26 @@ export function ContextControlPanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!activeAgentId) return;
+    if (!agentId || !connected) return;
     setLoading(true);
-    const response = await window.gateway.getAgentConfig({ agentId: activeAgentId, section: "context" });
+    const response = await window.gateway.getAgentConfig({ agentId, section: "context" });
     if (response.error) setError(response.error.message || t("contextControl.loadFailed"));
     else {
       applyResult(response.result as ContextConfigResult | undefined);
       setError("");
     }
     setLoading(false);
-  }, [activeAgentId, applyResult, t]);
+  }, [agentId, applyResult, connected, t]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const toggle = async (key: string) => {
-    if (!activeAgentId || savingKey) return;
+    if (!agentId || savingKey) return;
     const nextValue = sections[key] === false;
     setSavingKey(key);
     setSections((current) => ({ ...current, [key]: nextValue }));
     const response = await window.gateway.updateAgentConfig({
-      agentId: activeAgentId,
+      agentId,
       section: "context",
       values: { prompt_sections: { [key]: nextValue } },
       revision,
@@ -80,10 +89,10 @@ export function ContextControlPanel({ onClose }: { onClose: () => void }) {
   };
 
   const reset = async () => {
-    if (!activeAgentId || savingKey) return;
+    if (!agentId || savingKey) return;
     setSavingKey("reset");
     const response = await window.gateway.resetAgentConfig({
-      agentId: activeAgentId,
+      agentId,
       section: "context",
       revision,
     });
@@ -98,11 +107,13 @@ export function ContextControlPanel({ onClose }: { onClose: () => void }) {
   const allSections = useMemo(() => SECTION_GROUPS.flatMap((group) => [...group.sections]), []);
   const enabledCount = allSections.filter((key) => sections[key] !== false).length;
 
+  if (!connected) return <div className="settings-empty">{t("contextControl.connectToView")}</div>;
+
   return (
-    <section className="context-control" aria-label={t("contextControl.title")}>
+    <section className={`context-control${embedded ? " is-embedded" : ""}`} aria-label={t("contextControl.title")}>
       <header className="context-control-header">
         <div>
-          <span>{t("contextControl.currentAgent", { name: activeAgent?.name || activeAgentId })}</span>
+          <span>{t("contextControl.currentAgent", { name: agentName || agentId })}</span>
           <h2>{t("contextControl.title")}</h2>
           <p>{t("contextControl.subtitle")}</p>
         </div>
@@ -110,7 +121,7 @@ export function ContextControlPanel({ onClose }: { onClose: () => void }) {
           <button type="button" onClick={() => void refresh()} disabled={loading} title={t("common.refresh")}>
             <Icon name="refresh" size={16} />
           </button>
-          <button type="button" onClick={onClose} title={t("common.close")}><Icon name="x" size={16} /></button>
+          {!embedded && onClose ? <button type="button" onClick={onClose} title={t("common.close")}><Icon name="x" size={16} /></button> : null}
         </div>
       </header>
       <div className="context-control-toolbar">

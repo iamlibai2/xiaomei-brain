@@ -1772,6 +1772,15 @@ class ConsciousLiving(Living):
             self._heartbeat_result = HEARTBEAT_NORMAL
             self._tick_periodic(self.state)
 
+            # Token 配额耗尽时不再启动任何需要模型的自主行为。人类消息仍由
+            # SLEEPING 循环正常接收并唤醒；这里限制的是无人在场时继续消耗。
+            budget_reason = self._token_sleep_reason()
+            if budget_reason:
+                logger.info("[ConsciousLiving/IDLE] %s → 进入 SLEEPING", budget_reason)
+                self._print_section("进入睡眠", budget_reason, icon="🌙")
+                self._transition(LivingState.SLEEPING)
+                return
+
             # 0. 真正的生命系统故障才进入 DORMANT。模型服务故障由
             # ModelServiceHealth 单独管理，不属于生命休眠。
             if getattr(self.interoception, 'sos', False):
@@ -1842,11 +1851,32 @@ class ConsciousLiving(Living):
                     continue  # 有动作执行了，继续循环消费
 
             # 4. 无事可做 → 计空闲 → SLEEPING
-            idle_time = time.time() - self._last_active
-            if idle_time >= self.idle_threshold:
-                self._print_section("进入睡眠", f"空闲 {idle_time:.0f}s，超时自动入睡", icon="🌙")
+            idle_duration = self._idle_duration()
+            if self._automatic_sleep_due():
+                self._print_section(
+                    "进入睡眠",
+                    f"进入空闲 {idle_duration:.0f}s，达到自动睡眠时间",
+                    icon="🌙",
+                )
                 self._transition(LivingState.SLEEPING)
                 return
+
+    def _token_sleep_reason(self) -> str:
+        """Return a deterministic sleep reason when a configured quota is spent."""
+        drive = getattr(self, "drive", None)
+        if drive is None:
+            return ""
+
+        daily_budget = float(getattr(drive, "token_budget_daily", 0.0) or 0.0)
+        daily_used = float(getattr(drive, "token_usage_today", 0.0) or 0.0)
+        if daily_budget > 0 and daily_used >= daily_budget:
+            return "今日 Token 预算已用完，暂停自主活动"
+
+        monthly_budget = float(getattr(drive, "token_budget_monthly", 0.0) or 0.0)
+        monthly_used = float(getattr(drive, "token_usage_month", 0.0) or 0.0)
+        if monthly_budget > 0 and monthly_used >= monthly_budget:
+            return "本月 Token 预算已用完，暂停自主活动"
+        return ""
 
     def _check_death(self, state: LivingState) -> None:
         """每分钟检查生存状态，濒死/死亡时触发相应行为。"""

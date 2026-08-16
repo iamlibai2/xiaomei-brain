@@ -36,8 +36,18 @@ def _router(tmp_path):
     living = SimpleNamespace(
         _agent_id="test",
         _config=living_config,
+        idle_short=living_config.living.idle_short,
+        idle_threshold=living_config.living.idle_threshold,
         agent=agent,
-        consciousness=SimpleNamespace(self_image=SimpleNamespace()),
+        consciousness=SimpleNamespace(
+            self_image=SimpleNamespace(),
+            _cc=living_config.consciousness,
+        ),
+        drive=SimpleNamespace(
+            token_budget_daily=0.0,
+            token_budget_monthly=0.0,
+            token_reset_hour=4,
+        ),
     )
     router = MethodRouter(living=living)
     router._auth_sessions.add("conn-1")
@@ -189,3 +199,138 @@ def test_config_detects_stale_revision(tmp_path):
 
     assert response["error"]["code"] == -32600
     assert "modified" in response["error"]["message"]
+
+
+def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
+    router, living, brain_path = _router(tmp_path)
+
+    current = router.dispatch(
+        "conn-1", "rhythm-get", "config.get", {"section": "rhythm"}
+    )["result"]
+    assert current["values"]["idle_after_minutes"] == 5.0
+    assert current["values"]["sleep_after_idle_minutes"] == 180.0
+    assert current["values"]["dream_interval_minutes"] == 50.0
+    assert current["values"]["intent_decision_enabled"] is True
+    assert current["values"]["intent_min_interval_minutes"] == 5.0
+    assert current["values"]["intent_periodic_interval_minutes"] == 30.0
+    assert current["values"]["intent_cognition_threshold_percent"] == 60.0
+
+    response = router.dispatch(
+        "conn-1",
+        "rhythm-update",
+        "config.update",
+        {
+            "section": "rhythm",
+            "values": {
+                "idle_after_minutes": 10,
+                "sleep_after_idle_minutes": 240,
+                "dream_after_minutes": 8,
+                "dream_interval_minutes": 75,
+                "dream_report": False,
+                "intent_decision_enabled": True,
+                "intent_min_interval_minutes": 12,
+                "intent_periodic_interval_minutes": 90,
+                "intent_idle_trigger_minutes": 20,
+                "intent_belonging_threshold_percent": 65,
+                "intent_cognition_threshold_percent": 70,
+                "intent_achievement_threshold_percent": 55,
+                "intent_expression_threshold_percent": 75,
+            },
+            "revision": current["revision"],
+        },
+    )
+
+    result = response["result"]
+    assert result["restart_required"] is False
+    assert living.idle_short == 600.0
+    assert living.idle_threshold == 14400.0
+    assert living._config.consciousness.sleep_to_dream_threshold == 480.0
+    assert living.dream_interval == 4500.0
+    assert living._config.consciousness.dream_report_enabled is False
+    assert living._config.consciousness.l2_intent_enabled is True
+    assert living._config.consciousness.l2_cooldown == 720.0
+    assert living._config.consciousness.l2_periodic_interval == 5400.0
+    assert living._config.consciousness.l2_idle_trigger == 1200.0
+    assert living._config.consciousness.l2_desire_thresholds == {
+        "belonging": 0.65,
+        "cognition": 0.7,
+        "achievement": 0.55,
+        "expression": 0.75,
+    }
+
+    persisted = yaml.safe_load(brain_path.read_text(encoding="utf-8"))
+    consciousness = persisted["consciousness"]
+    assert consciousness["living"]["idle_short"] == 600.0
+    assert consciousness["living"]["idle_threshold"] == 14400.0
+    assert consciousness["sleep_to_dream_threshold"] == 480.0
+    assert consciousness["living"]["dream_interval"] == 4500.0
+    assert consciousness["dream_report_enabled"] is False
+    assert consciousness["l2_intent_enabled"] is True
+    assert consciousness["l2_cooldown"] == 720.0
+    assert consciousness["l2_periodic_interval"] == 5400.0
+    assert consciousness["l2_idle_trigger"] == 1200.0
+    assert consciousness["l2_desire_thresholds"]["cognition"] == 0.7
+
+
+def test_rhythm_config_uses_separate_idle_and_sleep_durations(tmp_path):
+    router, living, _brain_path = _router(tmp_path)
+
+    response = router.dispatch(
+        "conn-1",
+        "rhythm-sequential",
+        "config.update",
+        {
+            "section": "rhythm",
+            "values": {
+                "idle_after_minutes": 60,
+                "sleep_after_idle_minutes": 30,
+            },
+        },
+    )
+
+    assert "error" not in response
+    assert living.idle_short == 3600.0
+    assert living.idle_threshold == 1800.0
+
+
+def test_conversation_config_updates_budgets_and_fresh_tails(tmp_path):
+    router, living, brain_path = _router(tmp_path)
+
+    response = router.dispatch(
+        "conn-1",
+        "conversation-update",
+        "config.update",
+        {
+            "section": "conversation",
+            "values": {
+                "daily_token_budget": 100000,
+                "monthly_token_budget": 2000000,
+                "daily_token_reset_hour": 3,
+                "fresh_tail_count": 30,
+                "flow_tail_count": 6,
+                "reflect_tail_count": 18,
+            },
+        },
+    )
+
+    assert "error" not in response
+    assert living.drive.token_budget_daily == 100000.0
+    assert living.drive.token_budget_monthly == 2000000.0
+    assert living.drive.token_reset_hour == 3
+    assert living._config.context.fresh_tail_count == 30
+    persisted = yaml.safe_load(brain_path.read_text(encoding="utf-8"))
+    assert persisted["consciousness"]["living"]["daily_token_budget"] == 100000
+    assert persisted["consciousness"]["context"]["reflect_tail_count"] == 18
+
+
+def test_conversation_config_rejects_invalid_reset_hour(tmp_path):
+    router, _living, _brain_path = _router(tmp_path)
+
+    response = router.dispatch(
+        "conn-1",
+        "conversation-invalid",
+        "config.update",
+        {"section": "conversation", "values": {"daily_token_reset_hour": 24}},
+    )
+
+    assert response["error"]["code"] == -32602

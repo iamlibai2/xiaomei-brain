@@ -529,12 +529,34 @@ class MemoryExtractor:
         return ids, content_to_id
 
     def _execute_json_relation(
-        self, rel: dict, content_to_id: dict[str, int], user_id: str,
+        self, rel: Any, content_to_id: dict[str, int], user_id: str,
     ) -> None:
         """执行一条 JSON 格式的 relation，建立语义边。"""
-        from_content = rel.get("from", "").strip()
-        relation_type = rel.get("type", "").strip().lower()
-        to_content = rel.get("to", "").strip()
+        if not isinstance(rel, dict):
+            logger.warning(
+                "[Relations JSON] Skip malformed relation: expected object, got %s",
+                type(rel).__name__,
+            )
+            return
+
+        from_value = rel.get("from", "")
+        type_value = rel.get("type", "")
+        to_value = rel.get("to", "")
+        # The relation protocol uses memory content, not action-array indexes.
+        # Some models emit {"from": 0, "to": 1}; treating those as text would
+        # both create false recalls and let optional memory processing break chat.
+        if not all(isinstance(value, str) for value in (from_value, type_value, to_value)):
+            logger.warning(
+                "[Relations JSON] Skip malformed relation endpoints: from=%r type=%r to=%r",
+                from_value,
+                type_value,
+                to_value,
+            )
+            return
+
+        from_content = from_value.strip()
+        relation_type = type_value.strip().lower()
+        to_content = to_value.strip()
 
         if not from_content or not to_content or not relation_type:
             return

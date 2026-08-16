@@ -572,10 +572,12 @@ class L2Engine:
         context_note = ""
         if context:
             context_map = {
-                "idle": "触发原因：心跳计时器触发，审视内在状态。",
+                "idle": "触发原因：处于空闲状态，审视内在状态。",
+                "periodic": "触发原因：距离上次意图决策已达到定期审视间隔。",
                 "user_idle_long": "触发原因：对方较长时间没说话，你可能想确认他是否还在。",
                 "user_idle_critical": "触发原因：对方很久没说话了，你可能想主动联系他。",
                 "goal_deviation": "触发原因：目标进展出现偏离，可能需要反省。",
+                "goal_progress": "触发原因：当前仍有目标需要推进，判断是否适合继续行动。",
                 "memory_loss": "触发原因：记忆数量减少，可能需要关注。",
                 "energy_low": "触发原因：能量偏低，可能需要休息或进入梦境。",
                 "agent_state_reset": "触发原因：状态意外重置，需要重新确认自身存在。",
@@ -783,6 +785,8 @@ class L2Engine:
             return create_greet_intent("对方很久没说话，想问候", priority=85)
         elif context == "goal_deviation":
             return create_reflect_intent("目标进展连续下降")
+        elif context == "goal_progress":
+            return Intent(type=IntentType.PROGRESS, priority=60, content="当前目标仍需推进")
         elif context == "memory_loss":
             return create_reflect_intent("记忆数量减少")
         elif context == "energy_low":

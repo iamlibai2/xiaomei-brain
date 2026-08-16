@@ -872,21 +872,22 @@ class Consciousness:
     #         self._sleep_start_time = 0
     #     return TickResult.NORMAL
 
-    def _should_intent(self, agent_state: str = "awake") -> bool:
-        """判断是否应做意图决策（"我该做什么"）。
+    def _intent_trigger_context(self, agent_state: str = "awake") -> str | None:
+        """返回本次意图决策的真实触发原因，未触发时返回 ``None``。
 
-        触发条件：
-        - 欲望超阈值（欲望驱动，主要机制）
-        - 用户空闲够久（时间兜底）
-        - 定期审视（低频兜底）
-        - 能量极低（允许 agent 自己决定 SLEEP）
+        AWAKE 可以形成意图，但具体自主行为仍由 Living 在 IDLE 中消费。
+        最短决策间隔是安全门；空闲、欲望和目标是明确触发信号，定期
+        审视只作为最后兜底。
         """
         si = self.self_image
         elapsed = time.time() - self._last_intent_time
 
-        # SLEEPING/DREAMING/WORKING 中不决策
+        if not getattr(self._cc, "l2_intent_enabled", True):
+            return None
+
+        # SLEEPING/DREAMING/WORKING 中不形成新意图
         if agent_state in ("sleeping", "dreaming", "working"):
-            return False
+            return None
 
         # 动态冷却（低能量时冷却加倍，节省 token）
         energy = si.body.energy
@@ -894,33 +895,35 @@ class Consciousness:
         if energy < 0.3:
             cooldown *= 2.0
         if elapsed < cooldown:
-            return False
+            return None
 
-        # 空闲触发（保留）
+        # IDLE 中优先保留真实的内部触发原因，不让定期兜底覆盖它们。
         if agent_state == "idle" and si.perception.user_idle_duration > self._cc.l2_idle_trigger:
-            return True
+            return "user_idle_long"
 
-        # 定期触发（保留）
-        if elapsed > self._cc.l2_periodic_interval:
-            return True
-
-        # 欲望驱动（仅 IDLE）
         if agent_state == "idle":
             t = self._cc.l2_desire_thresholds
             if si.body.desire_belonging > t.get("belonging", 0.6):
-                return True
+                return "desire_starvation_belonging"
             if si.body.desire_cognition > t.get("cognition", 0.6):
-                return True
+                return "desire_starvation_cognition"
             if si.body.desire_achievement > t.get("achievement", 0.5):
-                return True
+                return "desire_starvation_achievement"
             if si.body.desire_expression > t.get("expression", 0.6):
-                return True
+                return "desire_starvation_expression"
 
-            # 有未完成目标时，积极触发意图决策（不满欲望阈值也可触发）
             if self.purpose and self.purpose.get_current() is not None:
-                return True
+                return "goal_progress"
 
-        return False
+        # AWAKE 和 IDLE 都允许定期形成想法，行为仍等 IDLE 执行。
+        if elapsed >= self._cc.l2_periodic_interval:
+            return "periodic"
+
+        return None
+
+    def _should_intent(self, agent_state: str = "awake") -> bool:
+        """兼容旧调用；新调度使用 ``_intent_trigger_context`` 获取原因。"""
+        return self._intent_trigger_context(agent_state) is not None
 
     def _should_emerge(self, agent_state: str = "awake") -> bool:
         """判断是否应做意识涌现（"我此刻怎样"）。

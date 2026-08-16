@@ -177,7 +177,11 @@ class Layer2DefaultNetwork:
 
                     # L1 异常已触发 L2（绕过冷却），优先处理
                     anomaly_type = getattr(self._c, '_l2_triggered_by_anomaly', None)
-                    if anomaly_type:
+                    consciousness_config = getattr(self._c, "_cc", None)
+                    intent_enabled = getattr(consciousness_config, "l2_intent_enabled", True)
+                    if anomaly_type and not intent_enabled:
+                        self._c._l2_triggered_by_anomaly = None
+                    elif anomaly_type:
                         self._c._l2_triggered_by_anomaly = None
                         self._log(f"{ts} L2 触发 [异常 bypass] agent_state={agent_state} ctx={anomaly_type}")
                         logger.info("[Layer2] L2 触发（L1 异常=%s，agent_state=%s）", anomaly_type, agent_state)
@@ -196,8 +200,15 @@ class Layer2DefaultNetwork:
 
                     # L2 意图决策（"我该做什么"——欲望驱动 + 时间兜底）
                     skip_l3 = False
-                    if self._c._should_intent(agent_state):
-                        ctx = "idle" if agent_state == "idle" else "periodic"
+                    trigger_context = getattr(self._c, "_intent_trigger_context", None)
+                    if callable(trigger_context):
+                        intent_context = trigger_context(agent_state)
+                    else:
+                        intent_context = (
+                            "idle" if agent_state == "idle" else "periodic"
+                        ) if self._c._should_intent(agent_state) else None
+                    if intent_context:
+                        ctx = intent_context
                         self._log(f"{ts} L2 意图决策触发 agent_state={agent_state} ctx={ctx}")
                         logger.info("[Layer2] L2 意图决策（agent_state=%s, ctx=%s）", agent_state, ctx)
                         self._c._last_intent_time = time.time()

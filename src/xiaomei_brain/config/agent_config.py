@@ -354,10 +354,15 @@ def _build_living_config(data: dict):
         config.consciousness = ConsciousnessConfig(
             l0_interval=cc.get("l0_interval", 1.0),
             l1_threshold=cc.get("l1_threshold", 60),
+            l2_intent_enabled=cc.get("l2_intent_enabled", True),
             l2_idle_trigger=cc.get("l2_idle_trigger", 300.0),
             l2_changes_trigger=cc.get("l2_changes_trigger", 10),
             l2_cooldown=cc.get("l2_cooldown", 300.0),
             l2_periodic_interval=cc.get("l2_periodic_interval", 1800.0),
+            l2_desire_thresholds={
+                **ConsciousnessConfig().l2_desire_thresholds,
+                **(cc.get("l2_desire_thresholds", {}) or {}),
+            },
             sleep_to_dream_threshold=cc.get("sleep_to_dream_threshold", cc.get("l3_dream_interval", 300.0)),
             l3_cooldown=cc.get("l3_cooldown", 1800.0),
             l2_check_interval=cc.get("l2_check_interval", 10.0),
@@ -637,11 +642,19 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"  l1_threshold:         {consciousness.get('l1_threshold', 60)}      # L1 异常检测触发（累积 L0 次数）")
     _w(f"  l1_anomaly_enabled:   {str(consciousness.get('l1_anomaly_enabled', False)).lower()}  # L1 异常检测开关")
     _w(f"  l2_check_interval:    {consciousness.get('l2_check_interval', 10.0)}    # L2 检查间隔（秒）")
+    _w(f"  l2_intent_enabled:    {str(consciousness.get('l2_intent_enabled', True)).lower()}  # 允许形成自主意图")
     _w(f"  l2_idle_trigger:      {consciousness.get('l2_idle_trigger', 300.0)}   # L2 空闲触发（用户空闲秒数）")
     _w(f"  l2_changes_trigger:   {consciousness.get('l2_changes_trigger', 10)}     # L2 累积变化触发（条数）")
     _w(f"  l2_cooldown:          {consciousness.get('l2_cooldown', 300.0)}   # L2 冷却时间（秒）")
     _w(f"  l2_periodic_interval: {consciousness.get('l2_periodic_interval', 1800.0)}  # L2 定期触发（秒）")
+    desire_thresholds = consciousness.get('l2_desire_thresholds', {}) or {}
+    _w("  l2_desire_thresholds:")
+    _w(f"    belonging:  {desire_thresholds.get('belonging', 0.6)}")
+    _w(f"    cognition:  {desire_thresholds.get('cognition', 0.6)}")
+    _w(f"    achievement: {desire_thresholds.get('achievement', 0.5)}")
+    _w(f"    expression: {desire_thresholds.get('expression', 0.6)}")
     _w(f"  sleep_to_dream_threshold: {consciousness.get('sleep_to_dream_threshold', consciousness.get('l3_dream_interval', 300.0))}   # 入梦触发（睡眠秒数→入梦）")
+    _w(f"  dream_report_enabled: {str(consciousness.get('dream_report_enabled', True)).lower()}  # 醒来时使用最近梦境报告")
     _w(f"  l3_cooldown:          {consciousness.get('l3_cooldown', 1800.0)}  # L3 沉思冷却（秒）")
     _w(f"  sc_cooldown:          {consciousness.get('sc_cooldown', 900.0)}    # social_cognition 冷却（秒）")
     _w(f"  sc_interval:          {consciousness.get('sc_interval', 3600.0)}   # social_cognition 定期兜底（秒）")
@@ -656,9 +669,12 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"    tick_interval:      {living.get('tick_interval', 1.0)}     # 心跳间隔（秒）")
     _w(f"    surge_interval:     {living.get('surge_interval', 60.0)}    # 涌动间隔（秒）")
     _w(f"    idle_short:         {living.get('idle_short', 300.0)}   # 短空闲阈值（秒）→ IDLE")
-    _w(f"    idle_threshold:     {living.get('idle_threshold', 10800.0)}  # 长空闲阈值（秒）→ SLEEPING")
-    _w(f"    dream_interval:     {living.get('dream_interval', 3000.0)}   # 梦境间隔（秒）")
+    _w(f"    idle_threshold:     {living.get('idle_threshold', 10800.0)}  # 进入 IDLE 后自动睡眠的等待时间（秒）")
+    _w(f"    dream_interval:     {living.get('dream_interval', 3000.0)}   # 梦境分段处理间隔（秒）")
     _w(f"    max_context_tokens: {living.get('max_context_tokens', 50000)}  # 上下文最大 token 数")
+    _w(f"    daily_token_budget: {living.get('daily_token_budget', 0)}  # 每日 token 预算（0=不限制）")
+    _w(f"    monthly_token_budget: {living.get('monthly_token_budget', 0)}  # 月度 token 预算（0=不限制）")
+    _w(f"    daily_token_reset_hour: {living.get('daily_token_reset_hour', 4)}  # 每日预算重置小时（0-23）")
     _w(f"    comms_port:         {living.get('comms_port', 0)}      # 0=自动分配, -1=禁用")
     _w(f"    ws_port:            {living.get('ws_port', -1)}      # WebSocket 端口（-1=禁用）")
     _w(f"    admin_port:         {living.get('admin_port', -1)}      # Admin 管理门端口（-1=禁用，0=自动分配）")
@@ -682,6 +698,9 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"    desire_achievement_cooldown: {action.get('desire_achievement_cooldown', 3600.0)}  # 欲望成就冷却")
     _w(f"    desire_express_cooldown:  {action.get('desire_express_cooldown', 3600.0)}  # 欲望表达冷却")
     _w(f"    desire_talk_to_agent_cooldown: {action.get('desire_talk_to_agent_cooldown', 60.0)}  # Agent 间聊天冷却")
+
+    _w(f"    learn_enabled: {str(action.get('learn_enabled', True)).lower()}  # 允许自主学习")
+    _w(f"    pleasure_enabled: {str(action.get('pleasure_enabled', True)).lower()}  # 允许愉悦驱动行为")
 
     # context
     context = consciousness.get("context", {})
