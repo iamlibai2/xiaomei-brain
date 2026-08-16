@@ -70,6 +70,14 @@ class AutonomousBehaviorExecutor:
         with self._lock:
             return self._current.activity_id if self._current else ""
 
+    def has_inflight_intent(self, intent_id: str) -> bool:
+        """Return whether an intent is already queued or being executed."""
+        normalized = str(intent_id or "").strip()
+        if not normalized:
+            return False
+        with self._lock:
+            return normalized in self._inflight_intent_ids
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return

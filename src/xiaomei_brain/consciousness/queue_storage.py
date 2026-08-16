@@ -160,7 +160,7 @@ class TaskQueueStorage(SQLiteStore):
                      session_id=excluded.session_id, type=excluded.type,
                      priority=excluded.priority, content=excluded.content,
                      trigger_time=excluded.trigger_time, source=excluded.source,
-                     params=excluded.params, status='pending'""",
+                     params=excluded.params""",
                 (
                     item["intent_id"], item["scope_type"], item["user_id"], item["session_id"],
                     item.get("type", ""),

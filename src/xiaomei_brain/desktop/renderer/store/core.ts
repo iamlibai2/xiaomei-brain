@@ -298,10 +298,25 @@ function clearSessionStreams(agentId: string, sessionId: string): void {
 }
 
 function toolResultFailed(result: string): boolean {
-  return result.startsWith("Error:")
-    || result.startsWith("Blocked")
-    || result.includes("timed out")
-    || result.toLowerCase().includes("failed");
+  const text = result.trim();
+  const lowered = text.toLowerCase();
+  if (lowered.startsWith("error:")
+    || lowered.startsWith("error executing tool")
+    || lowered.startsWith("blocked")
+    || lowered.startsWith("timed out")
+    || lowered.startsWith("timeout:")) {
+    return true;
+  }
+  try {
+    const payload = JSON.parse(text) as Record<string, unknown>;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const status = typeof payload.status === "string" ? payload.status.toLowerCase() : "";
+    return Boolean(payload.error)
+      || payload.success === false
+      || ["error", "failed", "blocked", "timeout", "timed_out"].includes(status);
+  } catch {
+    return false;
+  }
 }
 
 function actionRequest(

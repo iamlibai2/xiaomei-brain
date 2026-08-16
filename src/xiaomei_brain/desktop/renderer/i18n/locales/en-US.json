@@ -621,6 +621,8 @@
       "streamEyebrow": "Stream",
       "recentActivity": "Recent conscious activity",
       "noRecent": "No conscious activity is available yet",
+      "activityFailed": "This activity did not complete",
+      "activityCancelled": "This activity was cancelled",
       "monitor": "Inner state",
       "stable": "Stable",
       "emotions": "Emotions",
@@ -661,6 +663,16 @@
         "completed": "Completed",
         "failed": "Failed",
         "cancelled": "Cancelled"
+      },
+      "pause": {
+        "realtime_message": "Prioritizing a real-time conversation",
+        "waiting_approval": "Waiting for your approval",
+        "waiting_input": "Waiting for your reply",
+        "waiting_resource": "Waiting for a required resource",
+        "agent_stopping": "Interrupted when the Agent stopped",
+        "self_paused": "The Agent chose to pause for now",
+        "interrupted": "The previous run was interrupted and has not resumed",
+        "unknown": "This activity is paused"
       },
       "intent": {
         "greet": "Wants to say hello",

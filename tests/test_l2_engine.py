@@ -61,23 +61,26 @@ def test_emergence_reuses_l2_agent_core():
     assert call["excluded_tool_names"] == {"being"}
 
 
-def test_intent_type_correction_preserves_target_and_message():
-    original = Intent(
-        type=IntentType.TALK,
-        priority=82,
-        content="想和博士聊聊",
-        trigger_time=123.0,
-        source="consciousness",
-        params={"user_id": "person_1", "message": "最近怎么样？"},
+def test_desire_starvation_marks_original_intent_urgent_without_rewriting_it():
+    urgent = set()
+    engine = L2Engine(SimpleNamespace(
+        intent_slot=SimpleNamespace(urgent_intents=urgent),
+    ))
+    intent = Intent(
+        type=IntentType.LEARN,
+        priority=60,
+        content="learn calendar API",
+        params={"learn_topic": "calendar API"},
     )
 
-    corrected = L2Engine._replace_intent_type(original, IntentType.GREET)
+    engine._mark_desire_intent_urgent(
+        "desire_starvation_achievement",
+        intent,
+    )
 
-    assert corrected.type is IntentType.GREET
-    assert corrected.trigger_time == 123.0
-    assert corrected.source == "consciousness"
-    assert corrected.params == original.params
-    assert corrected.params is not original.params
+    assert intent.type is IntentType.LEARN
+    assert intent.params == {"learn_topic": "calendar API"}
+    assert urgent == {"learn"}
 
 
 def test_person_directed_intent_resolves_display_name_to_person_id():

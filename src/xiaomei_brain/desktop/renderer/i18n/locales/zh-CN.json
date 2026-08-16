@@ -621,6 +621,8 @@
       "streamEyebrow": "意识流",
       "recentActivity": "最近的意识活动",
       "noRecent": "还没有可展示的意识活动",
+      "activityFailed": "这次活动没有完成",
+      "activityCancelled": "这次活动已经取消",
       "monitor": "内在状态",
       "stable": "状态平稳",
       "emotions": "情绪",
@@ -661,6 +663,16 @@
         "completed": "已经完成",
         "failed": "执行失败",
         "cancelled": "已经取消"
+      },
+      "pause": {
+        "realtime_message": "正在优先回应实时消息",
+        "waiting_approval": "正在等待你的批准",
+        "waiting_input": "正在等待你的回复",
+        "waiting_resource": "正在等待所需资源恢复",
+        "agent_stopping": "Agent 停止时中断",
+        "self_paused": "Agent 暂时不打算继续",
+        "interrupted": "上次运行中断，尚未继续",
+        "unknown": "活动暂时停在这里"
       },
       "intent": {
         "greet": "想主动问候",

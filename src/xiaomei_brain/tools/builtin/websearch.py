@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ..base import tool
 
@@ -41,13 +42,18 @@ def _resolve_provider():
 
 @tool(
     name="web_search",
-    description="使用搜索引擎搜索实时信息、文档或研究主题。支持时间过滤: pd(24h), pw(7d), pm(31d), py(365d)，或指定日期范围 YYYY-MM-DDtoYYYY-MM-DD。",
+    description=(
+        "使用搜索引擎搜索实时信息、文档或研究主题，返回服务商的结构化真实结果。"
+        "支持时间过滤: pd(24h), pw(7d), pm(31d), py(365d)，或指定日期范围 "
+        "YYYY-MM-DDtoYYYY-MM-DD。若 success=false，说明搜索服务本身失败；"
+        "当前执行中不要通过更换关键词反复调用，应使用 error 信息结束或说明受阻。"
+    ),
 )
 def web_search(
     query: str,
     count: int = 10,
     freshness: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Search the web via the best available provider.
 
     Args:
@@ -58,27 +64,73 @@ def web_search(
     provider = _resolve_provider()
 
     if provider is None:
-        return "搜索未启用或未配置。请在 Desktop 的 Agent 设置 → 联网搜索中配置搜索服务。"
+        return {
+            "success": False,
+            "error": {
+                "type": "not_configured",
+                "message": "搜索未启用或未配置。请在 Desktop 的 Agent 设置 → 联网搜索中配置搜索服务。",
+                "retryable": False,
+            },
+        }
 
     if not query or not query.strip():
-        return "搜索关键词不能为空。"
+        return {
+            "success": False,
+            "provider": provider.provider_id,
+            "error": {
+                "type": "invalid_query",
+                "message": "搜索关键词不能为空。",
+                "retryable": False,
+            },
+        }
 
     try:
         results = provider.search(query=query, count=count, freshness=freshness)
 
-        if not results:
-            return "未找到相关结果。"
-
-        output = f"找到 {len(results)} 条结果:\n\n"
-        for i, r in enumerate(results, 1):
-            time_str = f" ({r.time})" if r.time else ""
-            output += f"{i}. {r.title}{time_str}\n   {r.url}\n\n"
-
-        return output.strip()
+        return {
+            "success": True,
+            "provider": provider.provider_id,
+            "query": query,
+            "count": len(results),
+            "results": [
+                {
+                    "title": result.title,
+                    "url": result.url,
+                    "time": result.time,
+                }
+                for result in results
+            ],
+        }
 
     except Exception as e:
         logger.error("Web search error: %s", e)
-        return f"搜索失败: {e}"
+        response = getattr(e, "response", None)
+        status_code = getattr(response, "status_code", None)
+        response_text = str(getattr(response, "text", "") or "").strip()
+        retry_after = None
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            retry_after = headers.get("Retry-After")
+        error_type = "rate_limited" if status_code == 429 else (
+            "http_error" if status_code is not None else "provider_error"
+        )
+        error: dict[str, Any] = {
+            "type": error_type,
+            "message": str(e),
+            "retryable": bool(status_code == 429 or (isinstance(status_code, int) and status_code >= 500)),
+        }
+        if status_code is not None:
+            error["http_status"] = status_code
+        if response_text:
+            error["response"] = response_text[:2000]
+        if retry_after:
+            error["retry_after"] = retry_after
+        return {
+            "success": False,
+            "provider": provider.provider_id,
+            "query": query,
+            "error": error,
+        }
 
 
 web_search_tool = web_search

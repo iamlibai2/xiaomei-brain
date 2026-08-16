@@ -150,6 +150,7 @@ def test_autonomous_executor_deduplicates_same_inflight_intent() -> None:
 
     assert executor.submit(item) is True
     assert started.wait(1.0)
+    assert executor.has_inflight_intent("intent_same") is True
     assert executor.submit(item) is False
     release.set()
     assert completed.wait(1.0)
@@ -157,6 +158,7 @@ def test_autonomous_executor_deduplicates_same_inflight_intent() -> None:
     deadline = time.time() + 1.0
     while executor.busy and time.time() < deadline:
         time.sleep(0.01)
+    assert executor.has_inflight_intent("intent_same") is False
     assert executor.submit(item) is True
     executor.stop()
     assert calls in (1, 2)

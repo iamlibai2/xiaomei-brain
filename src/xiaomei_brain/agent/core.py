@@ -82,13 +82,14 @@ class _RepeatedToolResultGuard:
 
 def _tool_result_failed(result: Any) -> bool:
     """Classify both textual and structured tool failures consistently."""
-    text = normalize_tool_result(result)
+    text = normalize_tool_result(result).strip()
     lowered = text.lower()
     if (
-        text.startswith("Error:")
-        or text.startswith("Blocked")
-        or "timed out" in lowered
-        or "failed" in lowered
+        lowered.startswith("error:")
+        or lowered.startswith("error executing tool")
+        or lowered.startswith("blocked")
+        or lowered.startswith("timed out")
+        or lowered.startswith("timeout:")
     ):
         return True
     try:

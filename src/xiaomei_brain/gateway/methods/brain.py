@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from xiaomei_brain.activity import ActivityStatus
+from xiaomei_brain.activity import ActivityStatus, ActivityStore
 
 from ..protocol import ErrorCode, build_error, build_response
 
@@ -47,6 +47,8 @@ class BrainMethods:
         self._watchers: dict[str, _Watcher] = {}
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._activity_reader_lock = threading.RLock()
+        self._activity_reader = self._create_activity_reader()
         event_hub = getattr(living, "_event_hub", None)
         self._unsubscribe = (
             event_hub.subscribe(self._on_domain_event)
@@ -207,12 +209,29 @@ class BrainMethods:
         service = getattr(self._living, "_activity_service", None)
         if service is None:
             return []
-        values = service.store.list(limit=120)
+        store = self._activity_reader or service.store
+        # Brain observation must never share the writer's SQLite connection.
+        # Manual brain.get and the observer thread may still overlap, so keep
+        # the dedicated reader itself single-threaded as well.
+        with self._activity_reader_lock:
+            values = store.list(limit=120)
         return [
             service.snapshot(item)
             for item in values
             if self._activity_visible(item, person_id)
         ]
+
+    def _create_activity_reader(self) -> ActivityStore | None:
+        service = getattr(self._living, "_activity_service", None)
+        writer = getattr(service, "store", None)
+        db_path = getattr(writer, "db_path", None)
+        if db_path is None:
+            return None
+        try:
+            return ActivityStore(db_path)
+        except Exception:
+            logger.exception("[Brain] Failed to create isolated Activity reader")
+            return None
 
     def _pending_intents(self, person_id: str) -> list[dict[str, Any]]:
         consciousness = getattr(self._living, "consciousness", None)
@@ -250,16 +269,12 @@ class BrainMethods:
 
     @staticmethod
     def _current_activity(activities: list[dict[str, Any]]) -> dict[str, Any] | None:
-        rank = {"running": 0, "paused": 1, "queued": 2}
-        active = [item for item in activities if item.get("status") in rank]
-        if not active:
+        running = [item for item in activities if item.get("status") == "running"]
+        if not running:
             return None
-        return min(
-            active,
-            key=lambda item: (
-                rank[str(item.get("status"))],
-                -float(item.get("updated_at") or 0),
-            ),
+        return max(
+            running,
+            key=lambda item: float(item.get("updated_at") or 0),
         )
 
     @staticmethod

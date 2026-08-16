@@ -150,8 +150,9 @@ class LearningEngine:
         if si and si.being.learning_interests:
             interests = si.being.learning_interests
             now = time.time()
+            learned_at = self._storage.get_last_learned_times(interests)
             fresh = [i for i in interests
-                     if (now - self._storage.get_last_learned_time(i)) >= LEARN_COOLDOWN]
+                     if (now - learned_at.get(i, 0.0)) >= LEARN_COOLDOWN]
             if fresh:
                 # 模式加权：topic_cluster 模式给候选主题加分
                 if len(fresh) > 1:
@@ -175,8 +176,9 @@ class LearningEngine:
         now = time.time()
         all_topics = self._get_stored_topics()
         if all_topics:
+            learned_at = self._storage.get_last_learned_times(all_topics)
             fresh = [t for t in all_topics
-                     if (now - self._storage.get_last_learned_time(t)) >= LEARN_COOLDOWN]
+                     if (now - learned_at.get(t, 0.0)) >= LEARN_COOLDOWN]
             if fresh:
                 return random.choice(fresh)
             logger.debug("[LearningEngine] 所有知识主题都在冷却中，跳过学习")

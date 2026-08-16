@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from xiaomei_brain.activity import ActivityService, ActivityStore
@@ -158,6 +159,52 @@ def test_brain_watch_exists_only_for_open_connection(tmp_path):
     store.close()
 
 
+def test_brain_uses_an_isolated_activity_read_connection(tmp_path):
+    router, service, store = _router(tmp_path)
+
+    reader = router._brain_methods._activity_reader
+
+    assert reader is not None
+    assert reader is not service.store
+    assert reader.db_path == service.store.db_path
+    reader.close()
+    store.close()
+
+
+def test_brain_observation_does_not_share_live_activity_writer(tmp_path):
+    router, service, store = _router(tmp_path)
+    activity = service.create(
+        category="cognition",
+        kind="internal_processing",
+        title="Internal processing",
+    )
+    service.start(activity.id)
+    errors: list[BaseException] = []
+
+    def observe() -> None:
+        try:
+            for _ in range(300):
+                router._brain_methods._activities("person-1")
+        except BaseException as exc:
+            errors.append(exc)
+
+    def update() -> None:
+        try:
+            for index in range(100):
+                service.report_progress(activity.id, summary=f"step-{index}")
+        except BaseException as exc:
+            errors.append(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(observe), executor.submit(update)]
+        for future in futures:
+            future.result()
+
+    assert errors == []
+    router._brain_methods._activity_reader.close()
+    store.close()
+
+
 def test_brain_rpc_requires_authentication_and_verified_person(tmp_path):
     router, _service, store = _router(tmp_path)
     router._auth_sessions.discard("conn-1")
@@ -168,4 +215,32 @@ def test_brain_rpc_requires_authentication_and_verified_person(tmp_path):
     router._auth_sessions.add("conn-no-person")
     no_person = router.dispatch("conn-no-person", "rpc-2", "brain.get", {})
     assert no_person["error"]["code"] == -32001
+    store.close()
+
+
+def test_paused_or_queued_activity_is_not_reported_as_current_work(tmp_path):
+    router, service, store = _router(tmp_path)
+    paused = service.create(
+        category="work",
+        kind="autonomous_learning",
+        title="Paused learning",
+        scope_type="person",
+        scope_id="person-1",
+        person_id="person-1",
+    )
+    service.start(paused.id)
+    service.pause(paused.id, reason="interrupted")
+    service.create(
+        category="work",
+        kind="queued_work",
+        title="Queued work",
+        scope_type="person",
+        scope_id="person-1",
+        person_id="person-1",
+    )
+
+    response = router.dispatch("conn-1", "rpc-1", "brain.get", {})
+
+    assert response["result"]["brain"]["current_activity"] is None
+    router._brain_methods._activity_reader.close()
     store.close()

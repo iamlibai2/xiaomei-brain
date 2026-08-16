@@ -31,6 +31,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _tool_event_result_failed(result: str) -> bool:
+    """Classify a tool event without interpreting words in its payload body."""
+    text = result.strip()
+    lowered = text.lower()
+    if (
+        lowered.startswith("error:")
+        or lowered.startswith("error executing tool")
+        or lowered.startswith("blocked")
+        or lowered.startswith("timed out")
+        or lowered.startswith("timeout:")
+    ):
+        return True
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    status = str(payload.get("status", "")).lower()
+    return bool(payload.get("error")) or payload.get("success") is False or status in {
+        "error",
+        "failed",
+        "blocked",
+        "timeout",
+        "timed_out",
+    }
+
+
 class ConversationDriver:
     """对话驱动：消息路由、ReAct 执行、轮次后处理。"""
 
@@ -1497,12 +1525,7 @@ class ConversationDriver:
                 payload["started_at"] = int(_time.time() * 1000)
             elif event_type == "tool.complete":
                 result = str(args[0] if args else "")
-                failed = (
-                    result.startswith("Error:")
-                    or result.startswith("Blocked")
-                    or "timed out" in result
-                    or "failed" in result.lower()
-                )
+                failed = _tool_event_result_failed(result)
                 summary_limit = 800
                 payload.update({
                     "summary": result[:summary_limit],

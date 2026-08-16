@@ -338,15 +338,18 @@ class WSAdapter(ChannelAdapter):
                 event,
             )
             return
+        # This is an observation stream, not a conversation event stream.
+        # Giving it the active conversation session_id would make Desktop
+        # compare two unrelated sequence counters and discard Brain updates as
+        # old/duplicate conversation frames.
         sequence_key = f"connection:{conn_id}"
-        session_id = self._conn_manager.get_session_id(conn_id) or sequence_key
         with self._sequence_lock:
             sequence = self._sequences.get(sequence_key, 0) + 1
             self._sequences[sequence_key] = sequence
         frame = build_event(
             event,
             payload,
-            session_id=session_id,
+            session_id=sequence_key,
             sequence=sequence,
             timestamp=timestamp or int(time.time() * 1000),
         )

@@ -52,6 +52,19 @@ def test_sync_preserves_stable_intent_ids(tmp_path):
     assert pending[0]["intent_id"] == item["intent_id"]
 
 
+def test_stale_sync_cannot_resurrect_a_consumed_intent(tmp_path):
+    storage = TaskQueueStorage(str(tmp_path / "brain.db"))
+    item = _work("continue later", "person-a", "session-a")
+    storage.add_intent(item)
+    assert storage.mark_intent_consumed(item["intent_id"]) == 1
+
+    # A concurrent snapshot may still contain the old in-memory item.  Syncing
+    # that stale snapshot must never turn a terminal record back into pending.
+    storage.sync_intents([item])
+
+    assert storage.load_pending_intents() == []
+
+
 def test_person_projection_does_not_mutate_shared_self_image():
     shared = SelfImage()
     shared.current_user_id = "person-a"

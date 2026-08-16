@@ -62,33 +62,35 @@ class KnowledgeStorage:
     # ── 查询 ──────────────────────────────────────────────
 
     def get_last_learned_time(self, topic: str) -> float:
-        """查询某主题上次学习时间（基于 LTM）。
+        """查询某主题上次学习时间（基于精确 topic 标签）。"""
+        normalized = str(topic or "").strip()
+        return self.get_last_learned_times([normalized]).get(normalized, 0.0)
 
-        Returns:
-            Unix timestamp，未学过返回 0
-        """
-        if not self._ltm:
-            return 0.0
+    def get_last_learned_times(self, topics: list[str]) -> dict[str, float]:
+        """批量查询主题最近学习时间，不触发向量检索。"""
+        normalized = list(dict.fromkeys(
+            str(topic or "").strip()
+            for topic in topics
+            if str(topic or "").strip()
+        ))
+        result = {topic: 0.0 for topic in normalized}
+        if not self._ltm or not normalized:
+            return result
+
+        topic_by_tag = {f"topic:{topic}": topic for topic in normalized}
         try:
-            results = self._ltm.recall(
-                f"topic:{topic}", top_k=1, user_id="global",
+            memories = self._ltm.search_by_tags(
+                list(topic_by_tag), user_id="global",
             )
-            if results:
-                return float(results[0].get("created_at", 0) or 0)
+            for memory in memories:
+                created_at = float(memory.get("created_at", 0) or 0)
+                for tag in memory.get("tags", []) or []:
+                    topic = topic_by_tag.get(str(tag))
+                    if topic is not None and created_at > result[topic]:
+                        result[topic] = created_at
         except Exception as e:
-            logger.warning("[LearningStorage] recall 失败 (topic=%s): %s", topic, e)
-
-        # 回退：按标签搜索
-        try:
-            results = self._ltm.search_by_tags(
-                [f"topic:{topic}"], user_id="global",
-            )
-            if results:
-                return float(results[0].get("created_at", 0) or 0)
-        except Exception as e:
-            logger.warning("[LearningStorage] search_by_tags 失败 (topic=%s): %s", topic, e)
-
-        return 0.0
+            logger.warning("[LearningStorage] 精确标签查询失败: %s", e)
+        return result
 
     # ── 内部 ──────────────────────────────────────────────
 

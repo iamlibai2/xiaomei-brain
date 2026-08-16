@@ -1075,6 +1075,16 @@ class ActionExecutor:
         goal = living.purpose.get_current() if hasattr(living, 'purpose') and living.purpose else None
 
         if not goal:
+            if item.source == "intent":
+                # There is no transient failure to retry here.  The concrete
+                # PROGRESS decision has no execution target, so resolve it as
+                # a terminal no-op and remove it from the durable queue.
+                self._consume_intent(item)
+                logger.info(
+                    "[ActionExecutor] progress_goal 结束：无可推进目标，已消费意图 %s",
+                    item.metadata.get("intent_id", ""),
+                )
+                return True
             logger.info("[ActionExecutor] progress_goal 跳过：无目标")
             return False
 
@@ -1298,6 +1308,18 @@ class ActionDispatcher:
                             if msg and not item.content:
                                 item.content = msg
                                 item.reason = selected.get("content", "") or item.reason
+                intent_id = str(item.metadata.get("intent_id") or "")
+                is_inflight = getattr(
+                    self._autonomous_executor,
+                    "has_inflight_intent",
+                    None,
+                )
+                if intent_id and callable(is_inflight) and is_inflight(intent_id):
+                    logger.debug(
+                        "[ActionDispatcher] 意图已在执行，跳过重复匹配: %s",
+                        intent_id,
+                    )
+                    continue
             if silent and item.action_type.value != "notify":
                 logger.debug("[ActionDispatcher] 能量沉寂(%.2f)，跳过: %s", energy, rule.cooldown_key)
                 continue

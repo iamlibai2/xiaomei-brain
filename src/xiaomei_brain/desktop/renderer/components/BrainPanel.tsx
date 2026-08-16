@@ -86,7 +86,12 @@ export function BrainPanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   const current = brain?.current_activity || null;
-  const secondary = (brain?.active_activities || []).filter((item) => item.id !== current?.id);
+  const secondary = (brain?.active_activities || []).filter((item) => (
+    item.status === "running" && item.id !== current?.id
+  ));
+  const recent = (brain?.recent_activities || []).filter((item) => (
+    item.status !== "running"
+  )).slice(0, 16);
 
   return <section className="brain-panel" aria-label={t("brainUi.title")}>
     <header className="brain-header">
@@ -137,7 +142,7 @@ export function BrainPanel({ onClose }: { onClose: () => void }) {
         <section className="brain-stream">
           <SectionTitle eyebrow={t("brainUi.streamEyebrow")} title={t("brainUi.recentActivity")} />
           <div className="brain-timeline">
-            {brain.recent_activities.length ? brain.recent_activities.map((item) => <TimelineItem key={item.id} activity={item} />) : <p className="brain-section-empty">{t("brainUi.noRecent")}</p>}
+            {recent.length ? recent.map((item) => <TimelineItem key={item.id} activity={item} />) : <p className="brain-section-empty">{t("brainUi.noRecent")}</p>}
           </div>
         </section>
       </main>
@@ -187,7 +192,7 @@ function ActivityStrip({ activity }: { activity: BrainActivitySnapshot }) {
 
 function TimelineItem({ activity }: { activity: BrainActivitySnapshot }) {
   const { t } = useTranslation();
-  const summary = activity.result_summary || activity.progress_summary || activity.error_message || statusName(activity.status, t);
+  const summary = activitySummary(activity, t);
   return <article className={`is-${activity.category}`}>
     <time>{formatClock(activity.updated_at)}</time>
     <span className="brain-timeline-node"><i /></span>
@@ -275,5 +280,17 @@ function relativeTime(value: number, t: (key: string, options?: Record<string, u
 function livingName(value: string | undefined, t: (key: string) => string): string { return t(`brainUi.living.${value || "unknown"}`); }
 function categoryName(value: string, t: (key: string) => string): string { return t(`brainUi.category.${value}`); }
 function statusName(value: string, t: (key: string) => string): string { return t(`brainUi.status.${value}`); }
+function activitySummary(activity: BrainActivitySnapshot, t: (key: string) => string): string {
+  if (activity.status === "paused") {
+    const key = `brainUi.pause.${activity.pause_reason || "unknown"}`;
+    const translated = t(key);
+    return translated === key ? statusName(activity.status, t) : translated;
+  }
+  if (activity.status === "failed") return t("brainUi.activityFailed");
+  if (activity.status === "cancelled") return t("brainUi.activityCancelled");
+  const summary = activity.result_summary || activity.progress_summary || activity.current_step;
+  if (summary === "Autonomous behavior started") return statusName(activity.status, t);
+  return summary || statusName(activity.status, t);
+}
 function intentName(value: string, t: (key: string) => string): string { const key = `brainUi.intent.${String(value || "unknown").toLowerCase()}`; const translated = t(key); return translated === key ? value : translated; }
 function scopeName(value: string, t: (key: string) => string): string { return value === "person" ? t("brainUi.personScope") : t("brainUi.agentScope"); }

@@ -46,14 +46,6 @@ class L2Engine:
     # 探索类工具白名单
     EXPLORE_TOOL_NAMES: set[str] = {"dag_expand", "dag_search", "web_search", "thought_search", "being", "check_inbox"}
 
-    # 欲望饥渴 → 对应意图类型
-    _DESIRE_INTENT_TYPE = {
-        "belonging": IntentType.GREET,
-        "cognition": IntentType.LEARN,
-        "achievement": IntentType.PROGRESS,
-        "expression": IntentType.EXPRESS,
-    }
-
     # These intents eventually send a message to a concrete Person.  An
     # Agent-scoped version has no valid delivery target and must not enter the
     # executable intent buffer.
@@ -218,15 +210,12 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.01)
 
-                # 欲望饥渴时，强制意图匹配对应欲望
+                # Desire starvation makes the model's chosen intent urgent.
+                # It must not rewrite the intent type: doing so leaves the
+                # original parameters attached to a different executor (for
+                # example LEARN + learn_topic becoming PROGRESS).
                 if intent and context.startswith("desire_starvation_"):
-                    desire_type = context.replace("desire_starvation_", "")
-                    expected = self._DESIRE_INTENT_TYPE.get(desire_type)
-                    c.intent_slot.urgent_intents.add((expected or intent.type).value)
-                    if expected and intent.type != expected:
-                        logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
-                                    intent.type.value, expected.value, context)
-                        intent = self._replace_intent_type(intent, expected)
+                    self._mark_desire_intent_urgent(context, intent)
 
                 # ── 调用 2：意识涌现（带探索工具）────────────
                 agent_core = self._c.agent._get_agent()
@@ -373,17 +362,10 @@ class L2Engine:
                 if c.drive:
                     c.drive.consume_energy(0.01)
 
-                # 欲望饥渴 force-correction
+                # Desire starvation only makes the chosen intent urgent; it
+                # never changes the intent's execution semantics.
                 if intent and context.startswith("desire_starvation_"):
-                    desire_type = context.replace("desire_starvation_", "")
-                    expected = self._DESIRE_INTENT_TYPE.get(desire_type)
-                    c.intent_slot.urgent_intents.add(
-                        (expected or intent.type).value
-                    )
-                    if expected and intent.type != expected:
-                        logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
-                                    intent.type.value, expected.value, context)
-                        intent = self._replace_intent_type(intent, expected)
+                    self._mark_desire_intent_urgent(context, intent)
             except Exception as e:
                 logger.warning("[Consciousness L2] 意图决策失败: %s", e)
 
@@ -750,16 +732,13 @@ class L2Engine:
                    "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
         return prompt
 
-    @staticmethod
-    def _replace_intent_type(intent: Intent, expected: IntentType) -> Intent:
-        """Correct only the type without discarding the model's target/message."""
-        return Intent(
-            type=expected,
-            priority=intent.priority,
-            content=intent.content,
-            trigger_time=intent.trigger_time,
-            source=intent.source,
-            params=dict(intent.params or {}),
+    def _mark_desire_intent_urgent(self, context: str, intent: Intent) -> None:
+        """Raise urgency without changing the model's chosen action."""
+        self._c.intent_slot.urgent_intents.add(intent.type.value)
+        logger.info(
+            "[Consciousness L2] 欲望饥渴提升意图紧迫度: %s（异常=%s）",
+            intent.type.value,
+            context,
         )
 
     def _person_candidates(self) -> list[Any]:

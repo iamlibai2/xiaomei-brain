@@ -9,6 +9,7 @@ from xiaomei_brain.drive.engine import DriveEngine
 from xiaomei_brain.drive.config import DriveConfig
 from xiaomei_brain.consciousness.self_image_proxy import SelfImage
 from xiaomei_brain.consciousness.action_dispatcher import ActionDispatcher
+from xiaomei_brain.consciousness.action_item import ActionItem, ActionType
 from xiaomei_brain.consciousness.rules import RULES, _init_rules
 
 
@@ -130,6 +131,32 @@ def test_progress_intent_produces_tool_action():
     assert queue[0].content == "progress_goal"
 
 
+def test_progress_intent_without_goal_is_consumed_as_terminal_noop():
+    _drive, si, dispatcher = _setup()
+    si.contribute_intent({
+        "type": "PROGRESS",
+        "priority": 60,
+        "content": "continue the current goal",
+    })
+    intent_id = si.intent.intent_buffer[0]["intent_id"]
+    dispatcher.inject_conscious_living(SimpleNamespace(
+        purpose=SimpleNamespace(get_current=lambda: None),
+        consciousness=SimpleNamespace(get_self_image=lambda: si),
+    ))
+    item = ActionItem(
+        action_type=ActionType.TOOL,
+        priority=0.6,
+        content="progress_goal",
+        reason="received PROGRESS intent",
+        source="intent",
+        cooldown_key="intent_progress",
+        metadata={"intent_id": intent_id, "intent_type": "PROGRESS"},
+    )
+
+    assert dispatcher._executor._do_progress_goal(item) is True
+    assert not si.intent.intent_buffer
+
+
 # ── No intent → empty queue ───────────────────────────────────────────
 
 def test_no_intent_no_actions():
@@ -189,6 +216,25 @@ def test_urgent_intent_only_bypasses_cooldown_for_first_submission():
         item for item in second
         if item.metadata.get("intent_type") == "GREET"
     ]
+
+
+def test_inflight_intent_is_skipped_before_it_reaches_the_action_queue():
+    _drive, si, dispatcher = _setup()
+    si.contribute_intent({
+        "type": "TALK",
+        "priority": 70,
+        "content": "继续聊聊",
+        "scope_type": "person",
+        "user_id": "person-a",
+    })
+    intent_id = si.intent.intent_buffer[0]["intent_id"]
+    dispatcher._autonomous_executor = SimpleNamespace(
+        has_inflight_intent=lambda candidate: candidate == intent_id,
+        submit=lambda _item: pytest.fail("inflight intent must not be submitted again"),
+    )
+
+    assert dispatcher.tick(si) == []
+    assert dispatcher.process_queue() is False
 
 
 def test_cooldown_expires():

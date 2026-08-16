@@ -159,7 +159,7 @@ export function HomePage({
   const speaking = useCoreStore((s) => Boolean(s.speakingByAgent[s.activeAgentId || ""]));
   const currentActivity = useCoreStore((s) => (
     s.activitiesByAgent[s.activeAgentId || ""] || []
-  ).find((item) => ["queued", "running", "paused"].includes(item.status)));
+  ).find((item) => item.status === "running"));
 
   const [activityPanelOpen, setActivityPanelOpen] = useState(false);
   const [rightSidebarSection, setRightSidebarSection] = useState<RightSidebarSection>("activity");

@@ -110,6 +110,38 @@ def test_ws_event_sequence_is_contiguous_per_delivered_session(monkeypatch):
     assert [params["timestamp"] for params in session_1] == [1000, 3000]
 
 
+def test_connection_observation_events_use_an_independent_sequence_stream(monkeypatch):
+    class Connections:
+        def __init__(self):
+            self.connections = {"desktop-1": object()}
+            self.frames = []
+
+        async def send(self, _conn_id, frame):
+            self.frames.append(frame)
+
+    connections = Connections()
+    adapter = WSAdapter(connections)
+    adapter.set_loop(object())
+
+    def run_now(coroutine, _loop):
+        asyncio.run(coroutine)
+
+    monkeypatch.setattr(
+        "xiaomei_brain.gateway.ws_adapter.asyncio.run_coroutine_threadsafe",
+        run_now,
+    )
+
+    adapter.send_connection_event("desktop-1", "brain.changed", {"revision": 2})
+    adapter.send_connection_event("desktop-1", "brain.changed", {"revision": 3})
+
+    params = [frame["params"] for frame in connections.frames]
+    assert [item["session_id"] for item in params] == [
+        "connection:desktop-1",
+        "connection:desktop-1",
+    ]
+    assert [item["sequence"] for item in params] == [1, 2]
+
+
 def test_replaced_websocket_loses_its_session_authority():
     connections = ConnectionManager()
     connections.connections["old-conn"] = object()
@@ -248,11 +280,13 @@ def test_realtime_pace_uses_the_public_conversation_event_path():
         agent=agent,
         _event_hub=event_hub,
         _clarify_listening=Signal(),
+        _cancel_requested=False,
     )
 
-    def run_pace(_msg, _context, *, on_output):
+    def run_pace(_msg, _context, *, on_output, cancel_check):
         assert callable(core.on_tool_start)
         assert callable(core.on_tool_complete)
+        assert callable(cancel_check)
         on_output("第一步结果")
         on_output("第二步结果")
         return "waiting_user"

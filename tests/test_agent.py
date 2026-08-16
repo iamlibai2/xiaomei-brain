@@ -940,3 +940,16 @@ def test_steer_preserved_after_handoff(mock_llm, registry):
     pending = agent.take_pending_steers()
     assert [item.content for item in pending] == ["late steer"]
     assert not any("late steer" in c for c in _user_contents(calls[0]))
+
+
+def test_tool_failure_detection_does_not_scan_successful_payload_text():
+    """Skill/document bodies may discuss failures without becoming failed calls."""
+    from xiaomei_brain.agent.core import _tool_result_failed
+    from xiaomei_brain.consciousness.conversation_driver import _tool_event_result_failed
+
+    skill_body = "# Skill\nIf validation failed, correct the input and retry."
+    assert not _tool_result_failed(skill_body)
+    assert not _tool_event_result_failed(skill_body)
+    assert _tool_result_failed('{"success": false, "error": {"type": "rate_limited"}}')
+    assert _tool_event_result_failed('{"success": false, "error": {"type": "rate_limited"}}')
+    assert _tool_result_failed("Error: provider unavailable")
