@@ -965,7 +965,12 @@ class ConversationDriver:
                     self.display.clear()
 
                     if parent._load_consciousness:
-                        parent.consciousness.on_user_interaction(current_msg.content, display_content, user_id=current_msg.user_id)
+                        parent.consciousness.on_user_interaction(
+                            current_msg.content,
+                            display_content,
+                            user_id=current_msg.user_id,
+                            session_id=current_msg.session_id,
+                        )
 
                     if display_content and self._should_deliver(current_msg.session_id):
                         logger.info("[ConversationDriver/Deliver] 尝试送达: session=%s len=%d",

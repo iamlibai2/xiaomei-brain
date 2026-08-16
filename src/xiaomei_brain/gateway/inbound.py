@@ -238,7 +238,7 @@ class Gateway:
             and raw.peer_type == "human"
             and hasattr(self._router, "note_active_route")
         ):
-            self._router.note_active_route(user_id, reply_route)
+            self._router.note_active_route(user_id, reply_route, session_id)
         is_local_terminal = (
             session_id == "main" or session_id.startswith("cli-")
         )

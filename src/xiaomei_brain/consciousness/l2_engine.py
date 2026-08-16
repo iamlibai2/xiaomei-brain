@@ -45,6 +45,8 @@ class L2Engine:
 
     # 探索类工具白名单
     EXPLORE_TOOL_NAMES: set[str] = {"dag_expand", "dag_search", "web_search", "thought_search", "being", "check_inbox"}
+    MAX_DECISION_SCOPES = 10
+    MESSAGES_PER_DECISION_SCOPE = 8
 
     # These intents eventually send a message to a concrete Person.  An
     # Agent-scoped version has no valid delivery target and must not enter the
@@ -199,11 +201,15 @@ class L2Engine:
         emergence_text = ""
         intent = None
         doubts: list[dict] = []
+        decision_scopes = self._decision_scopes()
 
         if llm:
             try:
                 # ── 调用 1：意图决策（ReAct + 工具）──────────────
-                intent_response = self._call_intent_react(context)
+                intent_response = self._call_intent_react(
+                    context,
+                    decision_scopes=decision_scopes,
+                )
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
 
@@ -286,7 +292,11 @@ class L2Engine:
             if intent and context.startswith("desire_starvation_"):
                 c.intent_slot.urgent_intents.add(intent.type.value)
 
-        intent = self._prepare_intent_for_buffer(intent)
+        intent = self._prepare_intent_for_buffer(
+            intent,
+            decision_scopes=decision_scopes,
+        )
+        self._finalize_decision_scopes(intent, decision_scopes)
 
         # 存入意图缓冲
         if intent and intent.is_actionable():
@@ -352,10 +362,14 @@ class L2Engine:
 
         llm = getattr(c.agent, "llm", None)
         intent = None
+        decision_scopes = self._decision_scopes()
 
         if llm:
             try:
-                intent_response = self._call_intent_react(context)
+                intent_response = self._call_intent_react(
+                    context,
+                    decision_scopes=decision_scopes,
+                )
                 intent = self._parse_intent_response(intent_response)
                 logger.debug("[Consciousness L2] 意图决策: %s", intent_response[:200])
 
@@ -375,7 +389,11 @@ class L2Engine:
             if intent and context.startswith("desire_starvation_"):
                 c.intent_slot.urgent_intents.add(intent.type.value)
 
-        intent = self._prepare_intent_for_buffer(intent)
+        intent = self._prepare_intent_for_buffer(
+            intent,
+            decision_scopes=decision_scopes,
+        )
+        self._finalize_decision_scopes(intent, decision_scopes)
 
         # 存入意图缓冲
         if intent and intent.is_actionable():
@@ -511,12 +529,62 @@ class L2Engine:
 
     # ── 调用 1：意图决策 ─────────────────────────────────────
 
-    def _call_intent_react(self, context: str) -> str:
+    def _decision_scopes(self) -> list[dict[str, Any]]:
+        """Return unreviewed Person+Session candidates, most recent first."""
+        getter = getattr(self._c, "pending_intent_scopes", None)
+        if callable(getter):
+            scopes = list(getter() or [])
+        else:
+            user_id = str(getattr(self._c, "_last_interaction_user_id", "") or "")
+            session_id = str(getattr(self._c, "_last_interaction_session_id", "") or "")
+            scopes = [{"user_id": user_id, "session_id": session_id}] if user_id and session_id else []
+        return [
+            dict(scope)
+            for scope in scopes[:self.MAX_DECISION_SCOPES]
+            if scope.get("user_id") and scope.get("session_id")
+        ]
+
+    def _call_intent_react(
+        self,
+        context: str,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        decision_scopes: list[dict[str, Any]] | None = None,
+    ) -> str:
         """通过 L2 独立 Agent 的 ReAct 循环进行意图决策（探索类工具，静默）。"""
         c = self._c
         l2_agent = self._get_l2_agent()
 
-        system_prompt = build_simple_context(c, mode="internal")
+        scopes = list(decision_scopes or [])
+        if not scopes and user_id and session_id:
+            scopes = [{"user_id": user_id, "session_id": session_id}]
+
+        # A single candidate can use the full Person+Session context directly.
+        # With multiple candidates, use the Agent context as the neutral base
+        # and inject every candidate symmetrically into the decision prompt.
+        scoped_user_id = user_id
+        scoped_session_id = session_id
+        if decision_scopes is not None:
+            if len(scopes) == 1:
+                scoped_user_id = str(scopes[0].get("user_id") or "") or None
+                scoped_session_id = str(scopes[0].get("session_id") or "") or None
+            elif len(scopes) > 1:
+                scoped_user_id = None
+                scoped_session_id = None
+
+        system_prompt = build_simple_context(
+            c,
+            mode="internal",
+            user_id=scoped_user_id,
+            session_id=scoped_session_id,
+        )
+        logger.info(
+            "[Consciousness] 意图决策上下文: scopes=%d person=%s session=%s",
+            len(scopes),
+            scoped_user_id or "agent",
+            scoped_session_id or "multi/none",
+        )
         has_goal = c.purpose and c.purpose.get_current() is not None
 
         # 查询各人物及 Agent 自身的待办记忆。人物归属随候选一起交给
@@ -550,7 +618,14 @@ class L2Engine:
             except Exception as e:
                 logger.warning("查询目标相关记忆失败: %s", e)
 
-        question = self._build_intent_prompt(context, has_goal=has_goal, goal_memories=goal_memories)
+        question = self._build_intent_prompt(
+            context,
+            has_goal=has_goal,
+            goal_memories=goal_memories,
+            context_user_id=scoped_user_id or "",
+            context_session_id=scoped_session_id or "",
+            decision_scopes=scopes,
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -584,7 +659,15 @@ class L2Engine:
                 logger.error("[Consciousness] ReAct 意图决策失败: %s", e, exc_info=True)
             return ""
 
-    def _build_intent_prompt(self, context: str, has_goal: bool = False, goal_memories: list[dict] | None = None) -> str:
+    def _build_intent_prompt(
+        self,
+        context: str,
+        has_goal: bool = False,
+        goal_memories: list[dict] | None = None,
+        context_user_id: str = "",
+        context_session_id: str = "",
+        decision_scopes: list[dict[str, Any]] | None = None,
+    ) -> str:
         """构建意图决策问题 prompt。"""
         context_note = ""
         if context:
@@ -673,6 +756,25 @@ class L2Engine:
             )
             prompt += "\n"
 
+        if context_user_id and context_session_id:
+            current_person = next(
+                (
+                    person.display_name
+                    for person in people
+                    if person.person_id == context_user_id
+                ),
+                context_user_id,
+            )
+            prompt += (
+                "\n当前决策上下文来自一个确定的对话现场：\n"
+                f"  - 人物：{current_person} | {context_user_id}\n"
+                f"  - 会话：{context_session_id}\n"
+                "系统上下文中的最近对话仅属于该人物和该会话，"
+                "可直接用于判断待办工作、后续行动和主动消息。\n"
+            )
+        elif decision_scopes:
+            prompt += self._render_decision_scope_candidates(decision_scopes)
+
         # 注入欲望水平提示，引导 LLM 将内在状态映射到意图
         if context in ("idle", "periodic", "user_idle_long", "user_idle_critical",
                        "accumulated_changes", "unknown", "desire_starvation",
@@ -727,10 +829,68 @@ class L2Engine:
                    "REASON: <理由，一句话>\n"
                    "TARGET_USER: <目标用户ID>（greet/care/express/talk 以及人物所属 work 必填；"
                    "Agent 自身 work 和其他意图填 \"-\"）\n"
+                   "TARGET_SESSION: <目标会话ID>（意图来自待审视对话时必填；否则填 \"-\"）\n"
                    "TOPIC: <学习主题>（LEARN 意图必填！从你的 REASON 中提取要学什么，必须填）\n"
                    "MESSAGE: <对话内容>（greet/care/express/talk 意图必填！直接输出你想说的话，50-300字，"
                    "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
         return prompt
+
+    def _render_decision_scope_candidates(
+        self,
+        scopes: list[dict[str, Any]],
+    ) -> str:
+        """Render bounded raw dialogue from every unreviewed conversation."""
+        db = getattr(self._c.agent, "conversation_db", None)
+        people_by_id = {
+            person.person_id: person.display_name
+            for person in self._person_candidates()
+        }
+        sections = [
+            "\n待审视对话现场（请根据承诺、待办、紧迫性和人物关系自主选择，"
+            "不要仅因为某个会话更新就优先它）："
+        ]
+        for index, scope in enumerate(scopes, 1):
+            user_id = str(scope.get("user_id") or "")
+            session_id = str(scope.get("session_id") or "")
+            display_name = people_by_id.get(user_id, user_id)
+            sections.append(
+                f"\n### 候选 {index}\n"
+                f"PERSON: {display_name} | {user_id}\n"
+                f"SESSION: {session_id}\n"
+                "RECENT_DIALOG:"
+            )
+            messages = []
+            if db is not None:
+                try:
+                    messages = db.get_recent(
+                        self.MESSAGES_PER_DECISION_SCOPE,
+                        session_id=session_id,
+                        user_id=user_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[Consciousness] 读取意图候选会话失败: %s/%s: %s",
+                        user_id,
+                        session_id,
+                        exc,
+                    )
+            for message in messages:
+                role = str(message.get("role") or "")
+                if role not in {"user", "assistant"}:
+                    continue
+                content = str(message.get("content") or "").strip()
+                content = re.sub(
+                    r"<(?:THINK|MEMORY|PROGRESS|NARR)>.*?</(?:THINK|MEMORY|PROGRESS|NARR)>",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                ).strip()
+                if content:
+                    sections.append(f"- {role}: {content[:800]}")
+            if not messages and scope.get("last_user_message"):
+                sections.append(f"- user: {str(scope['last_user_message'])[:800]}")
+        sections.append("\n从上述候选中形成人物意图时，TARGET_USER 和 TARGET_SESSION 必须来自同一个候选。\n")
+        return "\n".join(sections)
 
     def _mark_desire_intent_urgent(self, context: str, intent: Intent) -> None:
         """Raise urgency without changing the model's chosen action."""
@@ -753,7 +913,37 @@ class L2Engine:
             logger.exception("[Consciousness L2] 读取可联系人物失败")
             return []
 
-    def _prepare_intent_for_buffer(self, intent: Intent | None) -> Intent | None:
+    def _finalize_decision_scopes(
+        self,
+        intent: Intent | None,
+        scopes: list[dict[str, Any]],
+    ) -> None:
+        """Consume only conversation candidates actually reviewed by L2."""
+        if not scopes or intent is None:
+            return
+        if intent.type == IntentType.WAIT:
+            consume_all = getattr(self._c, "consume_intent_scopes", None)
+            if callable(consume_all):
+                consume_all(scopes)
+            return
+
+        params = intent.params or {}
+        user_id = str(params.get("user_id") or "")
+        session_id = str(params.get("session_id") or "")
+        if not user_id or not session_id:
+            return
+        consume_one = getattr(self._c, "consume_intent_scope", None)
+        if callable(consume_one):
+            consume_one(user_id, session_id)
+
+    def _prepare_intent_for_buffer(
+        self,
+        intent: Intent | None,
+        *,
+        context_user_id: str = "",
+        context_session_id: str = "",
+        decision_scopes: list[dict[str, Any]] | None = None,
+    ) -> Intent | None:
         """Resolve a Person-directed intent before it becomes executable."""
         if intent is None:
             return None
@@ -807,10 +997,40 @@ class L2Engine:
             self._c.intent_slot.urgent_intents.discard(intent.type.value)
             return None
 
+        scopes = list(decision_scopes or [])
+        if not scopes and context_user_id and context_session_id:
+            scopes = [{
+                "user_id": context_user_id,
+                "session_id": context_session_id,
+            }]
+        matching_scopes = [
+            scope for scope in scopes
+            if str(scope.get("user_id") or "") == resolved.person_id
+            and str(scope.get("session_id") or "")
+        ]
+        requested_session = str(params.get("session_id") or "").strip()
+        selected_scope = next(
+            (
+                scope for scope in matching_scopes
+                if str(scope.get("session_id") or "") == requested_session
+            ),
+            None,
+        )
+        if selected_scope is None and matching_scopes:
+            if requested_session:
+                logger.warning(
+                    "[Consciousness L2] 忽略不属于目标人物候选的 session: %s",
+                    requested_session,
+                )
+            selected_scope = matching_scopes[0]
+        selected_session = (
+            str(selected_scope.get("session_id") or "")
+            if selected_scope else ""
+        )
         params.update({
             "user_id": resolved.person_id,
-            "session_id": "",
-            "scope_type": "person",
+            "session_id": selected_session,
+            "scope_type": "session" if selected_session else "person",
         })
         return Intent(
             type=intent.type,
@@ -866,6 +1086,14 @@ class L2Engine:
         if target_user in ("-", "null", "none", ""):
             target_user = ""
 
+        target_session_match = re.search(r"TARGET_SESSION:\s*(.+)", block_content)
+        target_session = (
+            target_session_match.group(1).strip()
+            if target_session_match else ""
+        )
+        if target_session.lower() in ("-", "null", "none", ""):
+            target_session = ""
+
         # 解析 LEARN 意图的 TOPIC 字段
         topic_match = re.search(r"TOPIC:\s*(.+)", block_content)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
@@ -897,6 +1125,8 @@ class L2Engine:
             params["message"] = message
         if target_user:
             params["user_id"] = target_user
+        if target_session:
+            params["session_id"] = target_session
 
         return Intent(
             type=intent_type,

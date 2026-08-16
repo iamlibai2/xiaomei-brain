@@ -95,6 +95,72 @@ def test_person_alarm_is_consumed_only_after_delivery(monkeypatch):
     assert consumed == ["alarm-intent"]
 
 
+def test_person_proactive_resolves_latest_session_before_delivery():
+    deliveries = []
+    router = SimpleNamespace(session_for_user=lambda user_id: "session-a")
+    self_image = SimpleNamespace(intent=SimpleNamespace(urgent_intents=set()))
+    living = SimpleNamespace(
+        consciousness=SimpleNamespace(get_self_image=lambda: self_image),
+        drive=None,
+        agent=None,
+        _router=router,
+        _send_proactive=lambda content, **target: deliveries.append((content, target)) or True,
+    )
+    dispatcher = ActionDispatcher()
+    dispatcher._conscious_living = living
+    executor = ActionExecutor(dispatcher)
+    executor._consume_intent = lambda _item: None
+    item = ActionItem(
+        action_type=ActionType.PROACTIVE,
+        priority=0.7,
+        content="hello",
+        reason="greet",
+        source="intent",
+        cooldown_key="intent_greet",
+        metadata={
+            "intent_type": "GREET",
+            "intent_id": "greet-intent",
+            "scope_type": "person",
+            "user_id": "person-a",
+            "session_id": "",
+        },
+    )
+
+    assert executor.execute(item) is True
+    assert item.metadata["session_id"] == "session-a"
+    assert deliveries == [(
+        "hello",
+        {"user_id": "person-a", "session_id": "session-a"},
+    )]
+
+
+def test_person_proactive_is_persisted_to_latest_session():
+    writes = []
+    deliveries = []
+    route = SimpleNamespace(type="ws", target="session-a")
+    router = SimpleNamespace(
+        session_for_user=lambda user_id: "session-a",
+        route_for_session=lambda session_id: route,
+        route_for_user=lambda user_id: route,
+        deliver=lambda content, target: deliveries.append((content, target)) or True,
+    )
+    db = SimpleNamespace(log=lambda **record: writes.append(record))
+    living = ConsciousLiving.__new__(ConsciousLiving)
+    living.agent = SimpleNamespace(conversation_db=db, name="test")
+    living._router = router
+    living.on_proactive = None
+    living._agent_id = "test"
+
+    assert living._send_proactive("hello", user_id="person-a") is True
+    assert writes == [{
+        "session_id": "session-a",
+        "role": "assistant",
+        "content": "hello",
+        "user_id": "person-a",
+    }]
+    assert deliveries == [("hello", route)]
+
+
 def test_wake_preserves_durable_intents(monkeypatch):
     pending = [{"intent_id": "intent-a", "type": "work"}]
     intent_slot = SimpleNamespace(intent_buffer=pending, urgent_intents={"work"})

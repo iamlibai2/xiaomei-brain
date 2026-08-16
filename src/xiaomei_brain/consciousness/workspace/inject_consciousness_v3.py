@@ -205,11 +205,10 @@ def _assemble_proactive(si) -> str:
 
 
 def _assemble_internal(si) -> str:
-    """internal: 内部决策 — daily 完整上下文 + 所有用户的最近对话。
+    """internal: 内部决策上下文。
 
-    供 L2 意图决策、社交感知等内部 LLM 调用使用。
-    与 daily 的区别：额外渲染 recent_dialog（不过滤 user_id，展示全部用户消息），
-    让 LLM 在内部决策时能看到全局对话上下文。
+    调用者显式传入 Person + Session 时，recent_dialog 只属于该会话；
+    没有会话边界时不猜测人物，也不混入其他人物的原始对话。
     """
     return _join_sections(
         si,

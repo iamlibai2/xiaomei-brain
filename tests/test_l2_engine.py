@@ -1,9 +1,48 @@
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from xiaomei_brain.consciousness.core import Consciousness
 from xiaomei_brain.consciousness.intent import Intent, IntentType
 from xiaomei_brain.consciousness.l2_engine import L2Engine
 from xiaomei_brain.tools.registry import ToolRegistry
+
+
+def test_completed_conversations_remain_pending_per_person_and_session():
+    consciousness = Consciousness.__new__(Consciousness)
+    consciousness._last_interaction_user_id = ""
+    consciousness._last_interaction_session_id = ""
+    consciousness._intent_scope_lock = threading.Lock()
+    consciousness._pending_intent_scopes = {}
+    consciousness.self_image = SimpleNamespace(
+        update_from_interaction=lambda *_args, **_kwargs: None,
+    )
+
+    consciousness.on_user_interaction(
+        "做一个 PPT",
+        "好",
+        user_id="person-1",
+        session_id="session-1",
+    )
+    consciousness.on_user_interaction(
+        "写一个 Word",
+        "好",
+        user_id="person-2",
+        session_id="session-2",
+    )
+
+    scopes = consciousness.pending_intent_scopes()
+    assert [(item["user_id"], item["session_id"]) for item in scopes] == [
+        ("person-2", "session-2"),
+        ("person-1", "session-1"),
+    ]
+
+    consciousness.consume_intent_scope("person-2", "session-2")
+
+    remaining = consciousness.pending_intent_scopes()
+    assert [(item["user_id"], item["session_id"]) for item in remaining] == [
+        ("person-1", "session-1"),
+    ]
 
 
 def test_l2_core_inherits_and_refreshes_execution_context():
@@ -105,6 +144,182 @@ def test_person_directed_intent_resolves_display_name_to_person_id():
     assert resolved.params["user_id"] == "person_1"
     assert resolved.params["scope_type"] == "person"
     assert resolved.params["session_id"] == ""
+
+
+def test_person_directed_intent_keeps_the_conversation_that_fueled_decision():
+    person = SimpleNamespace(person_id="person_1", display_name="博士")
+    store = SimpleNamespace(list_people=lambda **_kwargs: [person])
+    agent = SimpleNamespace(people_service=SimpleNamespace(store=store))
+    consciousness = SimpleNamespace(
+        agent=agent,
+        intent_slot=SimpleNamespace(urgent_intents={"work"}),
+    )
+    engine = L2Engine(consciousness)
+    intent = Intent(
+        type=IntentType.WORK,
+        priority=70,
+        content="继续完善这个 PPT",
+        params={"user_id": "person_1"},
+    )
+
+    resolved = engine._prepare_intent_for_buffer(
+        intent,
+        context_user_id="person_1",
+        context_session_id="desktop-session-1",
+    )
+
+    assert resolved is not None
+    assert resolved.params["scope_type"] == "session"
+    assert resolved.params["user_id"] == "person_1"
+    assert resolved.params["session_id"] == "desktop-session-1"
+
+
+def test_intent_react_receives_person_and_session_context(monkeypatch):
+    captured = {}
+    person = SimpleNamespace(person_id="person_1", display_name="博士")
+    store = SimpleNamespace(list_people=lambda **_kwargs: [person])
+    agent = SimpleNamespace(
+        longterm_memory=None,
+        people_service=SimpleNamespace(store=store),
+    )
+    consciousness = SimpleNamespace(
+        agent=agent,
+        purpose=None,
+        _agent_id="test",
+        _cancel_check=lambda: False,
+        self_image=SimpleNamespace(body=SimpleNamespace(
+            desire_belonging=0.0,
+            desire_cognition=0.0,
+            desire_achievement=0.0,
+            desire_expression=0.0,
+            desire_significance=1.0,
+        )),
+    )
+    engine = L2Engine(consciousness)
+    def react_nodb(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return ""
+
+    runtime = SimpleNamespace(react_nodb=react_nodb)
+    engine._get_l2_agent = lambda: runtime
+
+    def fake_context(*_args, **kwargs):
+        captured["context_kwargs"] = kwargs
+        return "scoped-system"
+
+    monkeypatch.setattr(
+        "xiaomei_brain.consciousness.l2_engine.build_simple_context",
+        fake_context,
+    )
+
+    engine._call_intent_react(
+        "periodic",
+        user_id="person_1",
+        session_id="desktop-session-1",
+    )
+
+    assert captured["context_kwargs"]["user_id"] == "person_1"
+    assert captured["context_kwargs"]["session_id"] == "desktop-session-1"
+    assert "desktop-session-1" in captured["messages"][1]["content"]
+
+
+def test_intent_react_reviews_multiple_conversations_without_preselecting_user(monkeypatch):
+    captured = {}
+    people = [
+        SimpleNamespace(person_id="person_1", display_name="博士"),
+        SimpleNamespace(person_id="person_2", display_name="小帅"),
+    ]
+    store = SimpleNamespace(list_people=lambda **_kwargs: people)
+
+    class FakeConversationDB:
+        def get_recent(self, _count, *, session_id, user_id):
+            return [{
+                "role": "user",
+                "content": f"work from {user_id} in {session_id}",
+            }]
+
+    agent = SimpleNamespace(
+        longterm_memory=None,
+        conversation_db=FakeConversationDB(),
+        people_service=SimpleNamespace(store=store),
+    )
+    consciousness = SimpleNamespace(
+        agent=agent,
+        purpose=None,
+        _agent_id="test",
+        _cancel_check=lambda: False,
+        self_image=SimpleNamespace(body=SimpleNamespace(
+            desire_belonging=0.0,
+            desire_cognition=0.0,
+            desire_achievement=0.0,
+            desire_expression=0.0,
+            desire_significance=1.0,
+        )),
+    )
+    engine = L2Engine(consciousness)
+
+    def react_nodb(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return ""
+
+    engine._get_l2_agent = lambda: SimpleNamespace(react_nodb=react_nodb)
+
+    def fake_context(*_args, **kwargs):
+        captured["context_kwargs"] = kwargs
+        return "agent-system"
+
+    monkeypatch.setattr(
+        "xiaomei_brain.consciousness.l2_engine.build_simple_context",
+        fake_context,
+    )
+    scopes = [
+        {"user_id": "person_2", "session_id": "session-2"},
+        {"user_id": "person_1", "session_id": "session-1"},
+    ]
+
+    engine._call_intent_react("pending_conversations", decision_scopes=scopes)
+
+    assert captured["context_kwargs"]["user_id"] is None
+    assert captured["context_kwargs"]["session_id"] is None
+    prompt = captured["messages"][1]["content"]
+    assert "session-1" in prompt
+    assert "session-2" in prompt
+    assert "work from person_1" in prompt
+    assert "work from person_2" in prompt
+
+
+def test_intent_uses_the_session_selected_from_multiple_candidates():
+    people = [
+        SimpleNamespace(person_id="person_1", display_name="博士"),
+        SimpleNamespace(person_id="person_2", display_name="小帅"),
+    ]
+    store = SimpleNamespace(list_people=lambda **_kwargs: people)
+    consumed = []
+    consciousness = SimpleNamespace(
+        agent=SimpleNamespace(people_service=SimpleNamespace(store=store)),
+        intent_slot=SimpleNamespace(urgent_intents=set()),
+        consume_intent_scope=lambda user_id, session_id: consumed.append((user_id, session_id)),
+    )
+    engine = L2Engine(consciousness)
+    scopes = [
+        {"user_id": "person_2", "session_id": "session-2"},
+        {"user_id": "person_1", "session_id": "session-1"},
+    ]
+    parsed = engine._parse_intent_response(
+        "---INTENT---\n"
+        "INTENT: work\n"
+        "REASON: continue the promised document\n"
+        "TARGET_USER: person_1\n"
+        "TARGET_SESSION: session-1\n"
+    )
+
+    prepared = engine._prepare_intent_for_buffer(parsed, decision_scopes=scopes)
+    engine._finalize_decision_scopes(prepared, scopes)
+
+    assert prepared.params["scope_type"] == "session"
+    assert prepared.params["user_id"] == "person_1"
+    assert prepared.params["session_id"] == "session-1"
+    assert consumed == [("person_1", "session-1")]
 
 
 def test_person_directed_intent_without_valid_target_is_not_buffered():

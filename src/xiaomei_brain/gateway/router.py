@@ -88,6 +88,10 @@ class Router:
         self._adapters: dict[str, Any] = {}   # channel_type → ChannelAdapter
         self._default_route = OutputRoute("cli", "stdout")
         self._last_active: dict[str, OutputRoute] = {}  # user_id → 最近活跃渠道
+        # The route alone is not enough to persist Person-scoped proactive
+        # messages: Feishu/DingTalk targets are channel peers, not conversation
+        # session IDs. Keep the matching session boundary beside the route.
+        self._last_active_session: dict[str, str] = {}
         # A Person session can be open from multiple channels at once. Replies
         # belong to the channel that initiated a Turn, not to the first route
         # registered for the shared session.
@@ -164,6 +168,7 @@ class Router:
                 # 记录最近活跃渠道（用于主动消息的出口路由）
                 if msg.peer_type == "human" and msg.peer_id:
                     self._last_active[msg.peer_id] = best_rule.output_route
+                    self._last_active_session[msg.peer_id] = best_rule.session_id
 
                 return RoutedMsg(
                     session_id=best_rule.session_id,
@@ -212,7 +217,17 @@ class Router:
         with self._lock:
             return self._last_active.get(user_id)
 
-    def note_active_route(self, user_id: str, route: OutputRoute) -> None:
+    def session_for_user(self, user_id: str) -> str | None:
+        """Return the session paired with a Person's latest active route."""
+        with self._lock:
+            return self._last_active_session.get(user_id)
+
+    def note_active_route(
+        self,
+        user_id: str,
+        route: OutputRoute,
+        session_id: str | None = None,
+    ) -> None:
         """Remember an explicit reply route for later Person-scoped events.
 
         WebSocket routes are bound by authenticated session rather than by a
@@ -223,6 +238,8 @@ class Router:
             return
         with self._lock:
             self._last_active[user_id] = route
+            if session_id:
+                self._last_active_session[user_id] = session_id
 
     def bind_turn(self, turn_id: str, route: OutputRoute) -> None:
         """Remember the exact return channel for one accepted inbound Turn."""

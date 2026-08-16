@@ -468,6 +468,7 @@ def test_router_remembers_explicit_person_route_for_proactive_events():
 
     router = Router()
     route = OutputRoute("ws", "session-1")
-    router.note_active_route("person-1", route)
+    router.note_active_route("person-1", route, "session-1")
 
     assert router.route_for_user("person-1") == route
+    assert router.session_for_user("person-1") == "session-1"

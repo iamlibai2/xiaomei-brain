@@ -163,6 +163,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                         _global_router.note_active_route(
                             person_id,
                             OutputRoute("ws", session_id),
+                            session_id,
                         )
 
                 # 人物签名成功后，连接才获得会话和输出路由。
@@ -190,6 +191,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                         _global_router.note_active_route(
                             person_id,
                             OutputRoute("ws", session_id),
+                            session_id,
                         )
                     _peer_registered = True
             else:

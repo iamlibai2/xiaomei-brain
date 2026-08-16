@@ -129,6 +129,20 @@ class ActionExecutor:
             logger.debug("[ActionExecutor] unowned proactive action remains internal")
             return False
 
+        # Person-scoped intents deliberately do not persist a session when they
+        # are created. Resolve the Person's latest active destination at
+        # execution time, then use that same session for context and storage.
+        target_user_id = item.metadata.get("user_id", "")
+        target_session_id = item.metadata.get("session_id", "")
+        cl = self.dispatcher._conscious_living
+        router = getattr(cl, "_router", None) if cl else None
+        if not target_session_id and target_user_id and router:
+            session_for_user = getattr(router, "session_for_user", None)
+            if callable(session_for_user):
+                target_session_id = session_for_user(target_user_id) or ""
+                if target_session_id:
+                    item.metadata["session_id"] = target_session_id
+
         content = item.content
         if not content:
             # 空的 content：由 LLM 生成（通过 intent/content + SelfImage 状态）
@@ -139,8 +153,6 @@ class ActionExecutor:
         intent_type_for_consume = item.metadata.get("intent_type", "") if item.source == "intent" else ""
 
         # 目标用户 ID（多用户路由）
-        target_user_id = item.metadata.get("user_id", "")
-        target_session_id = item.metadata.get("session_id", "")
         delivered = self.dispatcher._send_proactive(
             content,
             user_id=target_user_id or None,
@@ -811,7 +823,13 @@ class ActionExecutor:
         if llm:
             try:
                 user_id = item.metadata.get("user_id")
-                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
+                system = build_simple_context(
+                    cl.consciousness,
+                    mode="proactive",
+                    user_input=prompt,
+                    user_id=user_id,
+                    session_id=item.metadata.get("session_id") or None,
+                )
                 resp = llm.chat(messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
@@ -887,7 +905,13 @@ class ActionExecutor:
         if llm:
             try:
                 user_id = item.metadata.get("user_id")
-                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
+                system = build_simple_context(
+                    cl.consciousness,
+                    mode="proactive",
+                    user_input=prompt,
+                    user_id=user_id,
+                    session_id=item.metadata.get("session_id") or None,
+                )
                 resp = llm.chat(messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
@@ -934,7 +958,13 @@ class ActionExecutor:
 
         if llm:
             try:
-                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=item.metadata.get("user_id"))
+                system = build_simple_context(
+                    cl.consciousness,
+                    mode="proactive",
+                    user_input=prompt,
+                    user_id=item.metadata.get("user_id"),
+                    session_id=item.metadata.get("session_id") or None,
+                )
                 resp = llm.chat(messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
@@ -988,7 +1018,13 @@ class ActionExecutor:
         if llm:
             try:
                 user_id = item.metadata.get("user_id")
-                system = build_simple_context(cl.consciousness, mode="proactive", user_input=prompt, user_id=user_id)
+                system = build_simple_context(
+                    cl.consciousness,
+                    mode="proactive",
+                    user_input=prompt,
+                    user_id=user_id,
+                    session_id=item.metadata.get("session_id") or None,
+                )
                 resp = llm.chat(messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},

@@ -164,6 +164,13 @@ class Consciousness:
         self._last_l2_time: float = time.time()   # [deprecated] 保留兼容；新代码用 _last_intent_time / _last_emerge_time
         self._last_snapshot_save_time: float = 0.0
         self._last_report: ConsciousnessReport | None = None
+        # Scope of the most recently completed human interaction. L2 runs in
+        # its own thread, so it must receive this immutable conversation
+        # boundary instead of reading the mutable realtime Agent Core.
+        self._last_interaction_user_id: str = ""
+        self._last_interaction_session_id: str = ""
+        self._intent_scope_lock = threading.Lock()
+        self._pending_intent_scopes: dict[tuple[str, str], dict[str, Any]] = {}
         self._running: bool = False
         self._l2_triggered_by_anomaly: str | None = None  # L1 异常类型 → L2，如 "desire_starvation_belonging"
         self._anomaly_cooldowns: dict[str, float] = {}  # 异常类型 → 上次触发时间
@@ -956,6 +963,12 @@ class Consciousness:
         if elapsed < cooldown:
             return None
 
+        # Every completed Person+Session remains visible until L2 has reviewed
+        # it. Multiple simultaneous users therefore cannot overwrite one
+        # another before autonomous work is considered.
+        if self.pending_intent_scopes():
+            return "pending_conversations"
+
         # IDLE 中优先保留真实的内部触发原因，不让定期兜底覆盖它们。
         if agent_state == "idle" and si.perception.user_idle_duration > self._cc.l2_idle_trigger:
             return "user_idle_long"
@@ -1169,9 +1182,60 @@ class Consciousness:
 
         logger.info("[Consciousness] 从 SelfModel 初始化完成")
 
-    def on_user_interaction(self, user_message: str, response: str, user_id: str | None = None) -> None:
+    def on_user_interaction(
+        self,
+        user_message: str,
+        response: str,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
         """用户交互时更新"""
+        self._last_interaction_user_id = str(user_id or "")
+        self._last_interaction_session_id = str(session_id or "")
+        if self._last_interaction_user_id and self._last_interaction_session_id:
+            key = (
+                self._last_interaction_user_id,
+                self._last_interaction_session_id,
+            )
+            with self._intent_scope_lock:
+                # Reinsert to keep the dict ordered by latest completed turn.
+                self._pending_intent_scopes.pop(key, None)
+                self._pending_intent_scopes[key] = {
+                    "user_id": key[0],
+                    "session_id": key[1],
+                    "last_user_message": str(user_message or "")[:1000],
+                    "updated_at": time.time(),
+                }
+                while len(self._pending_intent_scopes) > 20:
+                    oldest = next(iter(self._pending_intent_scopes))
+                    self._pending_intent_scopes.pop(oldest, None)
         self.self_image.update_from_interaction(user_message, response, user_id=user_id)
+
+    def pending_intent_scopes(self) -> list[dict[str, Any]]:
+        """Return unreviewed conversation scopes, most recent first."""
+        with self._intent_scope_lock:
+            return [
+                dict(scope)
+                for scope in reversed(self._pending_intent_scopes.values())
+            ]
+
+    def consume_intent_scope(self, user_id: str, session_id: str) -> None:
+        """Mark one concrete conversation as reviewed by intent decision."""
+        key = (str(user_id or ""), str(session_id or ""))
+        if not all(key):
+            return
+        with self._intent_scope_lock:
+            self._pending_intent_scopes.pop(key, None)
+
+    def consume_intent_scopes(self, scopes: list[dict[str, Any]]) -> None:
+        """Mark an immutable decision snapshot as reviewed."""
+        with self._intent_scope_lock:
+            for scope in scopes:
+                key = (
+                    str(scope.get("user_id") or ""),
+                    str(scope.get("session_id") or ""),
+                )
+                self._pending_intent_scopes.pop(key, None)
 
     def on_wake(self) -> ConsciousnessReport:
         """苏醒时调用。

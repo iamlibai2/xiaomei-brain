@@ -2708,6 +2708,11 @@ class ConsciousLiving(Living):
         """
         target_user = user_id or ""
         target_session = session_id or ""
+        router = getattr(self, "_router", None)
+        if not target_session and target_user and router:
+            session_for_user = getattr(router, "session_for_user", None)
+            if callable(session_for_user):
+                target_session = session_for_user(target_user) or ""
         if not target_user and not target_session:
             logger.info("[ConsciousLiving/Proactive] internal result retained; no external target")
             return False
