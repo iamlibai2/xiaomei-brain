@@ -2,6 +2,7 @@
 
 import time
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from xiaomei_brain.drive.engine import DriveEngine
@@ -169,6 +170,27 @@ def test_cooldown_blocks_repeat():
     # GREET intent is still in buffer, but cooldown should block it
     greet_actions = [a for a in queue2 if a.metadata.get("intent_type") == "GREET"]
     assert len(greet_actions) == 0
+
+
+def test_urgent_intent_only_bypasses_cooldown_for_first_submission():
+    drive, si, dispatcher = _setup()
+    si.intent.urgent_intents.add("greet")
+    _push_intent(si, "GREET")
+    dispatcher.inject_conscious_living(SimpleNamespace(
+        consciousness=SimpleNamespace(get_self_image=lambda: si),
+    ))
+    dispatcher._autonomous_executor = SimpleNamespace(submit=lambda _item: True)
+
+    first = dispatcher.tick(si)
+    assert len(first) == 1
+    assert dispatcher.process_queue() is True
+    assert "greet" not in si.intent.urgent_intents
+
+    second = dispatcher.tick(si)
+    assert not [
+        item for item in second
+        if item.metadata.get("intent_type") == "GREET"
+    ]
 
 
 def test_cooldown_expires():

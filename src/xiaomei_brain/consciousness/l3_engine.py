@@ -1,7 +1,7 @@
 """L3Engine: 深度反思引擎 — 清醒态沉思 + 梦境深度燃烧。
 
-统一的 L3 执行层。触发由 layer2.py / state_buffer.py / rules.py 各自负责，
-这里只管执行：prompt 构建 → LLM 调用 → 解析 → 存储 → 经验流。
+统一的 L3 执行层。清醒态的所有自主触发先经过同一个准入入口，
+再执行：prompt 构建 → LLM 调用 → 解析 → 存储 → 经验流。
 
 Usage:
     from .l3_engine import L3Engine
@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +37,28 @@ class DreamBurnReport:
     summary: str = ""
 
 
+@dataclass(frozen=True)
+class L3RunResult:
+    """Result of the single admission point for awake reflection."""
+
+    status: str
+    report: Any = None
+    error: str = ""
+
+    @property
+    def completed(self) -> bool:
+        return self.status == "completed"
+
+    @property
+    def attempted(self) -> bool:
+        return self.status in {"completed", "failed"}
+
+    @property
+    def blocks_l4(self) -> bool:
+        """Whether this request occupies the current deep-cognition cycle."""
+        return self.status in {"completed", "failed", "busy"}
+
+
 class L3Engine:
     """L3 深度反思引擎。
 
@@ -46,10 +69,54 @@ class L3Engine:
 
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
-        # 上次 L3 沉思时间（冷却用）
-        self._last_tick_time: float = 0.0
+        self._run_lock = threading.Lock()
+        self._running = False
 
     # ── 公共入口 ─────────────────────────────────────────────
+
+    def request_reflection(
+        self,
+        *,
+        source: str,
+        reason: str = "",
+    ) -> L3RunResult:
+        """Admit one awake reflection through a shared lock and cooldown.
+
+        Every request source uses this method.  The attempt timestamp is
+        recorded before the model call, so an empty result or provider failure
+        cannot cause a tight retry loop.
+        """
+        c = self._c
+        if not bool(getattr(c._cc, "l3_enabled", True)):
+            return L3RunResult(status="disabled")
+
+        now = time.time()
+        with self._run_lock:
+            if self._running:
+                return L3RunResult(status="busy")
+            cooldown = max(0.0, float(getattr(c._cc, "l3_cooldown", 1800.0)))
+            if now - c._last_l3_time < cooldown:
+                return L3RunResult(status="cooldown")
+            self._running = True
+            c._last_l3_time = now
+
+        logger.info(
+            "[L3Engine] 接受深度反思请求: source=%s reason=%s",
+            source,
+            reason[:120],
+        )
+        try:
+            report = self.tick_l3()
+            return L3RunResult(status="completed", report=report)
+        except Exception as exc:
+            logger.exception("[L3Engine] 深度反思失败: source=%s", source)
+            return L3RunResult(
+                status="failed",
+                error=str(exc) or exc.__class__.__name__,
+            )
+        finally:
+            with self._run_lock:
+                self._running = False
 
     def tick_l3(self) -> ConsciousnessReport:
         """清醒态 L3 沉思 — LLM 深度反思。
@@ -64,37 +131,34 @@ class L3Engine:
         system_prompt = build_simple_context(c, mode="internal")
         user_prompt = self._build_tick_prompt()
 
-        full_report = ""
         llm = getattr(c.agent, "llm", None)
-        if llm:
-            try:
-                resp = llm.chat(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    tools=None,
-                )
-                reasoning = resp.reasoning or ""
-                content = resp.content or ""
-                full_report = content or reasoning
-                logger.debug("[L3Engine] 沉思 (%d 字)", len(full_report))
+        if llm is None:
+            raise RuntimeError("L3 requires an available model")
 
-                # 终端展示
-                if reasoning or content:
-                    from .internal_display import print_section, C_DIM, RESET
-                    from .internal_display import print_markdown
-                    print_section("L3 沉思", icon="🕯️")
-                    if reasoning:
-                        print(f"\033[2m{reasoning}{RESET}", flush=True)
-                    if content:
-                        print_markdown(content, style="color(144)")
+        resp = llm.chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=None,
+        )
+        reasoning = resp.reasoning or ""
+        content = resp.content or ""
+        full_report = content or reasoning
+        logger.debug("[L3Engine] 沉思 (%d 字)", len(full_report))
 
-                if c.drive:
-                    c.drive.consume_energy(0.1)
-            except Exception as e:
-                logger.warning("[L3Engine] LLM 调用失败: %s", e)
-                full_report = self._fallback_report()
+        # 终端展示
+        if reasoning or content:
+            from .internal_display import print_section, RESET
+            from .internal_display import print_markdown
+            print_section("L3 沉思", icon="🕯️")
+            if reasoning:
+                print(f"\033[2m{reasoning}{RESET}", flush=True)
+            if content:
+                print_markdown(content, style="color(144)")
+
+        if c.drive:
+            c.drive.consume_energy(0.1)
 
         # 提取摘要
         summary = self._extract_summary(full_report)
@@ -250,7 +314,7 @@ class L3Engine:
                 trigger=trigger,
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
-                user_id=getattr(c.agent, "user_id", "global"),
+                user_id="global",
             )
 
     def _log_to_exp_stream(self, label: str, summary: str) -> None:
@@ -280,23 +344,6 @@ class L3Engine:
                 if len(sentence) <= 50:
                     return sentence
         return full_report[:50]
-
-    def _fallback_report(self) -> str:
-        """规则生成深度报告（LLM 失败时）。"""
-        si = self._c.self_image
-        time_info = datetime.now().strftime("%H:%M")
-
-        lines = [
-            f"现在是{time_info}。",
-            f"我（{si.being.name}）的意识运行了{int(si.history.consciousness_age)}秒。",
-            f"我的情绪基调是{si.body.mood}，能量水平{si.body.energy:.2f}。",
-            f"对方最后活跃在{datetime.fromtimestamp(si.perception.last_user_activity_time).strftime('%H:%M') if si.perception.last_user_activity_time > 0 else '很久前'}，",
-            f"已经空闲{int(si.perception.user_idle_duration / 60)}分钟。",
-            f"我的目标是{si.mind.primary_goal}，进展{si.mind.goal_progress:.2f}。",
-            f"我目前有{si.mind.memory_count}条长期记忆。",
-        ]
-
-        return "\n".join(lines)
 
     # ── [REF] 旧版 _build_deep_prompt ────────────────────────────
     # 从 core.py 搬迁至此，仅作参考，未接入当前流程。

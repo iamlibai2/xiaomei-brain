@@ -219,6 +219,10 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert current["values"]["emergence_periodic_interval_minutes"] == 30.0
     assert current["values"]["emergence_changes_trigger"] == 5.0
     assert current["values"]["emergence_energy_threshold_percent"] == 20.0
+    assert current["values"]["reflection_enabled"] is True
+    assert current["values"]["reflection_min_interval_minutes"] == 30.0
+    assert current["values"]["reflection_periodic_interval_minutes"] == 360.0
+    assert current["values"]["reflection_changes_trigger"] == 15.0
 
     response = router.dispatch(
         "conn-1",
@@ -245,6 +249,10 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
                 "emergence_periodic_interval_minutes": 60,
                 "emergence_changes_trigger": 7,
                 "emergence_energy_threshold_percent": 25,
+                "reflection_enabled": True,
+                "reflection_min_interval_minutes": 45,
+                "reflection_periodic_interval_minutes": 480,
+                "reflection_changes_trigger": 12,
             },
             "revision": current["revision"],
         },
@@ -272,6 +280,10 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert living._config.consciousness.l2_emergence_interval == 3600.0
     assert living._config.consciousness.l2_emergence_changes_trigger == 7
     assert living._config.consciousness.l2_emergence_energy_threshold == 0.25
+    assert living._config.consciousness.l3_enabled is True
+    assert living._config.consciousness.l3_cooldown == 2700.0
+    assert living._config.consciousness.l3_interval == 28800.0
+    assert living._config.consciousness.l3_changes_trigger == 12
 
     persisted = yaml.safe_load(brain_path.read_text(encoding="utf-8"))
     consciousness = persisted["consciousness"]
@@ -290,6 +302,10 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert consciousness["l2_emergence_interval"] == 3600.0
     assert consciousness["l2_emergence_changes_trigger"] == 7
     assert consciousness["l2_emergence_energy_threshold"] == 0.25
+    assert consciousness["l3_enabled"] is True
+    assert consciousness["l3_cooldown"] == 2700.0
+    assert consciousness["l3_interval"] == 28800.0
+    assert consciousness["l3_changes_trigger"] == 12
 
 
 def test_rhythm_config_uses_separate_idle_and_sleep_durations(tmp_path):

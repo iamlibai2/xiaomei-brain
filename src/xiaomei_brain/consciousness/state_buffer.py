@@ -107,9 +107,10 @@ class StateChangeBuffer:
 
     # ── 读取（L2/L3 调度判断）──────────────────────────
 
-    def should_trigger_l3(self) -> bool:
-        """累积变化是否足够触发 L3 沉思。"""
-        return len(self._changes) > self.L3_TRIGGER_COUNT
+    def should_trigger_l3(self, threshold: int | None = None) -> bool:
+        """有意义的累积变化是否达到 L3 沉思阈值。"""
+        trigger_count = self.L3_TRIGGER_COUNT if threshold is None else threshold
+        return self.meaningful_count() >= max(1, int(trigger_count))
 
     def meaningful_count(self) -> int:
         """返回可作为认知素材的变化数量。

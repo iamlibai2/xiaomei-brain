@@ -54,6 +54,16 @@ class L2Engine:
         "expression": IntentType.EXPRESS,
     }
 
+    # These intents eventually send a message to a concrete Person.  An
+    # Agent-scoped version has no valid delivery target and must not enter the
+    # executable intent buffer.
+    _PERSON_DIRECTED_INTENTS = {
+        IntentType.GREET,
+        IntentType.CARE,
+        IntentType.EXPRESS,
+        IntentType.TALK,
+    }
+
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
@@ -206,7 +216,7 @@ class L2Engine:
                     if expected and intent.type != expected:
                         logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
                                     intent.type.value, expected.value, context)
-                        intent = Intent(type=expected, priority=intent.priority, content=intent.content)
+                        intent = self._replace_intent_type(intent, expected)
 
                 # ── 调用 2：意识涌现（带探索工具）────────────
                 agent_core = self._c.agent._get_agent()
@@ -276,6 +286,8 @@ class L2Engine:
             intent = self._fallback_intent(context)
             if intent and context.startswith("desire_starvation_"):
                 c.intent_slot.urgent_intents.add(intent.type.value)
+
+        intent = self._prepare_intent_for_buffer(intent)
 
         # 存入意图缓冲
         if intent and intent.is_actionable():
@@ -361,7 +373,7 @@ class L2Engine:
                     if expected and intent.type != expected:
                         logger.info("[Consciousness L2] 意图修正: %s → %s（异常=%s）",
                                     intent.type.value, expected.value, context)
-                        intent = Intent(type=expected, priority=intent.priority, content=intent.content)
+                        intent = self._replace_intent_type(intent, expected)
             except Exception as e:
                 logger.warning("[Consciousness L2] 意图决策失败: %s", e)
 
@@ -370,6 +382,8 @@ class L2Engine:
             intent = self._fallback_intent(context)
             if intent and context.startswith("desire_starvation_"):
                 c.intent_slot.urgent_intents.add(intent.type.value)
+
+        intent = self._prepare_intent_for_buffer(intent)
 
         # 存入意图缓冲
         if intent and intent.is_actionable():
@@ -635,6 +649,18 @@ class L2Engine:
         if context_note:
             prompt += f"\n{context_note}\n"
 
+        people = self._person_candidates()
+        if people:
+            prompt += (
+                "\n可联系人物（主动联系某人时，TARGET_USER 必须填写下面的 person_id，"
+                "不要填写称呼或姓名）：\n"
+            )
+            prompt += "\n".join(
+                f"  - {person.person_id} | {person.display_name}"
+                for person in people
+            )
+            prompt += "\n"
+
         # 注入欲望水平提示，引导 LLM 将内在状态映射到意图
         if context in ("idle", "periodic", "user_idle_long", "user_idle_critical",
                        "accumulated_changes", "unknown", "desire_starvation",
@@ -692,6 +718,83 @@ class L2Engine:
                    "MESSAGE: <对话内容>（greet/care/express/talk 意图必填！直接输出你想说的话，50-300字，"
                    "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
         return prompt
+
+    @staticmethod
+    def _replace_intent_type(intent: Intent, expected: IntentType) -> Intent:
+        """Correct only the type without discarding the model's target/message."""
+        return Intent(
+            type=expected,
+            priority=intent.priority,
+            content=intent.content,
+            trigger_time=intent.trigger_time,
+            source=intent.source,
+            params=dict(intent.params or {}),
+        )
+
+    def _person_candidates(self) -> list[Any]:
+        """Return active Persons that L2 may address, most recent first."""
+        service = getattr(self._c.agent, "people_service", None)
+        store = getattr(service, "store", None)
+        if store is None:
+            return []
+        try:
+            return list(store.list_people(status="active"))[:20]
+        except Exception:
+            logger.exception("[Consciousness L2] 读取可联系人物失败")
+            return []
+
+    def _prepare_intent_for_buffer(self, intent: Intent | None) -> Intent | None:
+        """Resolve a Person-directed intent before it becomes executable."""
+        if intent is None or intent.type not in self._PERSON_DIRECTED_INTENTS:
+            return intent
+
+        params = dict(intent.params or {})
+        requested = str(params.get("user_id") or "").strip()
+        people = self._person_candidates()
+        resolved = next(
+            (person for person in people if person.person_id == requested),
+            None,
+        )
+        if resolved is None and requested:
+            named = [
+                person for person in people
+                if person.display_name.strip().casefold() == requested.casefold()
+            ]
+            if len(named) == 1:
+                resolved = named[0]
+
+        if resolved is None:
+            clues = "\n".join((intent.content, str(params.get("message") or "")))
+            mentioned = [
+                person for person in people
+                if person.display_name.strip()
+                and person.display_name.strip() in clues
+            ]
+            if len(mentioned) == 1:
+                resolved = mentioned[0]
+
+        if resolved is None:
+            logger.warning(
+                "[Consciousness L2] 放弃无有效人物目标的 %s 意图: target=%r",
+                intent.type.value,
+                requested,
+            )
+            self._c.intent_slot.urgent_intents.discard(intent.type.value)
+            return None
+
+        params.update({
+            "user_id": resolved.person_id,
+            "session_id": "",
+            "scope_type": "person",
+        })
+        return Intent(
+            type=intent.type,
+            priority=intent.priority,
+            content=intent.content,
+            trigger_time=intent.trigger_time,
+            source=intent.source,
+            params=params,
+        )
 
     @staticmethod
     def _strip_block(text: str, marker: str) -> str:

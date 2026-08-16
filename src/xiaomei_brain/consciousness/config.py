@@ -32,7 +32,10 @@ class ConsciousnessConfig:
     l2_emergence_changes_trigger: int = 5   # 有意义状态变化触发阈值（条数）
     l2_emergence_energy_threshold: float = 0.2  # 意识涌现最低能量
     sleep_to_dream_threshold: float = 300.0  # 入梦触发（SLEEPING 持续秒数→入梦信号）
-    l3_cooldown: float = 1800.0       # L3 沉思冷却（秒）
+    l3_enabled: bool = True            # 是否允许清醒态深度反思
+    l3_cooldown: float = 1800.0        # 两次 L3 尝试的最短间隔（秒）
+    l3_interval: float = 21600.0       # 无明显变化时的定期兜底（秒）
+    l3_changes_trigger: int = 15       # 有意义状态变化触发阈值（条数）
     l4_cooldown: float = 14400.0       # L4 深度联想冷却（秒，默认 4 小时）
     l4_timeout: float = 28800.0        # L4 定期兜底（秒，默认 8 小时）
     l4_desire_threshold: float = 0.7   # L4 欲望张力触发阈值

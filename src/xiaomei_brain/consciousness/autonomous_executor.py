@@ -58,6 +58,7 @@ class AutonomousBehaviorExecutor:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._current: _QueuedBehavior | None = None
+        self._inflight_intent_ids: set[str] = set()
 
     @property
     def busy(self) -> bool:
@@ -83,9 +84,25 @@ class AutonomousBehaviorExecutor:
     def submit(self, item: Any) -> bool:
         if self._stop_event.is_set():
             return False
+        intent_id = self._intent_id(item)
+        if intent_id:
+            with self._lock:
+                if intent_id in self._inflight_intent_ids:
+                    logger.debug(
+                        "[AutonomousExecutor] Duplicate intent ignored: %s",
+                        intent_id,
+                    )
+                    return False
+                self._inflight_intent_ids.add(intent_id)
         self.start()
-        activity_id = self._create_activity(item)
-        self._queue.put(_QueuedBehavior(item=item, activity_id=activity_id))
+        try:
+            activity_id = self._create_activity(item)
+            self._queue.put(_QueuedBehavior(item=item, activity_id=activity_id))
+        except Exception:
+            if intent_id:
+                with self._lock:
+                    self._inflight_intent_ids.discard(intent_id)
+            raise
         return True
 
     def stop(self, timeout: float = 10.0) -> None:
@@ -103,6 +120,8 @@ class AutonomousBehaviorExecutor:
                     pending.activity_id,
                     summary="Agent stopped before the behavior started",
                 )
+            if isinstance(pending, _QueuedBehavior):
+                self._release_intent(pending.item)
         self._queue.put(_STOP)
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
@@ -132,8 +151,7 @@ class AutonomousBehaviorExecutor:
                 )
                 run_id = uuid.uuid4().hex
                 runtime_session_id = f"autonomous:{action_name}:{run_id}"
-                scope_type = str(item.metadata.get("scope_type") or "agent")
-                target_user_id = str(item.metadata.get("user_id") or "")
+                metadata, scope_type, target_user_id = self._execution_scope(item)
                 runtime_user_id = target_user_id if scope_type in ("person", "session") else "system"
                 memory_scope_id = target_user_id if runtime_user_id != "system" else "global"
                 runtime = self._factory.create(AgentRuntimeContext(
@@ -205,6 +223,29 @@ class AutonomousBehaviorExecutor:
             finally:
                 with self._lock:
                     self._current = None
+                    self._inflight_intent_ids.discard(self._intent_id(item))
+
+    @staticmethod
+    def _intent_id(item: Any) -> str:
+        metadata = getattr(item, "metadata", None)
+        return str((metadata or {}).get("intent_id") or "")
+
+    @staticmethod
+    def _execution_scope(item: Any) -> tuple[dict[str, Any], str, str]:
+        """Resolve the explicit target, preserving legacy person-scoped items."""
+        metadata = getattr(item, "metadata", None) or {}
+        target_user_id = str(metadata.get("user_id") or "")
+        scope_type = str(
+            metadata.get("scope_type")
+            or ("person" if target_user_id else "agent")
+        )
+        return metadata, scope_type, target_user_id
+
+    def _release_intent(self, item: Any) -> None:
+        intent_id = self._intent_id(item)
+        if intent_id:
+            with self._lock:
+                self._inflight_intent_ids.discard(intent_id)
 
     def _finish_activity(self, activity_id: str, item: Any, succeeded: bool) -> None:
         if not activity_id:
@@ -236,10 +277,9 @@ class AutonomousBehaviorExecutor:
             return ""
         try:
             category, kind, title = self._describe(item)
-            metadata = getattr(item, "metadata", {}) or {}
-            person_id = str(metadata.get("user_id") or "").strip() or None
+            metadata, scope_type, target_user_id = self._execution_scope(item)
+            person_id = target_user_id.strip() or None
             session_id = str(metadata.get("session_id") or "").strip()
-            scope_type = str(metadata.get("scope_type") or "agent")
             scope_id = (
                 session_id if scope_type == "session" and session_id
                 else person_id if scope_type == "person" and person_id

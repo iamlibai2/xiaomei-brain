@@ -38,7 +38,7 @@ from .intent import Intent, IntentType, create_wait_intent, create_greet_intent,
 from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
-from .l3_engine import L3Engine
+from .l3_engine import L3Engine, L3RunResult
 from .l4_engine import L4Engine
 from .state_buffer import StateChangeBuffer
 from ..purpose import PurposeEngine
@@ -715,12 +715,22 @@ class Consciousness:
     # ── L3: LLM 沉思（清醒态，独立于梦境） ───────────────────────────
 
     def tick_L3(self) -> ConsciousnessReport:
-        """LLM 沉思（清醒态，独立于梦境）→ 委托给 L3Engine。"""
+        """Direct L3 execution for explicit/manual callers."""
         if self._l3_engine is None:
             self._l3_engine = L3Engine(self)
         report = self._l3_engine.tick_l3()
         self._state_buffer.clear()
         return report
+
+    def request_L3(self, *, source: str, reason: str = "") -> L3RunResult:
+        """Route every autonomous L3 request through one admission point."""
+        result = self._get_l3_engine().request_reflection(
+            source=source,
+            reason=reason,
+        )
+        if result.completed:
+            self._state_buffer.clear()
+        return result
 
     def _get_l3_engine(self) -> L3Engine:
         """懒初始化 L3Engine。"""
@@ -1015,6 +1025,9 @@ class Consciousness:
 
         条件：冷却 + 足够能量 + 累积素材充足。
         """
+        if not bool(getattr(self._cc, "l3_enabled", True)):
+            return False
+
         # SLEEPING/DREAMING 中不做沉思
         if agent_state in ("sleeping", "dreaming", "working"):
             return False
@@ -1030,11 +1043,17 @@ class Consciousness:
             return False
 
         # 累积变化充足（有素材可深思）
-        if self._state_buffer.should_trigger_l3():
+        if self._state_buffer.should_trigger_l3(
+            int(getattr(self._cc, "l3_changes_trigger", 15))
+        ):
             return True
 
         # 定期触发（即使变化不多，也定期深度反思）
-        if elapsed_since_last >= self._cc.l3_cooldown * 2:
+        interval = max(
+            self._cc.l3_cooldown,
+            float(getattr(self._cc, "l3_interval", 21600.0)),
+        )
+        if elapsed_since_last >= interval:
             return True
 
         return False

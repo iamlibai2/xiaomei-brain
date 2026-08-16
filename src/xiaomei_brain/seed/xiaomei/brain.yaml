@@ -74,7 +74,10 @@ consciousness:
   l2_emergence_energy_threshold: 0.2
   sleep_to_dream_threshold:    300.0
   dream_report_enabled: true
+  l3_enabled:           true
   l3_cooldown:          1800.0
+  l3_interval:          21600.0
+  l3_changes_trigger:   15
   sc_interval:          3600.0
   energy_low_threshold: 0.1
   energy_silent_threshold: 0.15

@@ -127,6 +127,41 @@ def test_autonomous_executor_is_non_blocking_and_serial() -> None:
     assert all(runtime is not instance._agent for runtime in runtimes)
 
 
+def test_autonomous_executor_deduplicates_same_inflight_intent() -> None:
+    instance = FakeAgentInstance()
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    calls = 0
+
+    def execute(_item, _runtime, _cancel_check, _activity_context):
+        nonlocal calls
+        calls += 1
+        started.set()
+        release.wait(1.0)
+        completed.set()
+        return True
+
+    executor = AutonomousBehaviorExecutor(instance, execute)
+    item = SimpleNamespace(
+        action_type=SimpleNamespace(value="proactive"),
+        metadata={"intent_id": "intent_same"},
+    )
+
+    assert executor.submit(item) is True
+    assert started.wait(1.0)
+    assert executor.submit(item) is False
+    release.set()
+    assert completed.wait(1.0)
+
+    deadline = time.time() + 1.0
+    while executor.busy and time.time() < deadline:
+        time.sleep(0.01)
+    assert executor.submit(item) is True
+    executor.stop()
+    assert calls in (1, 2)
+
+
 def test_autonomous_executor_survives_fatal_model_error(tmp_path) -> None:
     instance = FakeAgentInstance()
     store = ActivityStore(tmp_path / "brain.db")

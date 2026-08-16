@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from xiaomei_brain.consciousness.intent import Intent, IntentType
 from xiaomei_brain.consciousness.l2_engine import L2Engine
 from xiaomei_brain.tools.registry import ToolRegistry
 
@@ -58,3 +59,65 @@ def test_emergence_reuses_l2_agent_core():
     assert call["quiet"] is True
     assert call["silent"] is True
     assert call["excluded_tool_names"] == {"being"}
+
+
+def test_intent_type_correction_preserves_target_and_message():
+    original = Intent(
+        type=IntentType.TALK,
+        priority=82,
+        content="想和博士聊聊",
+        trigger_time=123.0,
+        source="consciousness",
+        params={"user_id": "person_1", "message": "最近怎么样？"},
+    )
+
+    corrected = L2Engine._replace_intent_type(original, IntentType.GREET)
+
+    assert corrected.type is IntentType.GREET
+    assert corrected.trigger_time == 123.0
+    assert corrected.source == "consciousness"
+    assert corrected.params == original.params
+    assert corrected.params is not original.params
+
+
+def test_person_directed_intent_resolves_display_name_to_person_id():
+    person = SimpleNamespace(person_id="person_1", display_name="博士")
+    store = SimpleNamespace(list_people=lambda **_kwargs: [person])
+    agent = SimpleNamespace(people_service=SimpleNamespace(store=store))
+    consciousness = SimpleNamespace(
+        agent=agent,
+        intent_slot=SimpleNamespace(urgent_intents={"greet"}),
+    )
+    engine = L2Engine(consciousness)
+    intent = Intent(
+        type=IntentType.GREET,
+        priority=80,
+        content="想跟博士聊几句",
+        params={"user_id": "博士", "message": "博士，最近怎么样？"},
+    )
+
+    resolved = engine._prepare_intent_for_buffer(intent)
+
+    assert resolved is not None
+    assert resolved.params["user_id"] == "person_1"
+    assert resolved.params["scope_type"] == "person"
+    assert resolved.params["session_id"] == ""
+
+
+def test_person_directed_intent_without_valid_target_is_not_buffered():
+    store = SimpleNamespace(list_people=lambda **_kwargs: [])
+    agent = SimpleNamespace(people_service=SimpleNamespace(store=store))
+    urgent = {"greet"}
+    engine = L2Engine(SimpleNamespace(
+        agent=agent,
+        intent_slot=SimpleNamespace(urgent_intents=urgent),
+    ))
+
+    result = engine._prepare_intent_for_buffer(Intent(
+        type=IntentType.GREET,
+        priority=80,
+        content="想问候某个人",
+    ))
+
+    assert result is None
+    assert "greet" not in urgent

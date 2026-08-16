@@ -277,19 +277,25 @@ class Layer2DefaultNetwork:
                         l3_triggered = True
                         self._log(f"{ts} L3 触发 [沉思] agent_state={agent_state} → tick_L3")
                         logger.info("[Layer2] L3 触发（沉思，agent_state=%s）", agent_state)
-                        self._c._last_l3_time = time.time()
                         self._observe_state("deep_reflection", "正在进行深度反思")
                         try:
-                            report = self._c.tick_L3()
-                            self._display_processing_result(
-                                "l3_reflection",
-                                "深度反思",
-                                str(getattr(report, "summary", "") or "")[:200],
+                            result = self._c.request_L3(
+                                source="scheduler",
+                                reason="状态变化或定期兜底",
                             )
-                            self._log(f"{ts} L3 tick_L3 完成")
+                            # An in-flight L3 also owns this deep-cognition
+                            # cycle; do not start L4 beside it.
+                            l3_triggered = result.blocks_l4
+                            if result.completed:
+                                self._display_processing_result(
+                                    "l3_reflection",
+                                    "深度反思",
+                                    str(getattr(result.report, "summary", "") or "")[:200],
+                                )
+                            self._log(f"{ts} L3 request_L3 status={result.status}")
                         except Exception as e:
-                            self._log(f"{ts} L3 tick_L3 ERROR: {e}")
-                            logger.warning("[Layer2] tick_L3 出错: %s", e)
+                            self._log(f"{ts} L3 request_L3 ERROR: {e}")
+                            logger.warning("[Layer2] request_L3 出错: %s", e)
                         finally:
                             self._observe_state("", "")
 

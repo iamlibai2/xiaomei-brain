@@ -470,14 +470,23 @@ class ActionExecutor:
         intent_type = item.metadata.get("intent_type", "") if item.source == "intent" else ""
 
         try:
-            report = self.dispatcher._conscious_living.consciousness.tick_L3()
-            logger.info("[ActionExecutor] L3 触发: %s", report.summary[:50] if report else "")
+            result = self.dispatcher._conscious_living.consciousness.request_L3(
+                source="intent",
+                reason=item.reason or item.content or "REFLECT intent",
+            )
+            logger.info(
+                "[ActionExecutor] L3 请求结果: %s %s",
+                result.status,
+                getattr(result.report, "summary", "")[:50] if result.report else "",
+            )
 
-            # 消费已执行的 intent
+            # Every request is one-shot. A recent/in-flight reflection already
+            # satisfies this REFLECT intent; a provider failure is recorded once
+            # and must not become an automatic retry loop.
             if intent_type and item.source == "intent":
                 self._consume_intent(item)
 
-            return True
+            return result.status != "failed"
         except Exception as e:
             logger.error("[ActionExecutor] L3 触发失败: %s", e)
             return False
@@ -1322,6 +1331,17 @@ class ActionDispatcher:
                     success = self._executor.execute(item)
                 if success:
                     self._record_fired(item.cooldown_key)
+                    # Urgent means "dispatch immediately once", not "bypass
+                    # cooldown on every Living heartbeat until delivery".
+                    # The durable intent is still consumed only after the
+                    # behavior is actually delivered.
+                    if item.source == "intent":
+                        intent_type = str(
+                            item.metadata.get("intent_type") or ""
+                        ).lower()
+                        si = self._get_self_image()
+                        if intent_type and si and hasattr(si.intent, "urgent_intents"):
+                            si.intent.urgent_intents.discard(intent_type)
                     self._last_executed.append(item)
                     executed = True
             except Exception as e:

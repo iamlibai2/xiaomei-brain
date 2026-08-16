@@ -26,6 +26,10 @@ type RhythmValues = {
   emergence_periodic_interval_minutes: number;
   emergence_changes_trigger: number;
   emergence_energy_threshold_percent: number;
+  reflection_enabled: boolean;
+  reflection_min_interval_minutes: number;
+  reflection_periodic_interval_minutes: number;
+  reflection_changes_trigger: number;
 };
 
 type RhythmResult = {
@@ -53,6 +57,10 @@ const DEFAULT_VALUES: RhythmValues = {
   emergence_periodic_interval_minutes: 30,
   emergence_changes_trigger: 5,
   emergence_energy_threshold_percent: 20,
+  reflection_enabled: true,
+  reflection_min_interval_minutes: 30,
+  reflection_periodic_interval_minutes: 360,
+  reflection_changes_trigger: 15,
 };
 
 export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
@@ -369,6 +377,52 @@ export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
             />
           </div>
         </div>
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-heading">
+          <div>
+            <h3>{t("rhythmSettingsUi.reflectionTitle")}</h3>
+            <p>{t("rhythmSettingsUi.reflectionHint")}</p>
+          </div>
+        </div>
+        <SwitchRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.reflectionEnabled")}
+          description={t("rhythmSettingsUi.reflectionEnabledHint")}
+          checked={draft.reflection_enabled}
+          onChange={(value) => updateBoolean("reflection_enabled", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.reflectionMinInterval")}
+          description={t("rhythmSettingsUi.reflectionMinIntervalHint")}
+          value={draft.reflection_min_interval_minutes}
+          unit={t("rhythmSettingsUi.minutes")}
+          min={0.5}
+          max={10080}
+          onChange={(value) => updateNumber("reflection_min_interval_minutes", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.reflectionPeriodic")}
+          description={t("rhythmSettingsUi.reflectionPeriodicHint")}
+          value={draft.reflection_periodic_interval_minutes / 60}
+          unit={t("rhythmSettingsUi.hours")}
+          min={1 / 60}
+          max={336}
+          onChange={(value) => updateNumber("reflection_periodic_interval_minutes", value * 60)}
+        />
+        <DurationRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.reflectionChanges")}
+          description={t("rhythmSettingsUi.reflectionChangesHint")}
+          value={draft.reflection_changes_trigger}
+          unit={t("rhythmSettingsUi.items")}
+          min={1}
+          max={30}
+          onChange={(value) => updateNumber("reflection_changes_trigger", value)}
+        />
       </section>
 
       {error ? <div className="settings-message error">{error}</div> : null}
