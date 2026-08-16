@@ -223,6 +223,11 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert current["values"]["reflection_min_interval_minutes"] == 30.0
     assert current["values"]["reflection_periodic_interval_minutes"] == 360.0
     assert current["values"]["reflection_changes_trigger"] == 15.0
+    assert current["values"]["association_enabled"] is True
+    assert current["values"]["association_min_interval_minutes"] == 240.0
+    assert current["values"]["association_periodic_interval_minutes"] == 480.0
+    assert current["values"]["association_desire_threshold_percent"] == 70.0
+    assert current["values"]["association_cortisol_threshold_percent"] == 60.0
 
     response = router.dispatch(
         "conn-1",
@@ -253,6 +258,11 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
                 "reflection_min_interval_minutes": 45,
                 "reflection_periodic_interval_minutes": 480,
                 "reflection_changes_trigger": 12,
+                "association_enabled": True,
+                "association_min_interval_minutes": 300,
+                "association_periodic_interval_minutes": 600,
+                "association_desire_threshold_percent": 72,
+                "association_cortisol_threshold_percent": 64,
             },
             "revision": current["revision"],
         },
@@ -284,6 +294,11 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert living._config.consciousness.l3_cooldown == 2700.0
     assert living._config.consciousness.l3_interval == 28800.0
     assert living._config.consciousness.l3_changes_trigger == 12
+    assert living._config.consciousness.l4_enabled is True
+    assert living._config.consciousness.l4_cooldown == 18000.0
+    assert living._config.consciousness.l4_timeout == 36000.0
+    assert living._config.consciousness.l4_desire_threshold == 0.72
+    assert living._config.consciousness.l4_cortisol_threshold == 0.64
 
     persisted = yaml.safe_load(brain_path.read_text(encoding="utf-8"))
     consciousness = persisted["consciousness"]
@@ -306,6 +321,11 @@ def test_rhythm_config_reads_defaults_and_hot_applies_updates(tmp_path):
     assert consciousness["l3_cooldown"] == 2700.0
     assert consciousness["l3_interval"] == 28800.0
     assert consciousness["l3_changes_trigger"] == 12
+    assert consciousness["l4_enabled"] is True
+    assert consciousness["l4_cooldown"] == 18000.0
+    assert consciousness["l4_timeout"] == 36000.0
+    assert consciousness["l4_desire_threshold"] == 0.72
+    assert consciousness["l4_cortisol_threshold"] == 0.64
 
 
 def test_rhythm_config_uses_separate_idle_and_sleep_durations(tmp_path):

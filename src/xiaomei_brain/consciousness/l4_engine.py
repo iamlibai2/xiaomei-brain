@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -66,6 +66,19 @@ class L4Report:
     """总耗时"""
 
 
+@dataclass(frozen=True)
+class L4RunResult:
+    """深度联想统一准入入口的执行结果。"""
+
+    status: str
+    report: L4Report | None = None
+    error: str = ""
+
+    @property
+    def completed(self) -> bool:
+        return self.status == "completed"
+
+
 # ── L4Engine ──────────────────────────────────────────────────
 
 class L4Engine:
@@ -76,8 +89,52 @@ class L4Engine:
 
     def __init__(self, consciousness: Consciousness) -> None:
         self._c = consciousness
+        self._run_lock = threading.Lock()
+        self._running = False
 
     # ── 主入口 ─────────────────────────────────────────────────
+
+    def request_association(
+        self,
+        *,
+        source: str,
+        reason: str = "",
+    ) -> L4RunResult:
+        """通过共享冷却和并发锁接纳一次清醒态深度联想。"""
+        c = self._c
+        if not bool(getattr(c._cc, "l4_enabled", True)):
+            return L4RunResult(status="disabled")
+
+        now = time.time()
+        with self._run_lock:
+            if self._running:
+                return L4RunResult(status="busy")
+            cooldown = max(0.0, float(getattr(c._cc, "l4_cooldown", 14400.0)))
+            if now - c._last_l4_time < cooldown:
+                return L4RunResult(status="cooldown")
+            self._running = True
+            # 在调用模型前记录尝试时间。失败、跳过或空结果均不立即重试。
+            c._last_l4_time = now
+
+        logger.info(
+            "[L4Engine] 接受深度联想请求: source=%s reason=%s",
+            source,
+            reason[:120],
+        )
+        try:
+            report = self.run()
+            if report.skipped:
+                return L4RunResult(status="skipped", report=report)
+            return L4RunResult(status="completed", report=report)
+        except Exception as exc:
+            logger.exception("[L4Engine] 深度联想失败: source=%s", source)
+            return L4RunResult(
+                status="failed",
+                error=str(exc) or exc.__class__.__name__,
+            )
+        finally:
+            with self._run_lock:
+                self._running = False
 
     def run(self) -> L4Report:
         """执行完整的 L4 五步闭环。"""
@@ -101,6 +158,15 @@ class L4Engine:
 
         # Phase 3: 审视 — 多角度审视联想链
         examination = self._examine(chain)
+        if not examination.strip():
+            logger.info("[L4Engine] 审视结果为空，跳过整合")
+            return L4Report(
+                seed=seed,
+                chain=chain,
+                skipped=True,
+                reason="empty_examination",
+                elapsed=time.time() - t0,
+            )
 
         # Phase 4: 整合 — 沉淀到 SelfModel
         pattern_insight = self._extract_insight(examination)
@@ -131,7 +197,7 @@ class L4Engine:
         """从 Drive 张力或最近 L2 独白生成种子。
 
         优先级：
-        1. 最高张力点（欲望 > 0.7 或 皮质醇 > 0.6）
+        1. 最高张力点（阈值来自 Agent 配置）
         2. 最近 consciousness_stream 独白
         3. 空（跳过 L4）
         """
@@ -139,6 +205,12 @@ class L4Engine:
         drive = self._c.drive
         if drive:
             tensions = []
+            desire_threshold = float(
+                getattr(self._c._cc, "l4_desire_threshold", 0.7)
+            )
+            cortisol_threshold = float(
+                getattr(self._c._cc, "l4_cortisol_threshold", 0.6)
+            )
 
             # 欲望检查
             desire_map = [
@@ -148,12 +220,12 @@ class L4Engine:
                 ("表达欲", drive.desire.expression),
             ]
             for name, value in desire_map:
-                if value > 0.7:
+                if value > desire_threshold:
                     tensions.append((name, value, "desire"))
 
             # 皮质醇检查
             cortisol = drive.hormone.cortisol
-            if cortisol > 0.6:
+            if cortisol > cortisol_threshold:
                 tensions.append(("皮质醇偏高", cortisol, "cortisol"))
 
             if tensions:
@@ -176,7 +248,7 @@ class L4Engine:
         ltm = getattr(self._c.agent, "longterm_memory", None)
         if ltm:
             try:
-                recent = ltm.get_narratives(limit=3)
+                recent = ltm.get_narratives(limit=3, user_id="global")
                 if recent:
                     for r in recent:
                         content = r.get("content", "")
@@ -198,25 +270,19 @@ class L4Engine:
             logger.warning("[L4Engine] 缺少 ltm 或 llm，跳过联想")
             return None
 
-        user_id = getattr(self._c.agent, "user_id", "global")
+        from .associative_chain import AssociativeChain
 
-        try:
-            from .associative_chain import AssociativeChain
+        chain_engine = AssociativeChain(ltm=ltm, llm=llm)
+        result = chain_engine.unfold(seed=seed, user_id="global", max_hops=5)
 
-            chain_engine = AssociativeChain(ltm=ltm, llm=llm)
-            result = chain_engine.unfold(seed=seed, user_id=user_id, max_hops=5)
+        # 终端展示
+        if result.total_hops > 0:
+            from .internal_display import print_section
+            print_section("L4 深度联想", icon="🔮")
+            for hop in result.hops:
+                print(f"  跳 {hop.hop}: {hop.hook[:60]} → {hop.note}")
 
-            # 终端展示
-            if result.total_hops > 0:
-                from .internal_display import print_section
-                print_section("L4 深度联想", icon="🔮")
-                for hop in result.hops:
-                    print(f"  跳 {hop.hop}: {hop.hook[:60]} → {hop.note}")
-
-            return result
-        except Exception as e:
-            logger.warning("[L4Engine] AssociativeChain 失败: %s", e)
-            return None
+        return result
 
     # ── Phase 3: 审视 ──────────────────────────────────────────
 
@@ -247,32 +313,28 @@ class L4Engine:
 
         llm = getattr(self._c.agent, "llm", None)
         if not llm:
-            return ""
+            raise RuntimeError("L4 requires an available model")
 
-        try:
-            resp = llm.chat(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                tools=None,
-            )
-            content = resp.content or ""
-            logger.debug("[L4Engine] 审视完成 (%d 字)", len(content))
+        resp = llm.chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+        )
+        content = resp.content or ""
+        logger.debug("[L4Engine] 审视完成 (%d 字)", len(content))
 
-            # 终端展示
-            if content:
-                from .internal_display import print_markdown
-                print_markdown(content, style="color(144)")
+        # 终端展示
+        if content:
+            from .internal_display import print_markdown
+            print_markdown(content, style="color(144)")
 
-            if self._c.drive:
-                self._c.drive.consume_energy(0.15)
-                self._c.drive.restore_energy(0.2)
+        if self._c.drive:
+            self._c.drive.consume_energy(0.15)
+            self._c.drive.restore_energy(0.2)
 
-            return content
-        except Exception as e:
-            logger.warning("[L4Engine] LLM 审视失败: %s", e)
-            return ""
+        return content
 
     # ── Phase 4: 整合 ──────────────────────────────────────────
 
@@ -294,21 +356,7 @@ class L4Engine:
             return
         si = self._c.self_image
         if si:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
-            si.history.add_event(
-                content=f"[L4 深度联想] {pattern_insight}",
-                date=now,
-            )
-            # 写入 self_cognition（深层模式），供自我认知渲染
-            if "深层模式" not in si.mind.self_cognition:
-                si.mind.self_cognition["深层模式"] = []
-            si.mind.self_cognition["深层模式"].append(
-                f"[{now}] {pattern_insight}"
-            )
-            # 保留最近 10 条
-            if len(si.mind.self_cognition["深层模式"]) > 10:
-                si.mind.self_cognition["深层模式"] = \
-                    si.mind.self_cognition["深层模式"][-10:]
+            si.contribute_deep_pattern(pattern_insight)
             logger.info("[L4Engine] 发现已记录到 growth_events + self_cognition")
 
     # ── Phase 5: 转化 ──────────────────────────────────────────
@@ -348,7 +396,7 @@ class L4Engine:
                 trigger="L4_deep",
                 energy_level=c.body.energy if c.self_image else None,
                 user_idle_duration=c.perception.user_idle_duration if c.self_image else None,
-                user_id=getattr(c.agent, "user_id", "global"),
+                user_id="global",
             )
 
         # 经验流

@@ -170,6 +170,21 @@ class SelfImage:
         self.history.add_event(content=content, date=date)
         self._dirty = True
 
+    def contribute_deep_pattern(self, insight: str) -> None:
+        """L4 贡献一条 Agent 自身的深层模式。"""
+        insight = str(insight or "").strip()
+        if not insight:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        self.history.add_event(
+            content=f"[L4 深度联想] {insight}",
+            date=now,
+        )
+        patterns = self.being.self_cognition.setdefault("深层模式", [])
+        patterns.append(f"[{now}] {insight}")
+        self.being.self_cognition["深层模式"] = patterns[-10:]
+        self._dirty = True
+
     # ── 序列化/反序列化 ──────────────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:

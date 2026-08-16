@@ -372,6 +372,11 @@ def _build_living_config(data: dict):
             l3_cooldown=cc.get("l3_cooldown", 1800.0),
             l3_interval=cc.get("l3_interval", 21600.0),
             l3_changes_trigger=cc.get("l3_changes_trigger", 15),
+            l4_enabled=cc.get("l4_enabled", True),
+            l4_cooldown=cc.get("l4_cooldown", 14400.0),
+            l4_timeout=cc.get("l4_timeout", 28800.0),
+            l4_desire_threshold=cc.get("l4_desire_threshold", 0.7),
+            l4_cortisol_threshold=cc.get("l4_cortisol_threshold", 0.6),
             l2_check_interval=cc.get("l2_check_interval", 10.0),
             l1_anomaly_enabled=cc.get("l1_anomaly_enabled", False),
             dream_report_enabled=cc.get("dream_report_enabled", True),
@@ -670,6 +675,11 @@ def _format_config_yaml(data: dict) -> str:
     _w(f"  l3_cooldown:          {consciousness.get('l3_cooldown', 1800.0)}  # L3 最短反思间隔（秒）")
     _w(f"  l3_interval:          {consciousness.get('l3_interval', 21600.0)}  # L3 定期兜底（秒）")
     _w(f"  l3_changes_trigger:   {consciousness.get('l3_changes_trigger', 15)}  # 有意义状态变化触发（条数）")
+    _w(f"  l4_enabled:           {str(consciousness.get('l4_enabled', True)).lower()}  # 允许空闲态深度联想")
+    _w(f"  l4_cooldown:          {consciousness.get('l4_cooldown', 14400.0)}  # L4 最短联想间隔（秒）")
+    _w(f"  l4_timeout:           {consciousness.get('l4_timeout', 28800.0)}  # L4 定期兜底（秒）")
+    _w(f"  l4_desire_threshold:  {consciousness.get('l4_desire_threshold', 0.7)}  # 欲望张力阈值")
+    _w(f"  l4_cortisol_threshold: {consciousness.get('l4_cortisol_threshold', 0.6)}  # 皮质醇张力阈值")
     _w(f"  sc_cooldown:          {consciousness.get('sc_cooldown', 900.0)}    # social_cognition 冷却（秒）")
     _w(f"  sc_interval:          {consciousness.get('sc_interval', 3600.0)}   # social_cognition 定期兜底（秒）")
     _w(f"  sc_energy_threshold:  {consciousness.get('sc_energy_threshold', 0.25)}   # social_cognition 最低能量")

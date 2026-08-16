@@ -36,7 +36,8 @@ class ConsciousnessConfig:
     l3_cooldown: float = 1800.0        # 两次 L3 尝试的最短间隔（秒）
     l3_interval: float = 21600.0       # 无明显变化时的定期兜底（秒）
     l3_changes_trigger: int = 15       # 有意义状态变化触发阈值（条数）
-    l4_cooldown: float = 14400.0       # L4 深度联想冷却（秒，默认 4 小时）
+    l4_enabled: bool = True            # 是否允许空闲态深度联想
+    l4_cooldown: float = 14400.0       # L4 深度联想最短间隔（秒，默认 4 小时）
     l4_timeout: float = 28800.0        # L4 定期兜底（秒，默认 8 小时）
     l4_desire_threshold: float = 0.7   # L4 欲望张力触发阈值
     l4_cortisol_threshold: float = 0.6 # L4 皮质醇张力触发阈值

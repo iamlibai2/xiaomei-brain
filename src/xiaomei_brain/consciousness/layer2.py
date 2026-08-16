@@ -301,13 +301,16 @@ class Layer2DefaultNetwork:
 
                     # L4: 深度联想（与 L3 同轮互斥，L3 优先，L4 成本更高）
                     if not skip_l3 and not l3_triggered and self._c._should_l4(agent_state):
-                        self._log(f"{ts} L4 触发 [深度联想] agent_state={agent_state} → tick_L4")
+                        self._log(f"{ts} L4 触发 [深度联想] agent_state={agent_state} → request_L4")
                         logger.info("[Layer2] L4 触发（深度联想，agent_state=%s）", agent_state)
-                        self._c._last_l4_time = time.time()
                         self._observe_state("deep_association", "正在进行深度联想")
                         try:
-                            report = self._c.tick_L4()
-                            if not bool(getattr(report, "skipped", False)):
+                            result = self._c.request_L4(
+                                source="scheduler",
+                                reason="张力变化或定期兜底",
+                            )
+                            report = result.report
+                            if result.completed and report is not None:
                                 detail = (
                                     getattr(report, "pattern_insight", "")
                                     or getattr(report, "behavior_hint", "")
@@ -317,10 +320,10 @@ class Layer2DefaultNetwork:
                                     "深度联想",
                                     str(detail or "")[:200],
                                 )
-                            self._log(f"{ts} L4 tick_L4 完成")
+                            self._log(f"{ts} L4 request_L4 status={result.status}")
                         except Exception as e:
-                            self._log(f"{ts} L4 tick_L4 ERROR: {e}")
-                            logger.warning("[Layer2] tick_L4 出错: %s", e)
+                            self._log(f"{ts} L4 request_L4 ERROR: {e}")
+                            logger.warning("[Layer2] request_L4 出错: %s", e)
                         finally:
                             self._observe_state("", "")
 

@@ -37,6 +37,11 @@ class RhythmConfigurationSection:
         "reflection_min_interval_minutes": 30.0,
         "reflection_periodic_interval_minutes": 360.0,
         "reflection_changes_trigger": 15.0,
+        "association_enabled": True,
+        "association_min_interval_minutes": 240.0,
+        "association_periodic_interval_minutes": 480.0,
+        "association_desire_threshold_percent": 70.0,
+        "association_cortisol_threshold_percent": 60.0,
     }
 
     _RANGES: dict[str, tuple[float, float]] = {
@@ -58,6 +63,10 @@ class RhythmConfigurationSection:
         "reflection_min_interval_minutes": (0.5, 10080.0),
         "reflection_periodic_interval_minutes": (1.0, 20160.0),
         "reflection_changes_trigger": (1.0, 30.0),
+        "association_min_interval_minutes": (1.0, 20160.0),
+        "association_periodic_interval_minutes": (1.0, 20160.0),
+        "association_desire_threshold_percent": (0.0, 100.0),
+        "association_cortisol_threshold_percent": (0.0, 100.0),
     }
 
     def __init__(self, living: Any, brain_path: str | Path) -> None:
@@ -199,6 +208,26 @@ class RhythmConfigurationSection:
                 "consciousness.l3_changes_trigger",
                 float(self._DEFAULTS["reflection_changes_trigger"]),
             ),
+            "association_enabled": boolean(
+                "consciousness.l4_enabled",
+                bool(self._DEFAULTS["association_enabled"]),
+            ),
+            "association_min_interval_minutes": seconds(
+                "consciousness.l4_cooldown",
+                float(self._DEFAULTS["association_min_interval_minutes"]),
+            ),
+            "association_periodic_interval_minutes": seconds(
+                "consciousness.l4_timeout",
+                float(self._DEFAULTS["association_periodic_interval_minutes"]),
+            ),
+            "association_desire_threshold_percent": percent(
+                "consciousness.l4_desire_threshold",
+                float(self._DEFAULTS["association_desire_threshold_percent"]),
+            ),
+            "association_cortisol_threshold_percent": percent(
+                "consciousness.l4_cortisol_threshold",
+                float(self._DEFAULTS["association_cortisol_threshold_percent"]),
+            ),
         }
         return self._normalize(values, self._DEFAULTS)
 
@@ -266,6 +295,11 @@ class RhythmConfigurationSection:
                 "l3_cooldown": float(values["reflection_min_interval_minutes"]) * 60.0,
                 "l3_interval": float(values["reflection_periodic_interval_minutes"]) * 60.0,
                 "l3_changes_trigger": int(values["reflection_changes_trigger"]),
+                "l4_enabled": bool(values["association_enabled"]),
+                "l4_cooldown": float(values["association_min_interval_minutes"]) * 60.0,
+                "l4_timeout": float(values["association_periodic_interval_minutes"]) * 60.0,
+                "l4_desire_threshold": float(values["association_desire_threshold_percent"]) / 100.0,
+                "l4_cortisol_threshold": float(values["association_cortisol_threshold_percent"]) / 100.0,
             }
         }
 
@@ -306,6 +340,11 @@ class RhythmConfigurationSection:
         config.consciousness.l3_cooldown = float(values["reflection_min_interval_minutes"]) * 60.0
         config.consciousness.l3_interval = float(values["reflection_periodic_interval_minutes"]) * 60.0
         config.consciousness.l3_changes_trigger = int(values["reflection_changes_trigger"])
+        config.consciousness.l4_enabled = bool(values["association_enabled"])
+        config.consciousness.l4_cooldown = float(values["association_min_interval_minutes"]) * 60.0
+        config.consciousness.l4_timeout = float(values["association_periodic_interval_minutes"]) * 60.0
+        config.consciousness.l4_desire_threshold = float(values["association_desire_threshold_percent"]) / 100.0
+        config.consciousness.l4_cortisol_threshold = float(values["association_cortisol_threshold_percent"]) / 100.0
 
         # Living copies lifecycle thresholds during construction, so update the
         # live values as well. Consciousness and Rules retain references to the
@@ -334,6 +373,11 @@ class RhythmConfigurationSection:
             consciousness_config.l3_cooldown = float(values["reflection_min_interval_minutes"]) * 60.0
             consciousness_config.l3_interval = float(values["reflection_periodic_interval_minutes"]) * 60.0
             consciousness_config.l3_changes_trigger = int(values["reflection_changes_trigger"])
+            consciousness_config.l4_enabled = bool(values["association_enabled"])
+            consciousness_config.l4_cooldown = float(values["association_min_interval_minutes"]) * 60.0
+            consciousness_config.l4_timeout = float(values["association_periodic_interval_minutes"]) * 60.0
+            consciousness_config.l4_desire_threshold = float(values["association_desire_threshold_percent"]) / 100.0
+            consciousness_config.l4_cortisol_threshold = float(values["association_cortisol_threshold_percent"]) / 100.0
 
     def _payload(self, values: dict[str, Any]) -> dict[str, Any]:
         return {

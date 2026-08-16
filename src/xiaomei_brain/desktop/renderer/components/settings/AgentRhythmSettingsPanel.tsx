@@ -30,6 +30,11 @@ type RhythmValues = {
   reflection_min_interval_minutes: number;
   reflection_periodic_interval_minutes: number;
   reflection_changes_trigger: number;
+  association_enabled: boolean;
+  association_min_interval_minutes: number;
+  association_periodic_interval_minutes: number;
+  association_desire_threshold_percent: number;
+  association_cortisol_threshold_percent: number;
 };
 
 type RhythmResult = {
@@ -61,6 +66,11 @@ const DEFAULT_VALUES: RhythmValues = {
   reflection_min_interval_minutes: 30,
   reflection_periodic_interval_minutes: 360,
   reflection_changes_trigger: 15,
+  association_enabled: true,
+  association_min_interval_minutes: 240,
+  association_periodic_interval_minutes: 480,
+  association_desire_threshold_percent: 70,
+  association_cortisol_threshold_percent: 60,
 };
 
 export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
@@ -423,6 +433,60 @@ export function AgentRhythmSettingsPanel({ agentId, connected }: Props) {
           max={30}
           onChange={(value) => updateNumber("reflection_changes_trigger", value)}
         />
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-heading">
+          <div>
+            <h3>{t("rhythmSettingsUi.associationTitle")}</h3>
+            <p>{t("rhythmSettingsUi.associationHint")}</p>
+          </div>
+        </div>
+        <SwitchRow
+          icon="sparkles"
+          title={t("rhythmSettingsUi.associationEnabled")}
+          description={t("rhythmSettingsUi.associationEnabledHint")}
+          checked={draft.association_enabled}
+          onChange={(value) => updateBoolean("association_enabled", value)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.associationMinInterval")}
+          description={t("rhythmSettingsUi.associationMinIntervalHint")}
+          value={draft.association_min_interval_minutes / 60}
+          unit={t("rhythmSettingsUi.hours")}
+          min={1 / 60}
+          max={336}
+          onChange={(value) => updateNumber("association_min_interval_minutes", value * 60)}
+        />
+        <DurationRow
+          icon="clock"
+          title={t("rhythmSettingsUi.associationPeriodic")}
+          description={t("rhythmSettingsUi.associationPeriodicHint")}
+          value={draft.association_periodic_interval_minutes / 60}
+          unit={t("rhythmSettingsUi.hours")}
+          min={1 / 60}
+          max={336}
+          onChange={(value) => updateNumber("association_periodic_interval_minutes", value * 60)}
+        />
+        <div className="settings-field-group">
+          <div className="settings-field-heading">
+            <strong>{t("rhythmSettingsUi.associationTensionTitle")}</strong>
+            <p>{t("rhythmSettingsUi.associationTensionHint")}</p>
+          </div>
+          <div className="rhythm-threshold-grid">
+            <ThresholdRow
+              label={t("rhythmSettingsUi.desire")}
+              value={draft.association_desire_threshold_percent}
+              onChange={(value) => updateNumber("association_desire_threshold_percent", value)}
+            />
+            <ThresholdRow
+              label={t("rhythmSettingsUi.cortisol")}
+              value={draft.association_cortisol_threshold_percent}
+              onChange={(value) => updateNumber("association_cortisol_threshold_percent", value)}
+            />
+          </div>
+        </div>
       </section>
 
       {error ? <div className="settings-message error">{error}</div> : null}

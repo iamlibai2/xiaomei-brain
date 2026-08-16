@@ -39,7 +39,7 @@ from .config import ConsciousnessConfig
 from .memory_window import refresh_memory_window
 from .l2_engine import L2Engine
 from .l3_engine import L3Engine, L3RunResult
-from .l4_engine import L4Engine
+from .l4_engine import L4Engine, L4RunResult
 from .state_buffer import StateChangeBuffer
 from ..purpose import PurposeEngine
 from ..memory.procedure import ProcedureMemory
@@ -742,18 +742,28 @@ class Consciousness:
 
     def tick_L4(self):
         """L4 深度联想 → 委托给 L4Engine。"""
+        return self._get_l4_engine().run()
+
+    def request_L4(self, *, source: str, reason: str = "") -> L4RunResult:
+        """经统一准入入口请求一次深度联想。"""
+        return self._get_l4_engine().request_association(source=source, reason=reason)
+
+    def _get_l4_engine(self) -> L4Engine:
+        """惰性初始化同一 Agent 的 L4Engine。"""
         if self._l4_engine is None:
             self._l4_engine = L4Engine(self)
-        report = self._l4_engine.run()
-        return report
+        return self._l4_engine
 
     def _should_l4(self, agent_state: str = "awake") -> bool:
         """判断是否应该触发 L4 深度联想。
 
         条件：冷却 + 足够能量 + 有素材。
         """
-        # SLEEPING/DREAMING/WORKING 中不做深度联想（成本高）
-        if agent_state in ("sleeping", "dreaming", "working"):
+        if not bool(getattr(self._cc, "l4_enabled", True)):
+            return False
+
+        # 深度联想是空闲时的自主认知活动，不与实时对话争抢执行现场。
+        if agent_state != "idle":
             return False
 
         # 能量不足

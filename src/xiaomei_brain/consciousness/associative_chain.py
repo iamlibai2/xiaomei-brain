@@ -130,7 +130,7 @@ class AssociativeChain:
 
             # 更新 visited
             for t in thoughts:
-                rid = t.get("id")
+                rid = t.get("rowid") or t.get("id")
                 if rid:
                     visited_thoughts.add(rid)
             for m in memories:
@@ -199,7 +199,10 @@ class AssociativeChain:
             results = self.ltm.search_consciousness_stream(
                 query=query, user_id=user_id, top_k=3,
             )
-            return [r for r in results if r.get("rowid") not in visited]
+            return [
+                r for r in results
+                if (r.get("rowid") or r.get("id")) not in visited
+            ]
         except Exception as e:
             logger.warning("[AssociativeChain] search_thoughts 失败: %s", e)
             return []
@@ -254,7 +257,7 @@ class AssociativeChain:
             return self._parse_hook_response(text)
         except Exception as e:
             logger.warning("[AssociativeChain] LLM 调用失败: %s", e)
-            return {"note": "", "hook": "", "continue": False}
+            raise
 
     @staticmethod
     def _parse_hook_response(text: str) -> dict:
