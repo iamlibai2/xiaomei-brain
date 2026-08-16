@@ -12,6 +12,106 @@ from xiaomei_brain.memory.short_term import (
 )
 
 
+def test_short_term_vectors_are_cached_on_write_and_reused_for_search(tmp_path):
+    store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    calls: list[tuple[list[str], str]] = []
+
+    def embed(texts, *, source=""):
+        calls.append((list(texts), source))
+        return [[1.0, float(len(text))] for text in texts]
+
+    memory_id = store.remember(
+        ShortTermMemoryCandidate(
+            content="博士喜欢成都的雨天",
+            scope_type="person",
+            scope_id="person-a",
+            person_id="person-a",
+        ),
+        embedder=embed,
+    )
+
+    assert calls == [(["博士喜欢成都的雨天"], "memory.short_term.write")]
+    calls.clear()
+    store.find_similar(
+        "成都",
+        scope_type="person",
+        scope_id="person-a",
+        embedder=embed,
+    )
+    assert calls == [(["成都"], "memory.short_term.review")]
+    cached = store._get_conn().execute(
+        "SELECT memory_id FROM memory0_embeddings WHERE memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    assert cached is not None
+
+
+def test_legacy_short_term_vectors_are_backfilled_only_once(tmp_path):
+    store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    store.remember(ShortTermMemoryCandidate(
+        content="旧短期记忆",
+        scope_type="person",
+        scope_id="person-a",
+        person_id="person-a",
+    ))
+    calls: list[tuple[list[str], str]] = []
+
+    def embed(texts, *, source=""):
+        calls.append((list(texts), source))
+        return [[1.0, 0.5] for _ in texts]
+
+    for _ in range(2):
+        store.find_similar(
+            "查询内容",
+            scope_type="person",
+            scope_id="person-a",
+            embedder=embed,
+        )
+
+    assert calls == [
+        (["旧短期记忆"], "memory.short_term.index"),
+        (["查询内容"], "memory.short_term.review"),
+        (["查询内容"], "memory.short_term.review"),
+    ]
+
+
+def test_short_term_update_refreshes_cached_vector(tmp_path):
+    store = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    calls: list[tuple[list[str], str]] = []
+
+    def embed(texts, *, source=""):
+        calls.append((list(texts), source))
+        return [[float(len(text)), 1.0] for text in texts]
+
+    memory_id = store.remember(
+        ShortTermMemoryCandidate(
+            content="博士想去成都",
+            scope_type="person",
+            scope_id="person-a",
+            person_id="person-a",
+        ),
+        embedder=embed,
+    )
+    store.apply_action(
+        ShortTermMemoryCandidate(
+            content="博士计划秋天去成都",
+            scope_type="person",
+            scope_id="person-a",
+            person_id="person-a",
+        ),
+        operation="UPDATE",
+        target_memory_id=memory_id,
+        embedder=embed,
+    )
+
+    assert calls[-1] == (["博士计划秋天去成都"], "memory.short_term.update")
+    row = store._get_conn().execute(
+        "SELECT content_hash FROM memory0_embeddings WHERE memory_id = ?",
+        (memory_id,),
+    ).fetchone()
+    assert row["content_hash"] == store._content_hash("博士计划秋天去成都")
+
+
 def test_memories0_is_created_and_exact_candidate_is_reinforced(tmp_path):
     db_path = tmp_path / "brain.db"
     store = ShortTermMemoryStore(str(db_path))

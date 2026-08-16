@@ -158,6 +158,45 @@ def test_review_waits_for_three_complete_turns(tmp_path):
     assert db.get_memory_review_checkpoint("person-a", "session-a")["last_message_id"] == 0
 
 
+def test_review_encodes_query_once_and_reuses_it_across_scopes(tmp_path):
+    reviewer, db, short_term, _llm = _reviewer(
+        tmp_path,
+        '{"actions":[{"operation":"NOOP"}]}',
+    )
+    for scope_type, scope_id, content in (
+        ("person", "person-a", "博士喜欢成都"),
+        ("agent", "global", "小美喜欢下雨天"),
+    ):
+        short_term.remember(
+            ShortTermMemoryCandidate(
+                content=content,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                person_id="person-a" if scope_type == "person" else "",
+            ),
+            embedder=reviewer._embedding_batch,
+        )
+    reviewer.longterm._embed_batch.reset_mock()
+    for index in range(3):
+        _log_turn(
+            db,
+            person_id="person-a",
+            session_id="session-a",
+            turn_id=f"turn-{index}",
+            user=f"成都补充 {index}",
+            assistant=f"收到 {index}",
+        )
+
+    reviewer.review_next(person_id="person-a", session_id="session-a")
+
+    review_calls = [
+        call for call in reviewer.longterm._embed_batch.call_args_list
+        if call.kwargs.get("source") == "memory.short_term.review"
+    ]
+    assert len(review_calls) == 1
+    assert len(review_calls[0].args[0]) == 1
+
+
 def test_merge_updates_existing_memory_instead_of_inserting_duplicate(tmp_path):
     db_path = tmp_path / "brain.db"
     db = ConversationDB(db_path)

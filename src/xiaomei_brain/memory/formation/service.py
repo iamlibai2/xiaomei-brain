@@ -94,6 +94,7 @@ class MemoryFormationService:
                 user_id=user_id,
                 session_id=session_id,
                 target_memory_id=target_memory_id,
+                embedder=embedder,
             )
             if result is not None:
                 results.append(result)
@@ -107,6 +108,7 @@ class MemoryFormationService:
         user_id: str,
         session_id: str = "",
         target_memory_id: int | None = None,
+        embedder: Any = None,
     ) -> FormationResult | None:
         if candidate.operation == "NOOP" or not candidate.content.strip():
             return None
@@ -148,11 +150,26 @@ class MemoryFormationService:
             short_candidate,
             operation=candidate.operation,
             target_memory_id=target_memory_id,
+            embedder=embedder or self._short_term_embedder,
         )
         return FormationResult(
             "short_term", short_id, candidate.operation, candidate.content,
             candidate.scope_type, candidate.scope_id,
         )
+
+    def _short_term_embedder(
+        self,
+        texts: list[str],
+        *,
+        source: str = "memory.short_term.write",
+    ) -> list[list[float]]:
+        method = getattr(self.long_term, "_embed_batch", None)
+        if not callable(method):
+            return []
+        try:
+            return list(method(texts, source=source) or [])
+        except TypeError:
+            return list(method(texts) or [])
 
     def consolidate_for_dream(self, *, cutoff: float | None = None) -> dict[str, int]:
         """Consolidate stable memories and let weak expired ones fade.

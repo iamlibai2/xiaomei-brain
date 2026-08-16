@@ -7,6 +7,7 @@ the long-term vector index until consolidation decides they should persist.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -81,6 +82,13 @@ class ShortTermMemoryStore(SQLiteStore):
                 UNIQUE(memory_layer, memory_id, evidence_type, evidence_id)
             );
 
+            CREATE TABLE IF NOT EXISTS memory0_embeddings (
+                memory_id INTEGER PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                vector_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_short_term_scope
                 ON memories0(scope_type, scope_id, status, expires_at);
             CREATE INDEX IF NOT EXISTS idx_short_term_person
@@ -105,7 +113,7 @@ class ShortTermMemoryStore(SQLiteStore):
     def normalize_content(content: str) -> str:
         return "".join(str(content or "").strip().lower().split())
 
-    def remember(self, candidate: ShortTermMemoryCandidate) -> int:
+    def remember(self, candidate: ShortTermMemoryCandidate, *, embedder: Any = None) -> int:
         """Add a candidate or reinforce an exact scoped memory."""
         content = str(candidate.content or "").strip()
         normalized = self.normalize_content(content)
@@ -177,6 +185,8 @@ class ShortTermMemoryStore(SQLiteStore):
 
         self._link_evidence(conn, memory_id, candidate.evidence_refs)
         conn.commit()
+        if not existing:
+            self._refresh_embedding(memory_id, content, embedder, source="memory.short_term.write")
         return memory_id
 
     def get_active(self, memory_id: int) -> dict[str, Any] | None:
@@ -195,6 +205,7 @@ class ShortTermMemoryStore(SQLiteStore):
         *,
         operation: str,
         target_memory_id: int | None = None,
+        embedder: Any = None,
     ) -> int:
         """Apply one validated short-term memory operation.
 
@@ -204,7 +215,7 @@ class ShortTermMemoryStore(SQLiteStore):
         """
         action = str(operation or "ADD").upper()
         if action == "ADD":
-            return self.remember(candidate)
+            return self.remember(candidate, embedder=embedder)
         if action not in {"UPDATE", "MERGE", "REINFORCE", "DELETE"}:
             raise ValueError(f"unsupported short-term memory operation: {action}")
         if target_memory_id is None:
@@ -225,6 +236,10 @@ class ShortTermMemoryStore(SQLiteStore):
                 """UPDATE memories0 SET status = 'discarded', last_seen_at = ?
                    WHERE id = ? AND status = 'active'""",
                 (now, int(target_memory_id)),
+            )
+            conn.execute(
+                "DELETE FROM memory0_embeddings WHERE memory_id = ?",
+                (int(target_memory_id),),
             )
         else:
             expires_at = now + max(60.0, float(candidate.retention_seconds))
@@ -267,6 +282,13 @@ class ShortTermMemoryStore(SQLiteStore):
             )
         self._link_evidence(conn, int(target_memory_id), candidate.evidence_refs)
         conn.commit()
+        if action in {"UPDATE", "MERGE"}:
+            self._refresh_embedding(
+                int(target_memory_id),
+                content,
+                embedder,
+                source="memory.short_term.update",
+            )
         return int(target_memory_id)
 
     def find_similar(
@@ -276,6 +298,7 @@ class ShortTermMemoryStore(SQLiteStore):
         scope_type: str,
         scope_id: str,
         embedder: Any = None,
+        query_vector: list[float] | None = None,
         limit: int = 8,
     ) -> list[dict[str, Any]]:
         """Find active candidates after strict scope filtering.
@@ -304,13 +327,33 @@ class ShortTermMemoryStore(SQLiteStore):
             lexical_scores.append(overlap / max(1, len(query_chars | chars)))
 
         semantic_scores: list[float] | None = None
-        if callable(embedder):
+        if callable(embedder) or query_vector:
             try:
-                vectors = embedder([query] + [str(item.get("content") or "") for item in items])
-                if len(vectors) == len(items) + 1:
+                cached = self._cached_vectors(items)
+                missing = [item for item in items if int(item["id"]) not in cached]
+                if missing and callable(embedder):
+                    vectors = self._call_embedder(
+                        embedder,
+                        [str(item.get("content") or "") for item in missing],
+                        source="memory.short_term.index",
+                    )
+                    if len(vectors) == len(missing):
+                        for item, vector in zip(missing, vectors):
+                            memory_id = int(item["id"])
+                            self._store_embedding(memory_id, str(item.get("content") or ""), vector)
+                            cached[memory_id] = vector
+                active_query_vector = query_vector
+                if active_query_vector is None and callable(embedder):
+                    query_vectors = self._call_embedder(
+                        embedder,
+                        [query],
+                        source="memory.short_term.review",
+                    )
+                    active_query_vector = query_vectors[0] if query_vectors else None
+                if active_query_vector is not None:
                     semantic_scores = [
-                        self._cosine_similarity(vectors[0], vector)
-                        for vector in vectors[1:]
+                        self._cosine_similarity(active_query_vector, cached.get(int(item["id"]), []))
+                        for item in items
                     ]
             except Exception:
                 semantic_scores = None
@@ -324,6 +367,81 @@ class ShortTermMemoryStore(SQLiteStore):
             ranked.append((score, item))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         return [item for score, item in ranked[: max(1, min(int(limit), 20))] if score >= 0.12]
+
+    @staticmethod
+    def _content_hash(content: str) -> str:
+        return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _call_embedder(embedder: Any, texts: list[str], *, source: str) -> list[list[float]]:
+        try:
+            return list(embedder(texts, source=source) or [])
+        except TypeError:
+            # Keep compatibility with lightweight test and extension embedders.
+            return list(embedder(texts) or [])
+
+    def _refresh_embedding(
+        self,
+        memory_id: int,
+        content: str,
+        embedder: Any,
+        *,
+        source: str,
+    ) -> None:
+        if not callable(embedder):
+            return
+        try:
+            vectors = self._call_embedder(embedder, [content], source=source)
+            if vectors:
+                self._store_embedding(memory_id, content, vectors[0])
+        except Exception:
+            # Memory persistence must not fail only because embedding is temporarily unavailable.
+            return
+
+    def _store_embedding(self, memory_id: int, content: str, vector: Any) -> None:
+        values = [float(value) for value in vector]
+        if not values:
+            return
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO memory0_embeddings (memory_id, content_hash, vector_json, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(memory_id) DO UPDATE SET
+                   content_hash = excluded.content_hash,
+                   vector_json = excluded.vector_json,
+                   updated_at = excluded.updated_at""",
+            (
+                int(memory_id),
+                self._content_hash(content),
+                json.dumps(values, separators=(",", ":")),
+                time.time(),
+            ),
+        )
+        conn.commit()
+
+    def _cached_vectors(self, items: list[dict[str, Any]]) -> dict[int, list[float]]:
+        if not items:
+            return {}
+        ids = [int(item["id"]) for item in items]
+        placeholders = ",".join("?" for _ in ids)
+        rows = self._get_conn().execute(
+            f"SELECT memory_id, content_hash, vector_json FROM memory0_embeddings "
+            f"WHERE memory_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        contents = {int(item["id"]): str(item.get("content") or "") for item in items}
+        cached: dict[int, list[float]] = {}
+        for row in rows:
+            memory_id = int(row["memory_id"])
+            if str(row["content_hash"]) != self._content_hash(contents.get(memory_id, "")):
+                continue
+            try:
+                vector = json.loads(str(row["vector_json"]))
+                if isinstance(vector, list) and vector:
+                    cached[memory_id] = [float(value) for value in vector]
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return cached
 
     @staticmethod
     def _cosine_similarity(left: Any, right: Any) -> float:

@@ -103,11 +103,18 @@ class TurnBatchMemoryReviewer:
             if message.get("role") == "user"
         )
         embedder = self._embedding_batch
+        query_vectors = (
+            embedder([query], source="memory.short_term.review")
+            if query.strip()
+            else []
+        )
+        query_vector = query_vectors[0] if query_vectors else None
         short_candidates = self._short_term_candidates(
             query,
             person_id=person_id,
             session_id=session_id,
             embedder=embedder,
+            query_vector=query_vector,
         )
         long_candidates = self._long_term_candidates(query, person_id=person_id)
         prompt = TURN_BATCH_MEMORY_REVIEW_PROMPT.format(
@@ -257,6 +264,7 @@ class TurnBatchMemoryReviewer:
         person_id: str,
         session_id: str,
         embedder: Any,
+        query_vector: list[float] | None,
     ) -> list[dict[str, Any]]:
         combined: dict[int, dict[str, Any]] = {}
         for scope_type, scope_id in (
@@ -268,6 +276,7 @@ class TurnBatchMemoryReviewer:
                 scope_type=scope_type,
                 scope_id=scope_id,
                 embedder=embedder,
+                query_vector=query_vector,
                 limit=6,
             ):
                 combined[int(item["id"])] = item
@@ -286,13 +295,21 @@ class TurnBatchMemoryReviewer:
             logger.debug("[MemoryReview] long-term recall failed: %s", exc)
             return []
 
-    def _embedding_batch(self, texts: list[str]) -> list[list[float]]:
+    def _embedding_batch(
+        self,
+        texts: list[str],
+        *,
+        source: str = "memory.short_term.review",
+    ) -> list[list[float]]:
         if self.longterm is None:
             return []
         method = getattr(self.longterm, "_embed_batch", None)
         if not callable(method):
             return []
-        return method(texts)
+        try:
+            return method(texts, source=source)
+        except TypeError:
+            return method(texts)
 
     @staticmethod
     def _format_short_candidates(items: list[dict[str, Any]]) -> str:
