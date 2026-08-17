@@ -15,6 +15,7 @@ class ActionType(Enum):
     PROACTIVE = "proactive"       # 主动发消息
     ALARM = "alarm"               # 闹钟触发（完整 ReAct）
     WORK = "work"                 # 自由工作（完整 ReAct）
+    MISSION = "mission"           # 长期 Mission 的创建或一次推进
     TRIGGER_L3 = "trigger_l3"     # 触发 L3 沉思
     TOOL = "tool"                 # 执行工具
     NOTIFY = "notify"             # 通知用户

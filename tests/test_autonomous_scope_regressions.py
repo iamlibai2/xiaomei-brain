@@ -161,6 +161,42 @@ def test_person_proactive_is_persisted_to_latest_session():
     assert deliveries == [("hello", route)]
 
 
+def test_autonomous_runtime_artifacts_are_bound_to_owner_session():
+    calls = []
+    callback = object()
+    driver = SimpleNamespace(
+        _make_artifact_callback=lambda *args: calls.append(args) or callback,
+    )
+    living = SimpleNamespace(
+        conversation_driver=driver,
+        _router=SimpleNamespace(session_for_user=lambda _user_id: "session-a"),
+    )
+    dispatcher = ActionDispatcher()
+    dispatcher._conscious_living = living
+    runtime = SimpleNamespace(turn_id="turn-autonomous", on_artifact=None)
+    item = ActionItem(
+        action_type=ActionType.WORK,
+        priority=0.7,
+        content="create report",
+        reason="owner requested it",
+        source="intent",
+        cooldown_key="intent_work",
+        metadata={
+            "intent_type": "WORK",
+            "intent_id": "work-intent",
+            "scope_type": "person",
+            "user_id": "person-a",
+            "session_id": "",
+        },
+    )
+
+    dispatcher._prepare_autonomous_runtime(runtime, item)
+
+    assert item.metadata["session_id"] == "session-a"
+    assert runtime.on_artifact is callback
+    assert calls == [("session-a", "turn-autonomous", "person-a", living)]
+
+
 def test_wake_preserves_durable_intents(monkeypatch):
     pending = [{"intent_id": "intent-a", "type": "work"}]
     intent_slot = SimpleNamespace(intent_buffer=pending, urgent_intents={"work"})

@@ -127,6 +127,40 @@ def test_autonomous_executor_is_non_blocking_and_serial() -> None:
     assert all(runtime is not instance._agent for runtime in runtimes)
 
 
+def test_autonomous_executor_prepares_runtime_before_execution() -> None:
+    instance = FakeAgentInstance()
+    completed = threading.Event()
+    prepared = []
+    observed = []
+
+    def prepare(runtime, item):
+        prepared.append((runtime, item))
+        runtime.on_artifact = "owner-scoped-artifact-callback"
+
+    def execute(item, runtime, _cancel_check, _activity_context):
+        observed.append((item, runtime.on_artifact))
+        completed.set()
+        return True
+
+    executor = AutonomousBehaviorExecutor(
+        instance,
+        execute,
+        runtime_preparer=prepare,
+    )
+    item = SimpleNamespace(
+        action_type=SimpleNamespace(value="work"),
+        metadata={"user_id": "person-a", "session_id": "session-a"},
+    )
+
+    assert executor.submit(item)
+    assert completed.wait(1.0)
+    executor.stop()
+
+    assert len(prepared) == 1
+    assert prepared[0][1] is item
+    assert observed == [(item, "owner-scoped-artifact-callback")]
+
+
 def test_autonomous_executor_deduplicates_same_inflight_intent() -> None:
     instance = FakeAgentInstance()
     started = threading.Event()

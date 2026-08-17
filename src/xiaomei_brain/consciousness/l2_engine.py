@@ -66,6 +66,9 @@ class L2Engine:
         IntentType.RECALL,
         IntentType.ACT,
         IntentType.DREAM,
+        # Temporarily disabled: autonomous learning is expensive and long
+        # running, and currently causes the behavior executor to back up.
+        IntentType.LEARN,
     }
 
     def __init__(self, consciousness: Consciousness) -> None:
@@ -73,6 +76,7 @@ class L2Engine:
         self._l2_agent: Any = None  # 独立 Agent 实例（懒加载）
         self._learn_queue = None  # LearningQueue（由 ConsciousLiving 注入）
         self._wild_observer: Any = None  # WildObserver（懒加载）
+        self._mission_service: Any = None  # MissionService（由 ConsciousLiving 注入）
 
     # ── WildObserver ──────────────────────────────────────
 
@@ -695,7 +699,28 @@ class L2Engine:
             else:
                 context_note = context_map.get(context, f"触发原因：{context}")
 
-        intents = "wait / greet / care / learn / express / work / talk"
+        # LEARN is intentionally absent while autonomous learning is paused.
+        intents = "wait / greet / care / express / work / talk / create_mission"
+        mission_signals = (
+            self._mission_service.due_signals(limit=10)
+            if self._mission_service is not None
+            else []
+        )
+        mission_candidates = self._mission_decision_candidates(
+            context_user_id=context_user_id,
+            context_session_id=context_session_id,
+            decision_scopes=decision_scopes,
+        )
+        # Mission learning requirements remain persisted, but they are not
+        # offered to L2 while LEARN intent generation is paused.
+        # mission_learning_signals = (
+        #     self._mission_service.learning_signals(limit=10)
+        #     if self._mission_service is not None
+        #     else []
+        # )
+        mission_learning_signals = []
+        if mission_candidates or mission_signals:
+            intents += " / advance_mission"
         if has_goal:
             intents += " / progress"
         intents += " / reflect / sleep"
@@ -703,6 +728,9 @@ class L2Engine:
             "基于你的自我认知，请判断你此刻应该做什么。你可以使用工具来辅助判断（如搜索、读文件等）。\n\n"
             + "意图说明：\n"
             + "- talk：想和用户进行更深入的对话交流（区别于 greet 的简短问候）\n"
+            + "- work：完成一件不属于现有长期责任的一次性自主工作，做完即结束\n"
+            + "- advance_mission：本次行动是在推进一个已经存在的长期 Mission；"
+              "工具和做法可以与 work 完全相同，但必须填写 MISSION_ID，让进展回到该长期责任中\n"
             + "- sleep：能量已经很困了，或者手头确实无事可做，主动进入休眠节省资源\n"
             + f"可选意图：{intents}\n"
         )
@@ -741,6 +769,70 @@ class L2Engine:
                 "如果你判断应该推进工作，选择 work 意图。属于人物的任务必须把该人物的 "
                 "person_id 写入 TARGET_USER；Agent 自身任务的 TARGET_USER 填 '-'。"
             )
+        if mission_candidates:
+            due_ids = {
+                str(signal.get("mission_id") or "")
+                for signal in mission_signals
+            }
+            prompt += "\n<相关长期Mission>\n"
+            prompt += (
+                "这些是当前真实存在的长期责任，不是执行命令。结合当前对话、进展、等待条件和"
+                "你自己的判断，决定本次行动是否属于其中一项。\n"
+            )
+            for mission in mission_candidates:
+                status = getattr(mission.status, "value", str(mission.status))
+                due = mission.id in due_ids
+                next_run = self._format_mission_time(mission.next_run_at)
+                waiting_for = "; ".join(
+                    str(item.get("description") or item.get("key") or "").strip()
+                    for item in mission.waiting_for
+                    if str(item.get("description") or item.get("key") or "").strip()
+                ) or "-"
+                prompt += (
+                    f"\nMISSION_ID: {mission.id}\n"
+                    f"  标题: {mission.title}\n"
+                    f"  状态: {status} | 到期信号: {'有' if due else '无'} | "
+                    f"优先级: {mission.priority:.2f}\n"
+                    f"  责任人物: {mission.accountable_person_id or 'Agent自身'} | "
+                    f"来源会话: {mission.origin_session_id or '-'}\n"
+                    f"  长期目标: {mission.objective[:300]}\n"
+                    f"  最近进展: {(mission.progress_summary or '尚未推进')[:500]}\n"
+                    f"  等待原因: {(mission.waiting_reason or '-')[:300]}\n"
+                    f"  等待条件: {waiting_for[:500]}\n"
+                    f"  建议下次时间: {next_run}\n"
+                )
+            prompt += (
+                "\n如果当前行动是在延续其中一项长期责任，选择 advance_mission 并填写准确的 "
+                "MISSION_ID；即使行动由刚收到的对话触发、尚未出现定时到期信号，也可以根据现场"
+                "自主选择。只有确实与现有 Mission 无关的一次性工作才选择 work。"
+                "状态为 waiting 时，先判断新对话或新事实是否值得重新进入一次 Run；若条件仍不满足，"
+                "可以不推进。你可以在输出结构化结论前修正自己的初步选择。\n"
+                "</相关长期Mission>\n"
+            )
+        elif mission_signals:
+            # Compatibility fallback for lightweight MissionService test doubles.
+            prompt += "\n可推进的长期 Mission（候选信号，不代表必须执行）：\n"
+            for signal in mission_signals:
+                prompt += (
+                    f"  - {signal['mission_id']} | {signal['title']} | "
+                    f"priority={signal['priority']:.2f} | "
+                    f"最近进展：{signal['progress_summary'] or '尚未推进'}\n"
+                )
+        if mission_learning_signals:
+            prompt += "\n等待 L2 决策的 Mission 学习缺口：\n"
+            for signal in mission_learning_signals:
+                prompt += (
+                    f"  - {signal['mission_id']} | topic={signal['topic']} | "
+                    f"reason={signal['reason']}\n"
+                )
+            prompt += (
+                "如果学习是此刻最重要的行动，选择 learn，TOPIC 填学习主题，"
+                "MISSION_ID 填来源 Mission。学习完成后 Mission 会重新产生可推进信号。\n"
+            )
+        prompt += (
+            "\ncreate_mission 只用于你明确识别出一个需要跨多次行动、长期承担的新责任时。"
+            "它只创建 preparing 状态供后续讨论，不自动获得对外发布、付费或不可逆操作权限。\n"
+        )
         if context_note:
             prompt += f"\n{context_note}\n"
 
@@ -784,8 +876,8 @@ class L2Engine:
             # 欲望偏高 → 建议满足
             if bo.desire_belonging > 0.6:
                 desire_hints.append(f"归属欲偏高（{bo.desire_belonging:.0%}），建议 talk/express")
-            if bo.desire_cognition > 0.6:
-                desire_hints.append(f"认知欲偏高（{bo.desire_cognition:.0%}），建议 learn")
+            # Cognition can still shape the inner state, but it must not
+            # suggest LEARN while autonomous learning is paused.
             if bo.desire_achievement > 0.6:
                 desire_hints.append(f"成就欲偏高（{bo.desire_achievement:.0%}），建议 progress/work")
             if bo.desire_expression > 0.6:
@@ -800,8 +892,7 @@ class L2Engine:
             _novelty = 0.20     # 新奇感 — 尚未接入 Drive，硬编码
             _integrity = 0.55   # 一致性 — 尚未接入 Drive，硬编码
             _aesthetics = 0.70  # 审美   — 尚未接入 Drive，硬编码
-            if _novelty < 0.4:
-                desire_hints.append(f"新奇感偏低（{_novelty:.0%}），建议 learn 来注入新鲜感，打破重复的循环")
+            # Low novelty no longer maps to LEARN while it is paused.
             if _integrity < 0.7:
                 desire_hints.append(f"一致性偏低（{_integrity:.0%}），建议 reflect 来重新审视和调整")
             if desire_hints:
@@ -830,10 +921,74 @@ class L2Engine:
                    "TARGET_USER: <目标用户ID>（greet/care/express/talk 以及人物所属 work 必填；"
                    "Agent 自身 work 和其他意图填 \"-\"）\n"
                    "TARGET_SESSION: <目标会话ID>（意图来自待审视对话时必填；否则填 \"-\"）\n"
-                   "TOPIC: <学习主题>（LEARN 意图必填！从你的 REASON 中提取要学什么，必须填）\n"
+                   # TOPIC is omitted while autonomous LEARN is disabled.
+                   "MISSION_ID: <Mission ID>（ADVANCE_MISSION 必填，其他填 \"-\"）\n"
+                   "MISSION_TITLE: <新 Mission 标题>（CREATE_MISSION 必填，其他填 \"-\"）\n"
+                   "MISSION_OBJECTIVE: <新 Mission 长期目标>（CREATE_MISSION 必填，其他填 \"-\"）\n"
                    "MESSAGE: <对话内容>（greet/care/express/talk 意图必填！直接输出你想说的话，50-300字，"
                    "自然随意像朋友聊天，不要加引号。其他意图不输出此行）\n")
         return prompt
+
+    def _mission_decision_candidates(
+        self,
+        *,
+        context_user_id: str = "",
+        context_session_id: str = "",
+        decision_scopes: list[dict[str, Any]] | None = None,
+        limit: int = 50,
+    ) -> list[Any]:
+        """Expose the Agent's whole actionable Mission desk to L2.
+
+        Person and Session identify the isolated execution site after a
+        Mission is selected.  They influence ranking here, but must never hide
+        responsibilities owned by the same Agent.
+        """
+        service = self._mission_service
+        list_missions = getattr(service, "list", None) if service is not None else None
+        if not callable(list_missions):
+            return []
+        try:
+            missions = list_missions(limit=50)
+        except Exception as exc:
+            logger.debug("[Consciousness L2] 读取 Mission 候选失败: %s", exc)
+            return []
+
+        people = {str(context_user_id or "").strip()}
+        sessions = {str(context_session_id or "").strip()}
+        for scope in decision_scopes or []:
+            people.add(str(scope.get("user_id") or "").strip())
+            sessions.add(str(scope.get("session_id") or "").strip())
+        people.discard("")
+        sessions.discard("")
+
+        candidates = []
+        for mission in missions:
+            status = getattr(mission.status, "value", str(mission.status))
+            if status not in {"active", "waiting"}:
+                continue
+            candidates.append(mission)
+
+        now = time.time()
+        candidates.sort(key=lambda mission: (
+            0 if mission.origin_session_id and mission.origin_session_id in sessions else 1,
+            0 if mission.accountable_person_id and mission.accountable_person_id in people else 1,
+            0 if (
+                getattr(mission.status, "value", str(mission.status)) == "active"
+                and (mission.next_run_at is None or mission.next_run_at <= now)
+            ) else 1,
+            -float(mission.priority),
+            -float(mission.updated_at),
+        ))
+        return candidates[:max(1, int(limit))]
+
+    @staticmethod
+    def _format_mission_time(timestamp: float | None) -> str:
+        if timestamp is None:
+            return "-"
+        try:
+            return datetime.fromtimestamp(float(timestamp)).strftime("%m-%d %H:%M")
+        except (TypeError, ValueError, OSError):
+            return str(timestamp)
 
     def _render_decision_scope_candidates(
         self,
@@ -954,6 +1109,44 @@ class L2Engine:
             )
             self._c.intent_slot.urgent_intents.discard(intent.type.value)
             return None
+        if intent.type == IntentType.ADVANCE_MISSION:
+            mission_id = str((intent.params or {}).get("mission_id") or "").strip()
+            if not mission_id or self._mission_service is None:
+                logger.warning("[Consciousness L2] 放弃无 Mission ID 的 ADVANCE_MISSION")
+                return None
+            try:
+                mission = self._mission_service.require(mission_id)
+            except KeyError:
+                logger.warning("[Consciousness L2] 放弃不存在的 Mission: %s", mission_id)
+                return None
+            if mission.status.value not in {"active", "waiting"}:
+                logger.info("[Consciousness L2] Mission 当前不可进入工作现场: %s (%s)", mission_id, mission.status.value)
+                return None
+            params = dict(intent.params or {})
+            params.update({
+                "mission_id": mission.id,
+                "user_id": mission.accountable_person_id,
+                "session_id": mission.origin_session_id,
+                "scope_type": (
+                    "session" if mission.accountable_person_id and mission.origin_session_id
+                    else "person" if mission.accountable_person_id
+                    else "agent"
+                ),
+            })
+            return Intent(
+                type=intent.type,
+                priority=intent.priority,
+                content=intent.content,
+                trigger_time=intent.trigger_time,
+                source=intent.source,
+                params=params,
+            )
+        if intent.type == IntentType.CREATE_MISSION:
+            params = intent.params or {}
+            if not str(params.get("mission_objective") or intent.content or "").strip():
+                logger.warning("[Consciousness L2] 放弃没有长期目标的 CREATE_MISSION")
+                return None
+            return intent
         # WORK without a target is the Agent's own work. A targeted WORK is
         # resolved exactly like a proactive Person-directed intent.
         if intent.type == IntentType.WORK and not str(
@@ -1102,6 +1295,19 @@ class L2Engine:
         message_match = re.search(r"MESSAGE:\s*(.+)", block_content)
         message = message_match.group(1).strip() if message_match else ""
 
+        mission_id_match = re.search(r"MISSION_ID:\s*(.+)", block_content)
+        mission_id = mission_id_match.group(1).strip() if mission_id_match else ""
+        if mission_id.lower() in ("-", "null", "none", ""):
+            mission_id = ""
+        mission_title_match = re.search(r"MISSION_TITLE:\s*(.+)", block_content)
+        mission_title = mission_title_match.group(1).strip() if mission_title_match else ""
+        if mission_title.lower() in ("-", "null", "none", ""):
+            mission_title = ""
+        mission_objective_match = re.search(r"MISSION_OBJECTIVE:\s*(.+)", block_content)
+        mission_objective = mission_objective_match.group(1).strip() if mission_objective_match else ""
+        if mission_objective.lower() in ("-", "null", "none", ""):
+            mission_objective = ""
+
         if intent_type == IntentType.LEARN and learn_topic:
             logger.info("[Consciousness L2] 意图: LEARN → %s", learn_topic)
         elif intent_type == IntentType.LEARN:
@@ -1117,6 +1323,8 @@ class L2Engine:
             IntentType.EXPRESS: 60,
             IntentType.PROGRESS: 60,
             IntentType.WORK: 55,
+            IntentType.ADVANCE_MISSION: 70,
+            IntentType.CREATE_MISSION: 55,
             IntentType.SLEEP: 80,
         }
 
@@ -1127,6 +1335,12 @@ class L2Engine:
             params["user_id"] = target_user
         if target_session:
             params["session_id"] = target_session
+        if mission_id:
+            params["mission_id"] = mission_id
+        if mission_title:
+            params["mission_title"] = mission_title
+        if mission_objective:
+            params["mission_objective"] = mission_objective
 
         return Intent(
             type=intent_type,
@@ -1163,7 +1377,9 @@ class L2Engine:
             if desire_type == "belonging":
                 return create_greet_intent("归属欲长期未被满足，想联系对方", priority=75)
             elif desire_type == "cognition":
-                return Intent(type=IntentType.LEARN, priority=70, content="认知欲饥渴，想学习新知识")
+                # Autonomous LEARN is paused; retain the desire signal without
+                # converting it into executable learning work.
+                return create_wait_intent()
             elif desire_type == "achievement":
                 return Intent(type=IntentType.PROGRESS, priority=70, content="成就欲饥渴，想推进目标")
             elif desire_type == "expression":

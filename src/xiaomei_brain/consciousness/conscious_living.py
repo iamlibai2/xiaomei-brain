@@ -610,6 +610,40 @@ class ConsciousLiving(Living):
             ),
         )
 
+        # Mission is a new long-running responsibility domain. It reuses the
+        # generic isolated autonomous executor and Activity projection, but it
+        # does not depend on Goal/PACE, Assignment, Project, or Workspace state.
+        from .missions import (
+            MissionRunner,
+            MissionService,
+            MissionStore,
+            create_mission_tools,
+        )
+        skill_loader = getattr(self.agent, "_skill_loader", None)
+        self._mission_service = MissionService(
+            MissionStore(db_path),
+            skill_exists=lambda name: bool(
+                skill_loader and skill_loader.view_skill(str(name or ""))
+            ),
+        )
+        self._mission_runner = MissionRunner(
+            self._mission_service,
+            self.consciousness,
+            skill_loader=skill_loader,
+            send_proactive=self._send_proactive,
+        )
+        self.agent.mission_service = self._mission_service
+        agent_core.mission_service = self._mission_service
+        for mission_tool in create_mission_tools(self._mission_service):
+            if self.agent.tools.get(mission_tool.name) is None:
+                self.agent.tools.register(mission_tool)
+        dynamic_loader = getattr(self.agent, "_dynamic_loader", None)
+        if dynamic_loader is not None:
+            dynamic_loader.build_index()
+        l2_engine._mission_service = self._mission_service
+        logger.info("[ConsciousLiving] Mission service initialized")
+        boot_line("Missions", "OK")
+
         # ── 底色（Essence）—— 由 ConsciousLiving.__init__() 创建 ──
         essence = getattr(self.agent, '_essence', None)
         if essence is not None:

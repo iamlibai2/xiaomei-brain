@@ -90,6 +90,12 @@ class IntentType(Enum):
     WORK = "work"
     """想自由工作，按目标 tag 选择任务"""
 
+    ADVANCE_MISSION = "advance_mission"
+    """想推进一个明确的长期 Mission"""
+
+    CREATE_MISSION = "create_mission"
+    """想建立一个新的长期 Mission，先进入讨论准备状态"""
+
     ALARM = "alarm"
     """闹钟触发"""
 

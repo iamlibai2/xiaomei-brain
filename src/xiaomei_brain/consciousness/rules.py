@@ -172,20 +172,23 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
 
     # ACT 语义保留，尚未定义安全、明确的动作协议，暂不注册执行规则。
 
-    # LEARN 意图 → 主动学习（learn_enabled 控制）
-    RULES.append(
-        Rule.when(lambda si: ac.learn_enabled and _has_intent(si, "LEARN"))
-            .then(ActionItem(
-                action_type=ActionType.TOOL,
-                priority=0.6,
-                content="learn_topic",
-                reason="收到 LEARN 意图",
-                source="intent",
-                cooldown_key="intent_learn",
-                metadata={"intent_type": "LEARN"},
-            ))
-            .cooldown("intent_learn", 60)
-    )
+    # LEARN intent consumption is temporarily disabled.  Keep the complete
+    # rule here so it can be restored after learning cost and executor
+    # backpressure are redesigned.
+    if False:  # pragma: no cover - intentionally disabled
+        RULES.append(
+            Rule.when(lambda si: ac.learn_enabled and _has_intent(si, "LEARN"))
+                .then(ActionItem(
+                    action_type=ActionType.TOOL,
+                    priority=0.6,
+                    content="learn_topic",
+                    reason="收到 LEARN 意图",
+                    source="intent",
+                    cooldown_key="intent_learn",
+                    metadata={"intent_type": "LEARN"},
+                ))
+                .cooldown("intent_learn", 60)
+        )
 
     # EXPRESS 意图 → 分享想法
     RULES.append(
@@ -231,6 +234,22 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
             ))
             .cooldown("intent_work", ac.intent_work_cooldown)
     )
+
+    # Mission 意图只负责选择长期责任；具体 Run 由 MissionRunner 在隔离 Core 中完成。
+    for mission_intent in ("ADVANCE_MISSION", "CREATE_MISSION"):
+        RULES.append(
+            Rule.when(lambda si, name=mission_intent: _has_intent(si, name))
+                .then(ActionItem(
+                    action_type=ActionType.MISSION,
+                    priority=0.7,
+                    content="",
+                    reason=f"收到 {mission_intent} 意图",
+                    source="intent",
+                    cooldown_key=f"intent_{mission_intent.lower()}",
+                    metadata={"intent_type": mission_intent},
+                ))
+                .cooldown(f"intent_{mission_intent.lower()}", 60)
+        )
 
     # ALARM 意图 → 闹钟触发（完整 ReAct）
     RULES.append(
@@ -284,20 +303,22 @@ def _init_rules(drive_config: Any = None, living_config: Any = None) -> None:
     #         .cooldown("desire_talk_to_agent", ac.desire_talk_to_agent_cooldown)
     # )
 
-    # 认知欲高 → 主动学习（learn_enabled 控制）
-    RULES.append(
-        Rule.when(lambda si: ac.learn_enabled and _get_drive_facet(si).cognition > 1.0)
-            .then(ActionItem(
-                action_type=ActionType.TOOL,
-                priority=0.55,
-                content="learn_topic",
-                reason="认知欲偏高，主动学习（当前阈值=1.0，暂不触发）",
-                source="desire",
-                cooldown_key="desire_learn",
-                metadata={"desire_type": "cognition"},
-            ))
-            .cooldown("desire_learn", ac.desire_learn_cooldown)
-    )
+    # Cognition-driven autonomous learning is paused together with LEARN
+    # intent consumption.  Preserve the rule for later redesign.
+    if False:  # pragma: no cover - intentionally disabled
+        RULES.append(
+            Rule.when(lambda si: ac.learn_enabled and _get_drive_facet(si).cognition > 1.0)
+                .then(ActionItem(
+                    action_type=ActionType.TOOL,
+                    priority=0.55,
+                    content="learn_topic",
+                    reason="认知欲偏高，主动学习（当前阈值=1.0，暂不触发）",
+                    source="desire",
+                    cooldown_key="desire_learn",
+                    metadata={"desire_type": "cognition"},
+                ))
+                .cooldown("desire_learn", ac.desire_learn_cooldown)
+        )
 
     # ── Craving 驱动（快乐中枢渴望）─────────────────────
 

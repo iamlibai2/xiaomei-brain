@@ -89,6 +89,11 @@ class SkillLoader:
             str(name).strip() for name in names if str(name).strip()
         }
 
+    @property
+    def skills_dir(self) -> Path:
+        """Filesystem root for Skills authored specifically for this Agent."""
+        return self._skills_dir
+
     def _effective_disabled_names(self) -> set[str]:
         return self._disabled_names | self._package_disabled_names
 

@@ -55,6 +55,7 @@ class ActionExecutor:
             "proactive": self._do_proactive,
             "alarm": self._do_alarm,
             "work": self._do_work,
+            "mission": self._do_mission,
             "trigger_l3": self._do_trigger_l3,
             "tool": self._do_tool,
             "notify": self._do_notify,
@@ -416,6 +417,54 @@ class ActionExecutor:
 
         return True
 
+    def _do_mission(self, item: ActionItem) -> bool:
+        """Create or advance a Mission selected by the sole L2 intent path."""
+        living = self.dispatcher._conscious_living
+        if living is None:
+            return False
+        service = getattr(living, "_mission_service", None)
+        runner = getattr(living, "_mission_runner", None)
+        if service is None or runner is None:
+            logger.warning("[ActionExecutor] Mission subsystem is unavailable")
+            return False
+        intent_type = str(item.metadata.get("intent_type") or "").upper()
+        params = dict(item.metadata.get("intent_params") or {})
+        if intent_type == "CREATE_MISSION":
+            title = str(params.get("mission_title") or item.reason or item.content or "新的长期 Mission")
+            objective = str(params.get("mission_objective") or item.reason or item.content or title)
+            service.create(
+                title=title[:120],
+                objective=objective,
+                accountable_person_id=str(item.metadata.get("user_id") or ""),
+                origin_session_id=str(item.metadata.get("session_id") or ""),
+                skill_name=str(params.get("skill_name") or ""),
+                created_by="agent",
+                activate=False,
+            )
+            self._consume_intent(item)
+            return True
+        mission_id = str(params.get("mission_id") or "").strip()
+        if not mission_id:
+            logger.warning("[ActionExecutor] ADVANCE_MISSION missing mission_id")
+            self._consume_intent(item)
+            return False
+        try:
+            succeeded = runner.execute(
+                mission_id,
+                self._agent_core(),
+                intent_id=str(item.metadata.get("intent_id") or ""),
+                cancel_check=self._cancel_check(),
+                activity_context=getattr(self._runtime_local, "activity_context", None),
+            )
+        finally:
+            # One intent authorizes one bounded Run, including a failed or
+            # interrupted Run. Mission state may emit a later signal; this
+            # concrete decision must never become an automatic retry loop.
+            self._consume_intent(item)
+        if succeeded:
+            self._satisfy_intent_desire("ADVANCE_MISSION")
+        return succeeded
+
     def _drop_work_result_to_desk(self, result: str, item: ActionItem) -> None:
         """工作完成后把结果扔上桌面。"""
         cl = self.dispatcher._conscious_living
@@ -449,6 +498,7 @@ class ActionExecutor:
             "PROGRESS": "achievement",
             "EXPRESS": "expression",
             "WORK": "achievement",
+            "ADVANCE_MISSION": "achievement",
         }
         desire_type = intent_desire_map.get(intent_type.upper())
 
@@ -1059,6 +1109,15 @@ class ActionExecutor:
                 db_id = getattr(engine, "_last_db_id", 0) or 0
                 md_path = getattr(engine, "_last_md_path", "") or ""
                 item.reason = f"学习「{topic}」→ LTM #{db_id}，{words} 字，{md_path}"
+                mission_id = str(params.get("mission_id") or "").strip()
+                living = self.dispatcher._conscious_living
+                service = getattr(living, "_mission_service", None) if living else None
+                if mission_id and service is not None:
+                    service.learning_completed(
+                        mission_id,
+                        topic=topic,
+                        summary=item.reason,
+                    )
             return ok
         return False
 
@@ -1537,8 +1596,49 @@ class ActionDispatcher:
                 if self._conscious_living
                 else None
             ),
+            runtime_preparer=self._prepare_autonomous_runtime,
         )
         self._autonomous_executor.start()
+
+    def _prepare_autonomous_runtime(self, runtime, item) -> None:
+        """Bind owner-scoped delivery callbacks to an isolated runtime.
+
+        The runtime keeps its private ``autonomous:*`` execution session, while
+        artifacts presented by that runtime belong to the Person's originating
+        conversation.  This is the same persistence and Gateway event path used
+        by realtime conversation runs.
+        """
+        living = self._conscious_living
+        if living is None:
+            return
+        metadata = getattr(item, "metadata", None) or {}
+        target_user_id = str(metadata.get("user_id") or "").strip()
+        target_session_id = str(metadata.get("session_id") or "").strip()
+        router = getattr(living, "_router", None)
+        if not target_session_id and target_user_id and router is not None:
+            session_for_user = getattr(router, "session_for_user", None)
+            if callable(session_for_user):
+                target_session_id = str(
+                    session_for_user(target_user_id) or ""
+                ).strip()
+                if target_session_id:
+                    metadata["session_id"] = target_session_id
+        if not target_session_id:
+            return
+
+        driver = getattr(living, "conversation_driver", None)
+        callback_factory = getattr(driver, "_make_artifact_callback", None)
+        if not callable(callback_factory):
+            raise RuntimeError(
+                "Autonomous artifact delivery is unavailable: "
+                "conversation artifact publisher is not initialized"
+            )
+        runtime.on_artifact = callback_factory(
+            target_session_id,
+            str(getattr(runtime, "turn_id", "") or ""),
+            target_user_id,
+            living,
+        )
 
     def stop_autonomous_execution(self) -> None:
         executor = self._autonomous_executor

@@ -44,6 +44,7 @@ class AutonomousBehaviorExecutor:
         activity_service: ActivityService | None = None,
         realtime_busy: Callable[[], bool] | None = None,
         model_failure_observer: Callable[[BaseException], None] | None = None,
+        runtime_preparer: Callable[[Any, Any], None] | None = None,
     ) -> None:
         self._factory = AgentRuntimeFactory(agent_instance)
         self._execute = execute
@@ -53,6 +54,7 @@ class AutonomousBehaviorExecutor:
         )
         self._realtime_busy = realtime_busy or (lambda: False)
         self._model_failure_observer = model_failure_observer
+        self._runtime_preparer = runtime_preparer
         self._queue: queue.Queue[Any] = queue.Queue()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -169,6 +171,8 @@ class AutonomousBehaviorExecutor:
                     memory_scope_id=memory_scope_id,
                     max_steps=50,
                 ))
+                if self._runtime_preparer is not None:
+                    self._runtime_preparer(runtime, item)
                 activity_context = self._start_activity(
                     activity_id,
                     runtime_session_id,
@@ -286,6 +290,22 @@ class AutonomousBehaviorExecutor:
         try:
             category, kind, title = self._describe(item)
             metadata, scope_type, target_user_id = self._execution_scope(item)
+            action_name = str(
+                getattr(getattr(item, "action_type", None), "value", "action"),
+            )
+            intent_params = dict(metadata.get("intent_params") or {})
+            domain_source_type = "mission" if action_name == "mission" else str(
+                getattr(item, "source", "") or "autonomous",
+            )
+            domain_source_id = (
+                str(intent_params.get("mission_id") or "")
+                if action_name == "mission"
+                else str(
+                    metadata.get("source_id")
+                    or getattr(item, "cooldown_key", "")
+                    or ""
+                )
+            )
             person_id = target_user_id.strip() or None
             session_id = str(metadata.get("session_id") or "").strip()
             scope_id = (
@@ -297,14 +317,8 @@ class AutonomousBehaviorExecutor:
                 category=category,
                 kind=kind,
                 title=title,
-                source_type=str(
-                    getattr(item, "source", "") or "autonomous",
-                ),
-                source_id=str(
-                    metadata.get("source_id")
-                    or getattr(item, "cooldown_key", "")
-                    or ""
-                ),
+                source_type=domain_source_type,
+                source_id=domain_source_id,
                 scope_type=scope_type,
                 scope_id=scope_id,
                 person_id=person_id,
@@ -429,6 +443,11 @@ class AutonomousBehaviorExecutor:
                 ActivityCategory.WORK,
                 "scheduled_work",
                 "自主工作",
+            ),
+            "mission": (
+                ActivityCategory.WORK,
+                "mission_run",
+                "推进长期 Mission",
             ),
             "trigger_l3": (
                 ActivityCategory.COGNITION,

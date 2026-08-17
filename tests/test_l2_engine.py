@@ -122,6 +122,23 @@ def test_desire_starvation_marks_original_intent_urgent_without_rewriting_it():
     assert urgent == {"learn"}
 
 
+def test_autonomous_learn_intent_is_temporarily_rejected():
+    urgent = {"learn"}
+    engine = L2Engine(SimpleNamespace(
+        intent_slot=SimpleNamespace(urgent_intents=urgent),
+    ))
+
+    prepared = engine._prepare_intent_for_buffer(Intent(
+        type=IntentType.LEARN,
+        priority=60,
+        content="学习推广方法",
+        params={"learn_topic": "推广方法"},
+    ))
+
+    assert prepared is None
+    assert urgent == set()
+
+
 def test_person_directed_intent_resolves_display_name_to_person_id():
     person = SimpleNamespace(person_id="person_1", display_name="博士")
     store = SimpleNamespace(list_people=lambda **_kwargs: [person])
@@ -144,6 +161,155 @@ def test_person_directed_intent_resolves_display_name_to_person_id():
     assert resolved.params["user_id"] == "person_1"
     assert resolved.params["scope_type"] == "person"
     assert resolved.params["session_id"] == ""
+
+
+def test_l2_parses_mission_intent_fields():
+    engine = L2Engine(SimpleNamespace())
+    intent = engine._parse_intent_response(
+        """thinking\n---INTENT---
+INTENT: ADVANCE_MISSION
+REASON: 现在最适合继续准备第一批推广内容
+TARGET_USER: -
+TARGET_SESSION: -
+TOPIC: -
+MISSION_ID: mission_123
+MISSION_TITLE: -
+MISSION_OBJECTIVE: -
+"""
+    )
+
+    assert intent is not None
+    assert intent.type is IntentType.ADVANCE_MISSION
+    assert intent.params["mission_id"] == "mission_123"
+
+
+def test_mission_intent_inherits_durable_person_and_session_scope():
+    mission = SimpleNamespace(
+        id="mission_123",
+        status=SimpleNamespace(value="active"),
+        accountable_person_id="person_1",
+        origin_session_id="session_1",
+    )
+    engine = L2Engine(SimpleNamespace(
+        intent_slot=SimpleNamespace(urgent_intents=set()),
+    ))
+    engine._mission_service = SimpleNamespace(
+        require=lambda _mission_id: mission,
+        due_signals=lambda **_kwargs: [{"mission_id": "mission_123"}],
+    )
+
+    prepared = engine._prepare_intent_for_buffer(Intent(
+        type=IntentType.ADVANCE_MISSION,
+        priority=70,
+        content="继续推进",
+        params={"mission_id": "mission_123"},
+    ))
+
+    assert prepared is not None
+    assert prepared.params["user_id"] == "person_1"
+    assert prepared.params["session_id"] == "session_1"
+    assert prepared.params["scope_type"] == "session"
+
+
+def test_l2_sees_relevant_waiting_mission_and_may_choose_it_without_due_signal():
+    mission = SimpleNamespace(
+        id="mission_waiting",
+        title="持续推广小美",
+        objective="持续获得第一批真实用户",
+        status=SimpleNamespace(value="waiting"),
+        priority=0.8,
+        accountable_person_id="person_1",
+        origin_session_id="session_1",
+        progress_summary="Day1 文案已经完成",
+        waiting_reason="等待博士选择发布方式",
+        waiting_for=({"type": "choice", "key": "publish_mode", "description": "选择 A 或 B"},),
+        next_run_at=None,
+        updated_at=100.0,
+    )
+    engine = L2Engine(SimpleNamespace(
+        agent=SimpleNamespace(people_service=None),
+        intent_slot=SimpleNamespace(urgent_intents=set()),
+    ))
+    engine._mission_service = SimpleNamespace(
+        list=lambda **_kwargs: [mission],
+        due_signals=lambda **_kwargs: [],
+        require=lambda _mission_id: mission,
+    )
+
+    prompt = engine._build_intent_prompt(
+        "",
+        context_user_id="person_1",
+        context_session_id="session_1",
+    )
+
+    assert "MISSION_ID: mission_waiting" in prompt
+    assert "状态: waiting" in prompt
+    assert "等待博士选择发布方式" in prompt
+    assert "选择 A 或 B" in prompt
+    assert "一次性自主工作" in prompt
+    assert "即使行动由刚收到的对话触发" in prompt
+
+    prepared = engine._prepare_intent_for_buffer(Intent(
+        type=IntentType.ADVANCE_MISSION,
+        priority=70,
+        content="博士已经选择 A，继续推进推广工作",
+        params={"mission_id": mission.id},
+    ))
+
+    assert prepared is not None
+    assert prepared.params["mission_id"] == mission.id
+    assert prepared.params["user_id"] == "person_1"
+    assert prepared.params["session_id"] == "session_1"
+
+
+def test_l2_sees_active_missions_owned_by_other_people_without_context_leakage():
+    def mission(identifier, person_id, session_id, priority):
+        return SimpleNamespace(
+            id=identifier,
+            title=f"Mission {identifier}",
+            objective=f"Objective {identifier}",
+            status=SimpleNamespace(value="active"),
+            priority=priority,
+            accountable_person_id=person_id,
+            origin_session_id=session_id,
+            progress_summary="等待推进",
+            waiting_reason="",
+            waiting_for=(),
+            next_run_at=None,
+            updated_at=100.0,
+        )
+
+    current = mission("mission_current", "person_1", "session_1", 0.4)
+    other = mission("mission_other", "person_2", "session_2", 0.9)
+    engine = L2Engine(SimpleNamespace(
+        agent=SimpleNamespace(people_service=None),
+        intent_slot=SimpleNamespace(urgent_intents=set()),
+    ))
+    engine._mission_service = SimpleNamespace(
+        list=lambda **_kwargs: [other, current],
+        due_signals=lambda **_kwargs: [
+            {"mission_id": current.id},
+            {"mission_id": other.id},
+        ],
+    )
+
+    candidates = engine._mission_decision_candidates(
+        context_user_id="person_1",
+        context_session_id="session_1",
+    )
+    prompt = engine._build_intent_prompt(
+        "",
+        context_user_id="person_1",
+        context_session_id="session_1",
+    )
+
+    assert [item.id for item in candidates] == ["mission_current", "mission_other"]
+    assert "MISSION_ID: mission_current" in prompt
+    assert "MISSION_ID: mission_other" in prompt
+    # Only durable Mission metadata is shared at decision time. Conversation
+    # messages remain isolated and are loaded after one Mission is selected.
+    assert "session_1" in prompt
+    assert "session_2" in prompt
 
 
 def test_person_directed_intent_keeps_the_conversation_that_fueled_decision():

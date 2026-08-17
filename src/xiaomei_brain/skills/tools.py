@@ -1,8 +1,9 @@
-"""技能工具 — skills_list（Tier 0 元数据）和 skill_view（Tier 1 完整内容）。
+"""技能工具 — 发现、读取和创建当前 Agent 的 Skill。
 
 渐进式披露：
 - skills_list: 列出所有可用技能，支持语义搜索，显示使用频率和工具绑定
 - skill_view: 查看指定技能的完整 SKILL.md 内容，自动记录使用
+- create_skill: 从受控 Workspace 安装或更新 Skill，并立即热加载
 
 用法::
 
@@ -13,10 +14,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..tools.base import Tool, tool
+from ..tools.execution_context import current_tool_execution
+from .authoring import install_authored_skill
 from .resources import activate_skill_resource_root
 
 if TYPE_CHECKING:
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
-    """创建技能工具 — skills_list 和 skill_view。
+    """创建 Skill 发现、读取和创建工具。
 
     延迟绑定模式：工具调用时从 agent 身上获取 SkillLoader 引用。
     """
@@ -167,4 +172,77 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
 
         return "\n".join(lines)
 
-    return [skills_list, skill_view]
+    @tool(
+        name="create_skill",
+        description=(
+            "把当前 Agent Workspace 中已经写好的 Skill 目录安装或更新为当前 Agent 的作业指南。"
+            "适合把经过讨论形成的长期工作方法、领域知识和执行策略保存为 Skill；"
+            "它不会创建能力包、不会新增程序工具，也不会重启 Agent。"
+            "源目录根部必须有 SKILL.md，可包含 scripts、templates、references 等资源。"
+            "如为某个 preparing Mission 编写指南，可传 mission_id 同时绑定该 Skill；"
+            "绑定不会自动激活 Mission，也不会授予外部发布、付费或删除权限。"
+        ),
+    )
+    def create_skill(source_dir: str, mission_id: str = "") -> str:
+        loader = _loader()
+        if not loader:
+            raise RuntimeError("技能系统未初始化")
+        context = current_tool_execution()
+        if context is None or not context.workspace_root:
+            raise RuntimeError("create_skill 只能在 Agent 的受控 Workspace 中执行")
+        raw_source = Path(str(source_dir or "").strip())
+        if not str(raw_source) or raw_source.is_absolute():
+            raise ValueError("source_dir 必须是 Workspace 相对目录")
+
+        installed = install_authored_skill(
+            source_dir=Path(context.workspace_root) / raw_source,
+            workspace_root=Path(context.workspace_root),
+            skills_dir=loader.skills_dir,
+            tool_registry=context.tool_registry,
+        )
+        loader.refresh_if_changed()
+        skill = loader.view_skill(installed.name)
+        if not skill:
+            raise RuntimeError(f"Skill 已写入但热加载失败: {installed.name}")
+
+        # Newly installed resources become readable by all subsequent isolated
+        # runtimes without restarting the Agent.  Selection and full content
+        # are still exposed only when the Skill is relevant or explicitly read.
+        configure_paths = getattr(agent, "configure_tool_paths", None)
+        agent_dir = getattr(agent, "agent_dir", None)
+        if callable(configure_paths) and callable(agent_dir):
+            base_dir = agent_dir()
+            if base_dir:
+                configure_paths(base_dir, extra_read_only_roots=loader.resource_roots())
+
+        bound_mission: dict | None = None
+        normalized_mission_id = str(mission_id or "").strip()
+        if normalized_mission_id:
+            mission_service = getattr(agent, "mission_service", None)
+            if mission_service is None:
+                raise RuntimeError("Mission 系统尚未初始化，Skill 已安装但未绑定")
+            mission = mission_service.update_definition(
+                normalized_mission_id,
+                skill_name=installed.name,
+            )
+            bound_mission = mission.to_dict()
+
+        return json.dumps({
+            "success": True,
+            "skill": {
+                "name": installed.name,
+                "description": installed.description,
+                "version": installed.version,
+                "requires_tools": list(installed.requires_tools),
+                "install_dir": str(installed.install_dir),
+            },
+            "hot_loaded": True,
+            "restart_required": False,
+            "mission": bound_mission,
+            "message": (
+                "Skill 已安装并立即生效；Mission 已绑定但仍需显式激活。"
+                if bound_mission else "Skill 已安装并立即生效。"
+            ),
+        }, ensure_ascii=False)
+
+    return [skills_list, skill_view, create_skill]

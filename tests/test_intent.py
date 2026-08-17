@@ -38,7 +38,9 @@ def test_intent_type_values():
 
 
 def test_intent_type_count():
-    assert len(IntentType) == 15
+    assert len(IntentType) == 17
+    assert IntentType.ADVANCE_MISSION.value == "advance_mission"
+    assert IntentType.CREATE_MISSION.value == "create_mission"
 
 
 # ── Intent dataclass ──────────────────────────────────────────────────
