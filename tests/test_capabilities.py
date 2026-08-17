@@ -305,6 +305,45 @@ def test_capability_prefetch_does_not_pin_outcome_dependencies():
     assert details["tools"] == []
 
 
+def test_static_capability_candidate_resolves_declared_dependencies():
+    registry = _document_runtime()
+
+    tools, skills = registry.resolve_candidate_components([{
+        "id": "office_documents",
+        "outcome_id": "presentation",
+        "score": 0.91,
+    }])
+
+    assert "write_document" in tools
+    assert "presentation-documents" in skills
+
+
+def test_weak_static_capability_candidate_does_not_resolve_dependencies():
+    registry = _document_runtime()
+
+    tools, skills = registry.resolve_candidate_components([{
+        "id": "office_documents",
+        "outcome_id": "presentation",
+        "score": 0.60,
+    }])
+
+    assert tools == []
+    assert skills == []
+
+
+def test_browser_candidate_resolves_embodied_browser_tool():
+    registry = _document_runtime()
+
+    tools, skills = registry.resolve_candidate_components([{
+        "id": "web_browser",
+        "outcome_id": "browse",
+        "score": 0.91,
+    }])
+
+    assert tools == ["browser_control"]
+    assert skills == []
+
+
 def test_agent_can_inspect_business_capabilities_without_technical_leakage():
     registry = _document_runtime()
     agent = AgentInstance(id="test", name="测试")

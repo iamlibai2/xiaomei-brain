@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from xiaomei_brain.discovery import DiscoveryService, create_discover_tool
+from xiaomei_brain.discovery.service import ACTIVE_CAPABILITY_EXPANSION_MIN_SCORE
 from xiaomei_brain.tools.base import tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
 from xiaomei_brain.tools.registry import ToolRegistry
@@ -111,6 +112,12 @@ def test_prefetch_uses_static_candidates_without_live_capability_inspection():
         def render_candidate_context(candidates):
             return "<相关能力>办公文档</相关能力>" if candidates else ""
 
+        @staticmethod
+        def resolve_candidate_components(candidates, *, limit, min_score):
+            assert limit == 1
+            assert min_score == ACTIVE_CAPABILITY_EXPANSION_MIN_SCORE
+            return ["write_document"], ["presentation-documents"]
+
     registry = ToolRegistry()
     capabilities = StaticCapabilities()
     service = DiscoveryService(
@@ -124,7 +131,45 @@ def test_prefetch_uses_static_candidates_without_live_capability_inspection():
 
     assert result["capabilities"][0]["id"] == "office_documents"
     assert "办公文档" in result["context"]
+    assert result["required_tools"] == ["write_document"]
+    assert result["required_skills"] == ["presentation-documents"]
     assert capabilities.live_discovery_calls == 0
+
+
+def test_prefetch_does_not_activate_manifest_dependencies_immediately():
+    class StaticCapabilities(_Capabilities):
+        @staticmethod
+        def discover_candidates(query, *, limit, min_score=0.50):
+            return [{
+                "id": "web_browser",
+                "name": "网页操作",
+                "summary": "在 Desktop 中操作网页",
+                "outcome_id": "browse",
+                "outcome": "浏览网页",
+                "description": "打开并读取网页",
+                "score": 0.92,
+            }]
+
+        @staticmethod
+        def resolve_candidate_components(candidates, *, limit, min_score):
+            return ["browser_control"], []
+
+        @staticmethod
+        def render_candidate_context(candidates):
+            return "<相关能力>网页操作</相关能力>"
+
+    dynamic = _Dynamic()
+    service = DiscoveryService(
+        capability_registry=StaticCapabilities(),
+        skill_loader=_Skills([]),
+        dynamic_tool_loader=dynamic,
+        tool_registry=ToolRegistry(),
+    )
+
+    result = service.prefetch("打开百度", person_id="person-1")
+
+    assert result["required_tools"] == ["browser_control"]
+    assert dynamic.active == []
 
 
 def test_discover_does_not_invent_platform_capability_for_generic_file_request():

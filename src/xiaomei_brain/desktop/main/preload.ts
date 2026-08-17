@@ -211,6 +211,13 @@ const CHANNEL_MAP = {
     onData:   { event: "terminal:data" },
     onExit:   { event: "terminal:exit" },
   },
+  desktopBrowser: {
+    command:    { invoke: "desktop-browser:command" },
+    setBounds:  { invoke: "desktop-browser:setBounds" },
+    setVisible: { invoke: "desktop-browser:setVisible" },
+    getState:   { invoke: "desktop-browser:getState" },
+    onState:    { event: "desktop-browser:state" },
+  },
 } as const;
 
 // ── buildBridge ──

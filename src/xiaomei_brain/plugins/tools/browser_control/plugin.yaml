@@ -1,0 +1,5 @@
+name: browser_control
+version: "1.0.0"
+description: 通过当前对话对应的 Desktop 身体浏览和操作网页
+kind: bundle
+entry: adapter:register

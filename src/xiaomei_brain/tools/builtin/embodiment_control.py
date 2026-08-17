@@ -15,6 +15,8 @@ _broker: Any = None
 def set_embodiment_command_broker(broker: Any) -> None:
     global _broker
     _broker = broker
+    from xiaomei_brain.body.embodiment.commands import set_default_command_broker
+    set_default_command_broker(broker)
 
 
 @tool(

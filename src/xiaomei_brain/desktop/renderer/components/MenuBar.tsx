@@ -50,6 +50,11 @@ export function MenuBar({ windowOnly = false }: { windowOnly?: boolean }) {
         action: openMusicPlayer,
         disabled: !activeAgent,
       },
+      {
+        label: t("browserUi.title"),
+        action: () => window.dispatchEvent(new CustomEvent("xiaomei:browser-open")),
+        disabled: !activeAgent,
+      },
       { separator: true, label: "" },
       {
         label: t("sidebar.terminal"),

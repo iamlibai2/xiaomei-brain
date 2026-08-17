@@ -1,5 +1,6 @@
 {
   "translation": {
+    "browserUi": { "title": "Web browser", "address": "Web address", "addressPlaceholder": "Enter a web address", "back": "Back", "forward": "Forward", "reload": "Reload", "close": "Close browser" },
     "bootstrap": {
       "title": "Get ready",
       "description": "Complete setup once. Future launches restore Xiaomei's previous workspace directly.",

@@ -14,6 +14,7 @@ import { IdentityVault } from "./identity-vault";
 import { LocalAIRuntimeManager, type LocalAIServiceAction } from "./local-ai-runtime-manager";
 import { SetupManager } from "./setup-manager";
 import { BootstrapManager } from "./bootstrap-manager";
+import { DesktopBrowserManager } from "./browser-manager";
 
 const connections = new Map<string, GatewayClient>();
 const connectionSessions = new Map<string, string>();
@@ -127,6 +128,11 @@ export function registerIpcHandlers(
   const localAIRuntime = services?.localAIRuntime ?? new LocalAIRuntimeManager(runtimeManager);
   const setupManager = new SetupManager(runtimeManager, config, getWindow);
   const identityVault = new IdentityVault();
+  const browserManager = new DesktopBrowserManager(
+    getWindow,
+    () => identityVault.status().activeSubject || "anonymous",
+  );
+  browserManager.registerIpc();
   const bootstrapManager = new BootstrapManager(
     runtimeManager,
     setupManager,

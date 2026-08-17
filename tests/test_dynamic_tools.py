@@ -228,8 +228,22 @@ def test_capability_prefetch_is_reused_by_context_and_execution_selection():
             return {
                 "capabilities": [{"id": "office_documents", "name": "Office"}],
                 "skills": [],
+                "required_tools": ["write_document"],
+                "required_skills": [],
                 "context": "<relevant_capability>Office</relevant_capability>",
             }
+
+    class Dynamic:
+        def __init__(self) -> None:
+            self.required = []
+
+        def begin_run(self, _scope_id, reset=False) -> None:
+            if reset:
+                self.required.clear()
+
+        def activate_required_tools(self, names):
+            self.required.extend(names)
+            return list(names), []
 
     agent = Agent(llm=object(), tools=ToolRegistry())
     agent.session_id = "session-1"
@@ -238,6 +252,8 @@ def test_capability_prefetch_is_reused_by_context_and_execution_selection():
     agent.messages = [{"role": "user", "content": "write a report"}]
     discovery = Discovery()
     agent._discovery_service = discovery
+    dynamic = Dynamic()
+    agent._dynamic_loader = dynamic
 
     rendered = render_execution_context(agent, "write a report")
     prepare_execution_selection(agent, [
@@ -248,6 +264,8 @@ def test_capability_prefetch_is_reused_by_context_and_execution_selection():
     assert discovery.calls == 1
     assert "<relevant_capability>Office</relevant_capability>" in rendered
     assert agent._execution_selection_base["capability"]["capabilities"][0]["id"] == "office_documents"
+    assert agent._execution_selection_base["capability"]["tools"] == ["write_document"]
+    assert dynamic.required == ["write_document"]
 
 
 def test_focused_workspace_does_not_expand_a_keyword_rule_kit(monkeypatch):

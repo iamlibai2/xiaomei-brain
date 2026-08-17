@@ -15,11 +15,14 @@ import { MusicPlayer } from "./music-player/MusicPlayer";
 import { MediaLibraryDialog } from "./music-player/MediaLibraryDialog";
 import { VideoPlayer } from "./media-player/VideoPlayer";
 import { controlMediaPlayback } from "../media-playback";
+import { BrowserSurface } from "./browser/BrowserSurface";
 
 export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
   const [requestedWorkspaceId, setRequestedWorkspaceId] = useState("");
+  const [requestedBrowserUrl, setRequestedBrowserUrl] = useState("");
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [analysisPanel, setAnalysisPanel] = useState<"model-context" | "execution" | "prompt" | "vector" | "brain" | null>(null);
   const modelContextOpen = analysisPanel === "model-context";
   const activeAgentId = useCoreStore((state) => state.activeAgentId || "");
@@ -28,6 +31,8 @@ export function MainShell() {
   useEffect(() => {
     const clearPersonScopedSurface = () => {
       setRequestedWorkspaceId("");
+      setRequestedBrowserUrl("");
+      setBrowserOpen(false);
       setSurface("chat");
     };
     window.addEventListener("xiaomei:identity-status-changed", clearPersonScopedSurface);
@@ -70,6 +75,52 @@ export function MainShell() {
   }, [requestedWorkspaceId, surface]);
 
   useEffect(() => {
+    const commands = [
+      "open", "navigate", "snapshot", "click", "type", "select", "press", "scroll",
+      "back", "forward", "reload", "get_state", "close",
+    ] as const;
+    const disposers = commands.map((action) => registerEmbodimentCommand(
+      `browser.${action === "get_state" ? "state.get" : action}`,
+      async ({ arguments: args, agentId }) => {
+        if (action === "open" || action === "navigate") {
+          setRequestedBrowserUrl("");
+          setAnalysisPanel(null);
+          setSurface("chat");
+          setBrowserOpen(true);
+          window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+          // Let React paint the browser dock before navigation starts. The
+          // webpage can take seconds to load; the body must appear at once.
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        } else if (action === "close") {
+          setBrowserOpen(false);
+        }
+        const response = await window.desktopBrowser.command({
+          action,
+          agentId,
+          url: typeof args.url === "string" ? args.url : undefined,
+          ref: typeof args.ref === "string" ? args.ref : undefined,
+          text: typeof args.text === "string" ? args.text : undefined,
+          value: typeof args.value === "string" ? args.value : undefined,
+          clear: typeof args.clear === "boolean" ? args.clear : undefined,
+          direction: args.direction === "up" ? "up" : args.direction === "down" ? "down" : undefined,
+          amount: typeof args.amount === "number" ? args.amount : undefined,
+          interactiveOnly: typeof args.interactive_only === "boolean" ? args.interactive_only : undefined,
+          maxElements: typeof args.max_elements === "number" ? args.max_elements : undefined,
+          key: args.key === "Tab" ? "Tab" : args.key === "Escape" ? "Escape" : args.key === "Enter" ? "Enter" : undefined,
+        });
+        return {
+          status: response.status === "completed" ? "completed" : "failed",
+          result: response.result && typeof response.result === "object"
+            ? response.result as Record<string, unknown>
+            : undefined,
+          error: typeof response.error === "string" ? response.error : undefined,
+        };
+      },
+    ));
+    return () => disposers.forEach((dispose) => dispose());
+  }, []);
+
+  useEffect(() => {
     const disposers = (["pause", "resume", "stop"] as const).map((action) => (
       registerEmbodimentCommand(`media.player.${action}`, async () => {
         const completed = await controlMediaPlayback(action === "resume" ? "play" : action);
@@ -79,6 +130,19 @@ export function MainShell() {
       })
     ));
     return () => disposers.forEach((dispose) => dispose());
+  }, []);
+
+  useEffect(() => {
+    const openBrowser = (event: Event) => {
+      const detail = (event as CustomEvent<{ url?: string }>).detail;
+      setRequestedBrowserUrl(detail?.url || "https://www.baidu.com/");
+      setAnalysisPanel(null);
+      setSurface("chat");
+      setBrowserOpen(true);
+      window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
+    };
+    window.addEventListener("xiaomei:browser-open", openBrowser);
+    return () => window.removeEventListener("xiaomei:browser-open", openBrowser);
   }, []);
 
   useEffect(() => window.gateway.onEvent((event: { event?: string; agentId?: string; data?: unknown }) => {
@@ -93,12 +157,14 @@ export function MainShell() {
 
   useEffect(() => {
     const openComparison = () => {
+      setBrowserOpen(false);
       setSurface("chat");
       setAnalysisPanel("model-context");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
     const toggleComparison = () => setAnalysisPanel((current) => {
       if (current !== "model-context") {
+        setBrowserOpen(false);
         setSurface("chat");
         window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
       }
@@ -106,22 +172,26 @@ export function MainShell() {
     });
     const closeComparison = () => setAnalysisPanel(null);
     const openExecution = () => {
+      setBrowserOpen(false);
       setSurface("chat");
       setAnalysisPanel("execution");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
     const toggleExecution = () => setAnalysisPanel((current) => current === "execution" ? null : "execution");
     const openPromptAnalysis = () => {
+      setBrowserOpen(false);
       setSurface("chat");
       setAnalysisPanel("prompt");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
     const openVectorTrace = () => {
+      setBrowserOpen(false);
       setSurface("chat");
       setAnalysisPanel("vector");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
     };
     const openBrain = () => {
+      setBrowserOpen(false);
       setSurface("chat");
       setAnalysisPanel("brain");
       window.dispatchEvent(new CustomEvent("xiaomei:right-sidebar-close"));
@@ -192,9 +262,9 @@ export function MainShell() {
   }, [newSession]);
 
   return (
-    <div className={`main-shell${analysisPanel ? " has-analysis-panel" : ""}${analysisPanel === "brain" ? " has-brain-panel" : ""}`}>
+    <div className={`main-shell${analysisPanel ? " has-analysis-panel" : ""}${analysisPanel === "brain" ? " has-brain-panel" : ""}${browserOpen ? " has-browser-panel" : ""}`}>
       <ConversationList
-        collapsed={leftSidebarCollapsed || Boolean(analysisPanel)}
+        collapsed={leftSidebarCollapsed || Boolean(analysisPanel) || browserOpen}
         onCollapsedChange={setLeftSidebarCollapsed}
         surface={surface}
         onOpenChat={() => setSurface("chat")}
@@ -209,9 +279,21 @@ export function MainShell() {
         />
       ) : (
         <HomePage
-          leftSidebarCollapsed={leftSidebarCollapsed || Boolean(analysisPanel)}
+          leftSidebarCollapsed={leftSidebarCollapsed || Boolean(analysisPanel) || browserOpen}
           onLeftSidebarCollapsedChange={setLeftSidebarCollapsed}
         />
+      )}
+      {browserOpen && (
+        <div className="browser-dock">
+          <BrowserSurface
+            agentId={activeAgentId}
+            requestedUrl={requestedBrowserUrl}
+            onClose={() => {
+              setBrowserOpen(false);
+              void window.desktopBrowser.command({ action: "close", agentId: activeAgentId });
+            }}
+          />
+        </div>
       )}
       {modelContextOpen && (
         <div className="model-context-dock">

@@ -264,6 +264,54 @@ class CapabilityRegistry:
         )
         return result
 
+    def resolve_candidate_components(
+        self,
+        candidates: Iterable[dict[str, Any]],
+        *,
+        limit: int = 1,
+        min_score: float = 0.65,
+    ) -> tuple[list[str], list[str]]:
+        """Resolve declared dependencies from already-ranked static candidates.
+
+        Realtime prefetch deliberately avoids live runtime probes.  Once a
+        static candidate is unambiguous, however, its manifest is authoritative
+        about the Tool and Skill schemas needed to execute that outcome.  This
+        method expands only those local declarations and never performs another
+        semantic query or external readiness check.
+        """
+        tool_names: list[str] = []
+        skill_names: list[str] = []
+        selected = 0
+        for candidate in candidates:
+            try:
+                score = float(candidate.get("score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score < min_score or selected >= max(1, int(limit or 1)):
+                continue
+            definition = self._definitions.get(str(candidate.get("id") or ""))
+            if definition is None:
+                continue
+            outcome_id = str(candidate.get("outcome_id") or "")
+            outcome = next(
+                (item for item in definition.outcomes if item.id == outcome_id),
+                None,
+            )
+            component_ids = set(outcome.components if outcome is not None else ())
+            component_ids.update(
+                component.id for component in definition.components
+                if component.required
+            )
+            for component in definition.components:
+                if component.id not in component_ids:
+                    continue
+                if component.kind == "tool" and component.target not in tool_names:
+                    tool_names.append(component.target)
+                elif component.kind == "skill" and component.target not in skill_names:
+                    skill_names.append(component.target)
+            selected += 1
+        return tool_names, skill_names
+
     @staticmethod
     def render_candidate_context(candidates: Iterable[dict[str, Any]]) -> str:
         """Render lightweight semantic hints without claiming live readiness."""

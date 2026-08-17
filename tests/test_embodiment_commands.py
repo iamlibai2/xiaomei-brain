@@ -12,6 +12,7 @@ from xiaomei_brain.tools.builtin.embodiment_control import (
     set_embodiment_command_broker,
 )
 from xiaomei_brain.tools.execution_context import bind_tool_execution
+from xiaomei_brain.plugins.tools.browser_control.adapter import browser_control
 
 
 class _Router:
@@ -95,6 +96,55 @@ def test_embodiment_control_maps_agent_action_to_sealed_command():
         assert broker.request_args["command"] == "ui.right_sidebar.section.open"
         assert broker.request_args["arguments"] == {"section": "memory"}
         assert broker.request_args["turn_id"] == "turn-1"
+    finally:
+        set_embodiment_command_broker(None)
+
+
+def test_browser_control_routes_snapshot_to_current_desktop():
+    class Broker:
+        request_args = None
+
+        def request(self, **kwargs):
+            self.request_args = kwargs
+            return {
+                "status": "completed",
+                "result": {"elements": [{"ref": "e1", "role": "button", "name": "搜索"}]},
+            }
+
+    broker = Broker()
+    set_embodiment_command_broker(broker)
+    try:
+        with bind_tool_execution(
+            tool_call_id="tool-browser",
+            tool_name="browser_control",
+            arguments={},
+            artifact_callback=None,
+            session_id="session-1",
+            turn_id="turn-1",
+        ):
+            result = browser_control(
+                action="snapshot",
+                interactive_only=True,
+                max_elements=80,
+            )
+        assert result["elements"][0]["ref"] == "e1"
+        assert broker.request_args["command"] == "browser.snapshot"
+        assert broker.request_args["arguments"] == {
+            "interactive_only": True,
+            "max_elements": 80,
+        }
+        assert broker.request_args["timeout"] == 25.0
+    finally:
+        set_embodiment_command_broker(None)
+
+
+def test_browser_control_rejects_calls_without_routable_turn():
+    class Broker:
+        pass
+
+    set_embodiment_command_broker(Broker())
+    try:
+        assert "可路由" in browser_control(action="open", url="https://example.com")["error"]
     finally:
         set_embodiment_command_broker(None)
 

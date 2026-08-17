@@ -31,15 +31,31 @@ class DiscoveryService:
         self._last_discovery = None
 
     def prefetch(self, query: str, *, person_id: str = "") -> dict[str, Any]:
-        """Return compact semantic candidates; never activate capability dependencies."""
+        """Return candidates and high-confidence manifest dependencies.
+
+        This path remains side-effect free: it does not probe runtimes or
+        activate tools.  The caller activates the returned local dependencies
+        only after the scoped ReAct run has been reset.
+        """
         candidate_search = getattr(self._capabilities, "discover_candidates", None)
         candidate_renderer = getattr(self._capabilities, "render_candidate_context", None)
         if callable(candidate_search):
             candidates = candidate_search(query, limit=3, min_score=0.50)
+            resolver = getattr(self._capabilities, "resolve_candidate_components", None)
+            required_tools: list[str] = []
+            required_skills: list[str] = []
+            if callable(resolver):
+                required_tools, required_skills = resolver(
+                    candidates,
+                    limit=1,
+                    min_score=ACTIVE_CAPABILITY_EXPANSION_MIN_SCORE,
+                )
             return {
                 "capabilities": candidates[:2],
                 "context": candidate_renderer(candidates) if callable(candidate_renderer) else "",
                 "skills": [],
+                "required_tools": required_tools,
+                "required_skills": required_skills,
             }
 
         # Compatibility path for small integrations and test doubles that do
@@ -69,6 +85,8 @@ class DiscoveryService:
             # vector query. render_execution_context fills this list from that
             # result rather than issuing the same search twice.
             "skills": [],
+            "required_tools": [],
+            "required_skills": [],
         }
 
     def discover(

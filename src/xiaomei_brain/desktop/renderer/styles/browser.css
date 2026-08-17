@@ -1,0 +1,99 @@
+.desktop-browser-surface {
+  display: grid;
+  grid-template-rows: 54px 28px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ui-bg-primary);
+  color: var(--ui-color-text-primary);
+}
+
+.main-shell.has-browser-panel .main-shell-content > .main-content {
+  width: 30%;
+  flex: 0 0 30%;
+}
+
+.browser-dock {
+  width: 70%;
+  min-width: 0;
+  flex: 0 0 70%;
+  overflow: hidden;
+  border-left: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.desktop-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: var(--ui-bg-primary);
+}
+
+.desktop-browser-nav { display: flex; gap: 3px; }
+.desktop-browser-nav button,
+.desktop-browser-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ui-color-text-secondary);
+  background: transparent;
+  font: 18px/1 var(--ui-font-family);
+  cursor: pointer;
+}
+.desktop-browser-nav button:hover:not(:disabled),
+.desktop-browser-close:hover { background: var(--ui-bg-hover); color: var(--ui-color-text-primary); }
+.desktop-browser-nav button:disabled { opacity: .3; cursor: default; }
+
+.desktop-browser-address {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 120px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 11px;
+  background: var(--ui-bg-secondary);
+}
+.desktop-browser-address:focus-within { border-color: var(--ui-brand-primary); }
+.desktop-browser-address input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ui-color-text-primary);
+  background: transparent;
+  font: 14px/1.4 var(--ui-font-family);
+}
+.desktop-browser-status {
+  width: 7px;
+  height: 7px;
+  margin-right: 9px;
+  border-radius: 50%;
+  background: var(--ui-color-text-tertiary, #9da3a0);
+}
+.desktop-browser-status.is-loading {
+  background: var(--ui-brand-primary);
+  animation: desktop-browser-pulse 1s ease-in-out infinite;
+}
+.desktop-browser-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  color: var(--ui-color-text-secondary);
+  font: 12px/1 var(--ui-font-family);
+  white-space: nowrap;
+}
+.desktop-browser-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.desktop-browser-error { color: var(--ui-color-danger, #c64b4b); }
+.desktop-browser-viewport { min-width: 0; min-height: 0; background: #fff; }
+
+@keyframes desktop-browser-pulse { 50% { opacity: .35; transform: scale(.75); } }

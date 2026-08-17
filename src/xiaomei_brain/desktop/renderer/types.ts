@@ -1442,6 +1442,40 @@ export interface TerminalBridge {
   onExit(callback: (code: number) => void): () => void;
 }
 
+export interface DesktopBrowserState {
+  open: boolean;
+  visible: boolean;
+  loading: boolean;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error?: string;
+}
+
+export interface DesktopBrowserCommand {
+  action: "open" | "navigate" | "snapshot" | "click" | "type" | "select" | "press" | "scroll" | "back" | "forward" | "reload" | "get_state" | "close";
+  agentId?: string;
+  url?: string;
+  ref?: string;
+  text?: string;
+  value?: string;
+  clear?: boolean;
+  direction?: "up" | "down";
+  amount?: number;
+  interactiveOnly?: boolean;
+  maxElements?: number;
+  key?: "Enter" | "Tab" | "Escape";
+}
+
+export interface DesktopBrowserBridge {
+  command(command: DesktopBrowserCommand): Promise<Record<string, unknown>>;
+  setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<DesktopBrowserState>;
+  setVisible(args: { visible: boolean }): Promise<DesktopBrowserState>;
+  getState(): Promise<DesktopBrowserState>;
+  onState(callback: (state: DesktopBrowserState) => void): () => void;
+}
+
 declare global {
   interface Window {
     gateway: GatewayBridge;
@@ -1455,5 +1489,6 @@ declare global {
     desktopUpdate: DesktopUpdateBridge;
     win: WinBridge;
     terminal: TerminalBridge;
+    desktopBrowser: DesktopBrowserBridge;
   }
 }

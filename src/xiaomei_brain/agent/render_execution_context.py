@@ -144,7 +144,12 @@ def prepare_execution_selection(
     if callable(begin_discovery_run):
         begin_discovery_run()
     prefetch = getattr(discovery_service, "prefetch", None)
-    discovery_prefetch: dict[str, Any] = {"capabilities": [], "skills": []}
+    discovery_prefetch: dict[str, Any] = {
+        "capabilities": [],
+        "skills": [],
+        "required_tools": [],
+        "required_skills": [],
+    }
     if staged_is_current:
         discovery_prefetch = dict(staged.get("result") or discovery_prefetch)
         capability_selection["capabilities"] = discovery_prefetch.get("capabilities", [])
@@ -163,6 +168,11 @@ def prepare_execution_selection(
             )
     if dynamic_loader:
         dynamic_loader.begin_run(agent.session_id)
+        activated, missing = dynamic_loader.activate_required_tools(
+            list(discovery_prefetch.get("required_tools") or []),
+        )
+        capability_selection["tools"] = activated
+        capability_selection["missing_tools"] = missing
 
     skill_prompt = ""
     skill_selection: list[dict[str, Any]] = []
@@ -173,12 +183,12 @@ def prepare_execution_selection(
             skill_prompt, skill_selection = detailed_builder(
                 skill_loader,
                 selection_query,
-                required_names=[],
+                required_names=list(discovery_prefetch.get("required_skills") or []),
             )
         else:
             skill_prompt = skill_loader.build_skill_index_prompt(
                 selection_query,
-                required_names=[],
+                required_names=list(discovery_prefetch.get("required_skills") or []),
             )
     discovery_prefetch["skills"] = list(skill_selection)
     # The rendered capability text has already been added to the system prompt.

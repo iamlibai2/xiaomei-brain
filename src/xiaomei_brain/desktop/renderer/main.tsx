@@ -28,6 +28,7 @@ import "./styles/agent-settings.css";
 import "./styles/settings-center.css";
 import "./styles/unified-search.css";
 import "./styles/first-run.css";
+import "./styles/browser.css";
 
 // ─── 平台标记 ───
 document.body.setAttribute("data-electron-desktop", "true");

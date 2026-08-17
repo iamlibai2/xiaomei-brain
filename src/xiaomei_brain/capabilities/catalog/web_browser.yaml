@@ -1,0 +1,44 @@
+id: web_browser
+name: 网页操作
+summary: 在当前 Desktop 中打开、阅读和操作网页，复用本机已有登录状态
+category: productivity
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 打开百度首页
+  - 打开指定网站或网址
+  - 打开知乎并查看这个问题
+  - 搜索一个主题并整理网页内容
+  - 在已经登录的网站中填写表单
+  - 打开网页并点击指定按钮
+
+aliases:
+  - browser
+  - 浏览器
+  - 打开浏览器
+  - 打开网站
+  - 网页浏览
+  - 网页自动化
+
+boundaries:
+  - 只控制当前对话来源的 Desktop 内嵌浏览器
+  - 网页登录状态按当前登录账户和 Agent 隔离
+  - 不执行任意 JavaScript，不控制其他桌面软件
+
+components:
+  - id: tool_browser_control
+    kind: tool
+    target: browser_control
+    label: Desktop 网页控制
+    required: true
+
+outcomes:
+  - id: browse
+    name: 浏览与读取网页
+    description: 打开网页并读取页面中的文字、链接和可交互元素
+    components: [tool_browser_control]
+  - id: interact
+    name: 操作网页
+    description: 点击、输入、选择和滚动当前网页
+    components: [tool_browser_control]

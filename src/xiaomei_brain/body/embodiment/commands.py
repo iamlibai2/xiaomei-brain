@@ -7,6 +7,19 @@ import threading
 import uuid
 from typing import Any
 
+
+_default_command_broker: Any = None
+
+
+def set_default_command_broker(broker: Any) -> None:
+    """Expose the process command broker to embodiment tool plugins."""
+    global _default_command_broker
+    _default_command_broker = broker
+
+
+def get_default_command_broker() -> Any:
+    return _default_command_broker
+
 @dataclass
 class _PendingCommand:
     session_id: str
