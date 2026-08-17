@@ -48,13 +48,10 @@ def _resolve_presentable_file(raw_path: str) -> tuple[Path | None, str]:
 @tool(
     name="present_artifacts",
     description=(
-        "Present final files to the person in the current conversation. "
-        "You MUST call this after creating any file the person should view, "
-        "download, or receive, including documents, presentations, spreadsheets, "
-        "images, audio, archives, and reports. Include every final deliverable, "
-        "but never include temporary scripts or intermediate files. Relative paths "
-        "are resolved from the current Agent workspace. This is the only explicit "
-        "file-delivery action for Desktop, Feishu, and DingTalk."
+        "把最终产物文件交付给当前对话中的用户。创建任何需要用户查看、下载或接收的文件后，"
+        "必须调用此工具，包括文档、演示文稿、表格、图片、音频、压缩包和报告。"
+        "应包含全部最终交付物，但不要包含临时脚本或中间文件。相对路径从当前 Agent "
+        "工作空间解析。这是向 Desktop、飞书和钉钉明确交付文件的唯一工具。"
     ),
 )
 def present_artifacts(paths: list[str], message: str = "") -> dict | str:

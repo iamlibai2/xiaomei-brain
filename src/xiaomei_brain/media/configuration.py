@@ -166,6 +166,10 @@ class MediaServiceConfigurationService:
                 json=render_test_body(spec, resolved),
                 timeout=20,
             )
+        except UnicodeError as exc:
+            raise MediaServiceConfigurationError(
+                "API Key 包含不能用于请求头的字符，请检查是否被浏览器自动填入了账户密码"
+            ) from exc
         except requests.RequestException as exc:
             raise MediaServiceConfigurationError(f"无法连接媒体服务：{exc}") from exc
         response_text = str(getattr(response, "text", "") or "").lower()
@@ -394,6 +398,11 @@ class MediaServiceConfigurationService:
                 )
             return number
         text = str(value).strip()
+        if field.field_type == "secret" and field.key == "api_key":
+            if not text.isascii() or any(character.isspace() for character in text):
+                raise MediaServiceConfigurationError(
+                    "API Key 不能包含中文、空格或换行，请检查是否被浏览器自动填入了账户密码"
+                )
         if field.key == "base_url":
             parsed = urlparse(text.rstrip("/"))
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:

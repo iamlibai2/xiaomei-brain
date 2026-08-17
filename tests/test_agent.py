@@ -654,6 +654,48 @@ def test_explicit_document_presentation_prevents_auto_duplicate(
     agent.on_artifact.assert_not_called()
 
 
+def test_generated_images_are_auto_presented_when_model_omits_delivery(
+    mock_llm,
+    registry,
+    tmp_path,
+):
+    from xiaomei_brain.tools import tool
+
+    output_path = str(tmp_path / "snow-mountain.png")
+    calls = []
+
+    @tool(name="present_artifacts", description="交付最终产物")
+    def present_artifacts(paths: list[str], message: str = "") -> dict:
+        calls.append(paths)
+        return {
+            "type": "present_artifacts_result",
+            "path": paths,
+            "delivered": True,
+        }
+
+    registry.register(present_artifacts)
+    agent = Agent(llm=mock_llm, tools=registry)
+    agent.on_artifact = Mock()
+    pending = {}
+    presented = set()
+    agent._track_artifact_delivery(
+        "generate_image_minimax",
+        json.dumps({
+            "success": True,
+            "type": "image_generation_result",
+            "output_paths": [output_path],
+        }),
+        pending,
+        presented,
+    )
+
+    agent._auto_present_artifact_outputs(pending, presented)
+
+    assert calls == [[output_path]]
+    assert agent._normalized_delivery_path(output_path) in presented
+    agent.on_artifact.assert_called_once()
+
+
 def test_visualization_write_is_auto_presented_when_model_omits_delivery(
     mock_llm,
     registry,

@@ -183,6 +183,32 @@ MISSION_OBJECTIVE: -
     assert intent.params["mission_id"] == "mission_123"
 
 
+def test_l2_preserves_multiline_proactive_message():
+    engine = L2Engine(SimpleNamespace())
+    intent = engine._parse_intent_response(
+        """thinking
+---INTENT---
+INTENT: talk
+REASON: 想说几句话
+TARGET_USER: person_1
+TARGET_SESSION: session-1
+MISSION_ID: -
+MISSION_TITLE: -
+MISSION_OBJECTIVE: -
+MESSAGE: 博士，等一下。
+
+我刚才那一下回得太机械了。
+这一次把整段话都交给你。"""
+    )
+
+    assert intent is not None
+    assert intent.params["message"] == (
+        "博士，等一下。\n\n"
+        "我刚才那一下回得太机械了。\n"
+        "这一次把整段话都交给你。"
+    )
+
+
 def test_mission_intent_inherits_durable_person_and_session_scope():
     mission = SimpleNamespace(
         id="mission_123",

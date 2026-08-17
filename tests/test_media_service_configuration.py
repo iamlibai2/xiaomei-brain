@@ -257,6 +257,29 @@ def test_connection_test_rejects_unauthorized_credentials(tmp_path, monkeypatch)
         service.test("image_seedream", config={"api_key": "bad"})
 
 
+def test_connection_test_rejects_non_ascii_api_key_before_http_request(
+    tmp_path,
+    monkeypatch,
+):
+    service = MediaServiceConfigurationService("xiaomei", tmp_path)
+    requested = False
+
+    def fake_request(*args, **kwargs):
+        nonlocal requested
+        requested = True
+        return SimpleNamespace(status_code=200, text="")
+
+    monkeypatch.setattr(
+        "xiaomei_brain.media.configuration.requests.request",
+        fake_request,
+    )
+
+    with pytest.raises(MediaServiceConfigurationError, match="自动填入"):
+        service.test("image_minimax", config={"api_key": "本机账户密码"})
+
+    assert requested is False
+
+
 def test_gateway_media_methods_never_return_secret(tmp_path):
     living = SimpleNamespace(
         _agent_id="xiaomei",

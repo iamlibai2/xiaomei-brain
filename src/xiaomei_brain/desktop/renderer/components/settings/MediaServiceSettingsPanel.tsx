@@ -383,6 +383,11 @@ function MediaField({
       {field.label}
       <input
         type={field.type === "secret" ? "password" : field.type}
+        name={`media-service-${field.key}`}
+        autoComplete={field.type === "secret" ? "new-password" : "off"}
+        data-1p-ignore={field.type === "secret" ? "true" : undefined}
+        data-lpignore={field.type === "secret" ? "true" : undefined}
+        spellCheck={false}
         value={String(value ?? "")}
         min={field.minimum}
         max={field.maximum}

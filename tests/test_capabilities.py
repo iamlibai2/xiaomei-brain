@@ -155,6 +155,7 @@ def test_builtin_manifests_describe_user_facing_capabilities():
         "data_analysis",
         "feishu_office",
         "gmail",
+        "image_generation",
         "office_documents",
         "qq_mail",
         "visualize",
@@ -240,6 +241,30 @@ def test_configurable_capability_explains_setup_and_links_existing_settings():
     configured = configured_registry.get("web_search")
     assert configured is not None
     assert configured.to_dict()["actions"][0]["label"] == "管理联网搜索服务"
+
+
+def test_image_generation_capability_opens_media_settings_when_tool_is_missing():
+    registry = CapabilityRegistry(
+        plugin_registry=PluginRegistry(),
+        tool_registry=ToolRegistry(),
+        skill_loader=_SkillLoader([]),
+    )
+
+    view = registry.get("image_generation")
+    public = view.to_dict() if view else {}
+
+    assert view is not None
+    assert view.status == CapabilityStatus.NEEDS_SETUP
+    assert public["actions"] == [{
+        "type": "open_settings",
+        "section": "media",
+        "target": "generate_image_minimax",
+        "label": "配置图片生成服务",
+    }]
+    context = registry.build_context("生成一张伊犁雪山的照片")
+    assert "图片生成 [需要完善]" in context
+    assert "调用 request_capability_setup" in context
+    assert "capability_id 使用 image_generation" in context
 
 
 def test_capability_resolver_exposes_only_task_relevant_business_facts():
@@ -494,6 +519,7 @@ def test_agent_exposes_read_only_capability_queries():
         "data_analysis",
         "feishu_office",
         "gmail",
+        "image_generation",
         "office_documents",
         "qq_mail",
         "visualize",

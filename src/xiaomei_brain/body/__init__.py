@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 from .sense import Sense, Eyes, Ears, Throat
 from .device import Device, Camera, Microphone, Speaker
 from .state import BodyState
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Body", "BodyState", "Sense", "Eyes", "Ears", "Throat",
@@ -71,7 +74,7 @@ class Body:
 
         # ── 5分钟：采集原始数据 ──
         if now - self._last_capture >= 300:
-            for sense in self._senses.values():
+            for name, sense in self._senses.items():
                 if sense.is_available() and hasattr(sense, 'capture_raw'):
                     try:
                         sense.capture_raw()
@@ -81,7 +84,7 @@ class Body:
 
         # ── 10分钟：分析识别 ──
         if now - self._last_analyze >= 600:
-            for sense in self._senses.values():
+            for name, sense in self._senses.items():
                 if sense.is_available() and hasattr(sense, 'contribute_to'):
                     try:
                         sense.contribute_to(state)

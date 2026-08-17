@@ -1166,6 +1166,20 @@ class Agent:
                 pending[cls._normalized_delivery_path(output_path)] = output_path
             return
 
+        if (
+            tool_name in {"generate_image_minimax", "generate_image_seedream"}
+            and payload.get("success") is True
+        ):
+            output_paths = payload.get("output_paths", [])
+            if isinstance(output_paths, str):
+                output_paths = [output_paths]
+            if isinstance(output_paths, list):
+                for output_path in output_paths:
+                    path = str(output_path).strip()
+                    if path:
+                        pending[cls._normalized_delivery_path(path)] = path
+            return
+
         # Interactive visualizations are written as self-contained HTML by the
         # generic write tool.  Treat only the dedicated suffix as a deliverable;
         # ordinary source/config/text writes must remain silent.

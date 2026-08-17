@@ -1291,8 +1291,9 @@ class L2Engine:
         topic_match = re.search(r"TOPIC:\s*(.+)", block_content)
         learn_topic = topic_match.group(1).strip() if topic_match else ""
 
-        # 解析 MESSAGE 字段（对话类意图预生成内容）
-        message_match = re.search(r"MESSAGE:\s*(.+)", block_content)
+        # MESSAGE 是结构块的最后一个字段，内容可以包含多个段落。
+        # 不要使用单行匹配，否则主动消息会在第一个换行处被截断。
+        message_match = re.search(r"^MESSAGE:[ \t]*(.*)\Z", block_content, re.MULTILINE | re.DOTALL)
         message = message_match.group(1).strip() if message_match else ""
 
         mission_id_match = re.search(r"MISSION_ID:\s*(.+)", block_content)

@@ -232,6 +232,26 @@ class TestMockSenses:
         body.throat.play("/music/song.mp3")
         assert speaker.last_played == "/music/song.mp3"
 
+    def test_body_tick_isolates_sense_analysis_failure(self, caplog):
+        from xiaomei_brain.body import Body
+
+        class FailingSense:
+            def is_available(self):
+                return True
+
+            def contribute_to(self, _state):
+                raise RuntimeError("model load failed")
+
+        body = Body()
+        body._senses["ears"] = FailingSense()
+        body._last_analyze = 0
+
+        state = body.tick()
+
+        assert state is body.last_state
+        assert body._last_analyze > 0
+        assert "contribute_to failed for ears" in caplog.text
+
 
 class TestBodyTools:
     """Body 工具测试 — 使用延迟绑定 _refs 模式。"""

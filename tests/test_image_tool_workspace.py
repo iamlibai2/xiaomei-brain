@@ -39,8 +39,10 @@ def test_minimax_image_is_created_in_execution_workspace(tmp_path, monkeypatch):
     )
 
     assert (outputs / "images" / "generated.png").is_file()
-    assert "workspace_path: outputs/images/generated.png" in result
-    assert str(workspace.parent) not in result.split("workspace_path:", 1)[1]
+    assert result["success"] is True
+    assert result["output_paths"] == [str(outputs / "images" / "generated.png")]
+    assert result["workspace_paths"] == ["outputs/images/generated.png"]
+    assert str(workspace.parent) not in result["workspace_paths"][0]
 
 
 def test_seedream_image_is_created_in_execution_workspace(tmp_path, monkeypatch):
@@ -53,4 +55,6 @@ def test_seedream_image_is_created_in_execution_workspace(tmp_path, monkeypatch)
     )
 
     assert (outputs / "images" / "generated.png").is_file()
-    assert "workspace_path: outputs/images/generated.png" in result
+    assert result["success"] is True
+    assert result["output_paths"] == [str(outputs / "images" / "generated.png")]
+    assert result["workspace_paths"] == ["outputs/images/generated.png"]

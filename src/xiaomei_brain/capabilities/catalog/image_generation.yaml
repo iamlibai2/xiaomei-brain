@@ -1,0 +1,36 @@
+id: image_generation
+name: 图片生成
+summary: 根据文字描述生成图片、插画、视觉素材和图像创意稿
+category: media
+version: "1.0.0"
+source: xiaomei-brain
+
+examples:
+  - 生成一张伊犁雪山的照片
+  - 画一张产品宣传插画
+  - 根据这段描述创作一张图片
+
+aliases:
+  - AI 绘画
+  - 文生图
+  - 生成图像
+  - image generation
+
+components:
+  - id: tool_generate_image_minimax
+    kind: tool
+    target: generate_image_minimax
+    label: 图片生成服务
+    required: true
+    setup_section: media
+  - id: tool_present_artifacts
+    kind: tool
+    target: present_artifacts
+    label: 产物交付
+    required: true
+
+outcomes:
+  - id: image
+    name: 图片与插画
+    description: 根据文字描述生成可交付的图片文件
+    components: [tool_generate_image_minimax, tool_present_artifacts]

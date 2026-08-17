@@ -55,7 +55,7 @@ def image_generate_seedream(
     prompt: str,
     size: str = "2k",
     n: int = 1,
-) -> str:
+) -> dict | str:
     """使用豆包 Seedream 生成图片。"""
     if _image_provider is None:
         return (
@@ -80,13 +80,19 @@ def image_generate_seedream(
         )
         if not paths:
             return "图片生成失败，未返回任何图片。"
-        result = f"Seedream 生成了 {len(paths)} 张图片:\n"
-        for path in paths:
-            result += f"  - output_path: {path}\n"
-            workspace_path = _workspace_reference(path)
-            if workspace_path:
-                result += f"    workspace_path: {workspace_path}\n"
-        return result.strip()
+        workspace_paths = [
+            workspace_path
+            for path in paths
+            if (workspace_path := _workspace_reference(path))
+        ]
+        return {
+            "success": True,
+            "type": "image_generation_result",
+            "provider": "seedream",
+            "count": len(paths),
+            "output_paths": paths,
+            "workspace_paths": workspace_paths,
+        }
     except Exception as exc:
         logger.error("Seedream image generation error: %s", exc)
         return f"Seedream 图片生成失败: {exc}"

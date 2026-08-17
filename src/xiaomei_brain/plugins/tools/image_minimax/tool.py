@@ -60,7 +60,7 @@ def image_generate(
     prompt_optimizer: bool = False,
     style: str | None = None,
     style_weight: float | None = None,
-) -> str:
+) -> dict | str:
     """Generate images from text description.
 
     Args:
@@ -103,13 +103,19 @@ def image_generate(
         if not paths:
             return "图片生成失败，未返回任何图片。"
 
-        result = f"生成了 {len(paths)} 张图片:\n"
-        for p in paths:
-            result += f"  - output_path: {p}\n"
-            workspace_path = _workspace_reference(p)
-            if workspace_path:
-                result += f"    workspace_path: {workspace_path}\n"
-        return result.strip()
+        workspace_paths = [
+            workspace_path
+            for path in paths
+            if (workspace_path := _workspace_reference(path))
+        ]
+        return {
+            "success": True,
+            "type": "image_generation_result",
+            "provider": "minimax",
+            "count": len(paths),
+            "output_paths": paths,
+            "workspace_paths": workspace_paths,
+        }
 
     except Exception as e:
         logger.error("Image generation error: %s", e)
