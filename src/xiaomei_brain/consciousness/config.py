@@ -155,6 +155,7 @@ class ContextConfig:
         "workspace": True,
         "process": True,
         "assignment": True,
+        "shared_experience": True,
         "skills": True,
         "tool_discovery": True,
         "memory_policy": True,

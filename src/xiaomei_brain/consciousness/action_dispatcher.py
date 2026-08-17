@@ -114,6 +114,15 @@ class ActionExecutor:
         except Exception:
             logger.exception("[ActionExecutor] Failed to report Activity progress")
 
+    def _report_delivery(self, delivered: bool, target: str = "") -> None:
+        context = getattr(self._runtime_local, "activity_context", None)
+        if context is None:
+            return
+        try:
+            context.report_delivery(delivered=delivered, target=target)
+        except Exception:
+            logger.exception("[ActionExecutor] Failed to report Activity delivery")
+
     def _llm(self):
         runtime = getattr(self._runtime_local, "runtime", None)
         if runtime is not None:
@@ -159,9 +168,17 @@ class ActionExecutor:
             user_id=target_user_id or None,
             session_id=target_session_id or None,
         )
+        self._report_delivery(
+            delivered,
+            target_session_id or target_user_id,
+        )
         if not delivered:
             logger.info("[ActionExecutor] proactive intent retained: target unavailable")
             return False
+        self._report_activity(
+            content[:1000],
+            current_step="delivered",
+        )
 
         # 经验流
         cl = self.dispatcher._conscious_living
@@ -247,6 +264,12 @@ class ActionExecutor:
                     user_id=item.metadata.get("user_id") or None,
                     session_id=item.metadata.get("session_id") or None,
                 )
+                self._report_delivery(
+                    delivered,
+                    item.metadata.get("session_id")
+                    or item.metadata.get("user_id")
+                    or "",
+                )
                 if not delivered:
                     logger.info(
                         "[ActionExecutor] alarm result retained for retry: target unavailable"
@@ -274,6 +297,12 @@ class ActionExecutor:
                             intent="work",
                             confidence=0.7,
                         )
+
+            if result:
+                self._report_activity(
+                    result[:1000],
+                    current_step="completed",
+                )
 
             # ── Experience Stream: 记录内部行动 ──
             if result:
@@ -350,6 +379,12 @@ class ActionExecutor:
             # 手动内存提取：提取 MEMORY 块，拿到干净文本用于输出
             clean_result = self._extract_work_memories(agent_core, result)
 
+            if clean_result:
+                self._report_activity(
+                    clean_result[:1000],
+                    current_step="completed",
+                )
+
             # 输出（用去除 MEMORY 块后的干净文本）
             scope_type = item.metadata.get("scope_type", "agent")
             if scope_type in ("session", "person") and clean_result:
@@ -357,6 +392,12 @@ class ActionExecutor:
                     clean_result,
                     user_id=item.metadata.get("user_id") or None,
                     session_id=item.metadata.get("session_id") or None,
+                )
+                self._report_delivery(
+                    delivered,
+                    item.metadata.get("session_id")
+                    or item.metadata.get("user_id")
+                    or "",
                 )
                 if not delivered:
                     logger.info("[ActionExecutor] work result retained for retry: target unavailable")
@@ -554,6 +595,15 @@ class ActionExecutor:
                 result.status,
                 getattr(result.report, "summary", "")[:50] if result.report else "",
             )
+            summary = str(
+                getattr(result.report, "summary", "")
+                if result.report else item.reason or item.content
+            ).strip()
+            if summary:
+                self._report_activity(
+                    summary[:1000],
+                    current_step="completed",
+                )
 
             # Every request is one-shot. A recent/in-flight reflection already
             # satisfies this REFLECT intent; a provider failure is recorded once
@@ -619,6 +669,8 @@ class ActionExecutor:
         logger.info("[ActionExecutor] 通知: %s", item.content)
         if self.dispatcher._conscious_living:
             self.dispatcher._conscious_living._print_notification(item.content)
+        if item.content:
+            self._report_activity(item.content[:1000], current_step="delivered")
         return True
 
     def _do_talk_to_agent(self, item: ActionItem) -> bool:
@@ -701,6 +753,10 @@ class ActionExecutor:
             ts = time.strftime("%H:%M:%S")
             print(f"\n\033[36m[{ts} → {target}]\033[0m {text}", flush=True)
             logger.info("[ActionExecutor] 主动发送给 %s (%d 字)", target, len(text))
+            self._report_activity(
+                f"发送给 {target}：{text}"[:1000],
+                current_step="delivered",
+            )
 
             # ── 经验流 ──
             es = getattr(agent_core, "exp_stream", None)
@@ -802,6 +858,10 @@ class ActionExecutor:
             result = agent_core.react_nodb(messages=messages, cancel_check=self._cancel_check(), max_steps=3, label="pleasure")
             if result:
                 logger.info("[ActionExecutor] PLEASURE 完成 (%d 字)", len(result))
+                self._report_activity(
+                    result[:1000],
+                    current_step="completed",
+                )
 
             # ── 经验流 ──
             es = getattr(agent_core, "exp_stream", None)
@@ -1109,6 +1169,10 @@ class ActionExecutor:
                 db_id = getattr(engine, "_last_db_id", 0) or 0
                 md_path = getattr(engine, "_last_md_path", "") or ""
                 item.reason = f"学习「{topic}」→ LTM #{db_id}，{words} 字，{md_path}"
+                self._report_activity(
+                    item.reason,
+                    current_step="completed",
+                )
                 mission_id = str(params.get("mission_id") or "").strip()
                 living = self.dispatcher._conscious_living
                 service = getattr(living, "_mission_service", None) if living else None
@@ -1151,6 +1215,11 @@ class ActionExecutor:
 
         sensation = cl.drive.on_pleasure_hit()
         logger.info("[ActionExecutor] 自发 pleasure_lever: %s", sensation[:80])
+        if sensation:
+            self._report_activity(
+                sensation[:1000],
+                current_step="completed",
+            )
 
         # 通过 proactive 输出感受
         # This is an Agent-internal bodily action.  Do not leak it to whichever

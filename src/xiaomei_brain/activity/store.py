@@ -21,7 +21,7 @@ from .models import (
 )
 
 SCHEMA_COMPONENT = "agent_activity_storage"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ActivityConflictError(RuntimeError):
@@ -68,6 +68,9 @@ class ActivityStore(SQLiteStore):
         "result_summary",
         "error_code",
         "error_message",
+        "delivery_status",
+        "delivery_target",
+        "delivered_at",
         "checkpoint_type",
         "checkpoint_ref",
         "started_at",
@@ -110,6 +113,9 @@ class ActivityStore(SQLiteStore):
                 result_summary TEXT NOT NULL DEFAULT '',
                 error_code TEXT NOT NULL DEFAULT '',
                 error_message TEXT NOT NULL DEFAULT '',
+                delivery_status TEXT NOT NULL DEFAULT 'not_required',
+                delivery_target TEXT NOT NULL DEFAULT '',
+                delivered_at REAL,
 
                 checkpoint_type TEXT NOT NULL DEFAULT '',
                 checkpoint_ref TEXT NOT NULL DEFAULT '',
@@ -132,6 +138,24 @@ class ActivityStore(SQLiteStore):
             CREATE INDEX IF NOT EXISTS idx_agent_activity_scope
                 ON agent_activity_runs(scope_type, scope_id, updated_at DESC);
         """)
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(agent_activity_runs)").fetchall()
+        }
+        if "delivery_status" not in columns:
+            conn.execute(
+                "ALTER TABLE agent_activity_runs ADD COLUMN "
+                "delivery_status TEXT NOT NULL DEFAULT 'not_required'",
+            )
+        if "delivery_target" not in columns:
+            conn.execute(
+                "ALTER TABLE agent_activity_runs ADD COLUMN "
+                "delivery_target TEXT NOT NULL DEFAULT ''",
+            )
+        if "delivered_at" not in columns:
+            conn.execute(
+                "ALTER TABLE agent_activity_runs ADD COLUMN delivered_at REAL",
+            )
         conn.commit()
         self._set_schema_version(SCHEMA_COMPONENT, SCHEMA_VERSION)
 
@@ -146,11 +170,12 @@ class ActivityStore(SQLiteStore):
                     origin_session_id, origin_turn_id, runtime_session_id,
                     progress_summary, current_step, completed_steps, total_steps,
                     steps_json, pause_reason, result_summary, error_code,
-                    error_message, checkpoint_type, checkpoint_ref, revision,
+                    error_message, delivery_status, delivery_target, delivered_at,
+                    checkpoint_type, checkpoint_ref, revision,
                     created_at, started_at, updated_at, completed_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._values(activity),
@@ -344,6 +369,9 @@ class ActivityStore(SQLiteStore):
             activity.result_summary,
             activity.error_code,
             activity.error_message,
+            activity.delivery_status,
+            activity.delivery_target,
+            activity.delivered_at,
             activity.checkpoint_type,
             activity.checkpoint_ref,
             activity.revision,
@@ -390,6 +418,13 @@ class ActivityStore(SQLiteStore):
             result_summary=str(row["result_summary"]),
             error_code=str(row["error_code"]),
             error_message=str(row["error_message"]),
+            delivery_status=str(row["delivery_status"]),
+            delivery_target=str(row["delivery_target"]),
+            delivered_at=(
+                float(row["delivered_at"])
+                if row["delivered_at"] is not None
+                else None
+            ),
             checkpoint_type=str(row["checkpoint_type"]),
             checkpoint_ref=str(row["checkpoint_ref"]),
             revision=int(row["revision"]),

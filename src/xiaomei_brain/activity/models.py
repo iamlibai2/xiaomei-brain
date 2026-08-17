@@ -149,6 +149,9 @@ class ActivityRun:
     result_summary: str
     error_code: str
     error_message: str
+    delivery_status: str
+    delivery_target: str
+    delivered_at: float | None
 
     checkpoint_type: str
     checkpoint_ref: str

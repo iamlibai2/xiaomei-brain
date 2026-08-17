@@ -47,24 +47,24 @@ class MissionRunner:
         skill = self._load_skill(mission.skill_name)
         runtime_session_id = str(getattr(runtime, "session_id", "") or f"mission:{mission.id}")
         run = self.service.start_run(mission.id, intent_id, runtime_session_id)
-        if activity_context is not None:
-            activity_context.report_progress(
-                summary=f"正在推进 Mission：{mission.title}",
-                current_step="mission_run",
-            )
-
-        prompt = self._system_prompt(mission, run.id, skill)
-        messages = [
-            {"role": "system", "content": prompt},
-            {
-                "role": "assistant",
-                "content": (
-                    "这是一次有边界的自主工作片段。先读取事实和检查点，再决定本次最有价值的行动。"
-                    "不要改做其他任务；结束前必须调用 checkpoint_mission。"
-                ),
-            },
-        ]
         try:
+            if activity_context is not None:
+                activity_context.report_progress(
+                    summary=f"正在推进 Mission：{mission.title}",
+                    current_step="mission_run",
+                )
+
+            prompt = self._system_prompt(mission, run.id, skill)
+            messages = [
+                {"role": "system", "content": prompt},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "这是一次有边界的自主工作片段。先读取事实和检查点，再决定本次最有价值的行动。"
+                        "不要改做其他任务；结束前必须调用 checkpoint_mission。"
+                    ),
+                },
+            ]
             result = runtime.react_nodb(
                 messages=messages,
                 cancel_check=cancel_check,
@@ -94,17 +94,35 @@ class MissionRunner:
                 else:
                     checkpoint_kwargs["next_run_at"] = time.time() + 86400
                 refreshed = self.service.checkpoint(mission.id, **checkpoint_kwargs)
+            result_summary = str(result or refreshed.progress_summary)[:2000]
+            if activity_context is not None:
+                activity_context.report_progress(
+                    summary=result_summary or f"Mission 已推进：{mission.title}",
+                    current_step="completed",
+                )
             self.service.finish_run(
                 run.id,
                 MissionRunStatus.COMPLETED,
-                result_summary=str(result or refreshed.progress_summary)[:2000],
+                result_summary=result_summary,
                 checkpoint=refreshed.checkpoint,
             )
-            self._notify_if_needed(refreshed, str(result or ""))
+            delivered = self._notify_if_needed(refreshed, str(result or ""))
+            if activity_context is not None and delivered is not None:
+                activity_context.report_delivery(
+                    delivered=delivered,
+                    target=(
+                        refreshed.origin_session_id
+                        or refreshed.accountable_person_id
+                    ),
+                )
             return True
         except Exception as exc:
             status = MissionRunStatus.INTERRUPTED if cancel_check and cancel_check() else MissionRunStatus.FAILED
-            self.service.finish_run(run.id, status, error_message=str(exc))
+            self.service.finish_run(
+                run.id,
+                status,
+                error_message=str(exc),
+            )
             # One failed Run is a fact, not permission for a tight retry loop.
             if status == MissionRunStatus.FAILED:
                 self.service.store.update_mission(mission.id, next_run_at=time.time() + 3600)
@@ -161,19 +179,20 @@ class MissionRunner:
             f"<mission_skill name=\"{mission.skill_name}\">\n{guide}\n</mission_skill>",
         ])
 
-    def _notify_if_needed(self, mission: Any, result: str) -> None:
+    def _notify_if_needed(self, mission: Any, result: str) -> bool | None:
         if self.send_proactive is None or not mission.accountable_person_id:
-            return
+            return None
         if mission.status not in (MissionStatus.WAITING, MissionStatus.COMPLETED):
-            return
+            return None
         message = mission.waiting_reason or mission.progress_summary or result
         if not message:
-            return
+            return None
         try:
-            self.send_proactive(
+            return bool(self.send_proactive(
                 message[:2000],
                 user_id=mission.accountable_person_id,
                 session_id=mission.origin_session_id or None,
-            )
+            ))
         except Exception:
             logger.exception("[MissionRunner] Failed to notify accountable Person")
+            return False

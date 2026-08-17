@@ -56,6 +56,8 @@ class ActivityService:
         steps: Iterable[ActivityStep] = (),
         checkpoint_type: str = "",
         checkpoint_ref: str = "",
+        delivery_status: str = "not_required",
+        delivery_target: str = "",
         activity_id: str | None = None,
     ) -> ActivityRun:
         normalized_category = (
@@ -71,6 +73,11 @@ class ActivityService:
             raise ValueError("Activity kind and title cannot be empty")
         if not scope_type or not scope_id:
             raise ValueError("Activity scope cannot be empty")
+        delivery_status = delivery_status.strip()
+        if delivery_status not in {
+            "not_required", "pending", "delivered", "not_delivered",
+        }:
+            raise ValueError("Invalid Activity delivery status")
         normalized_steps = tuple(steps)
         self._validate_steps(normalized_steps)
         now = self._clock()
@@ -97,6 +104,9 @@ class ActivityService:
             result_summary="",
             error_code="",
             error_message="",
+            delivery_status=delivery_status,
+            delivery_target=delivery_target.strip(),
+            delivered_at=None,
             checkpoint_type=checkpoint_type.strip(),
             checkpoint_ref=checkpoint_ref.strip(),
             revision=1,
@@ -204,6 +214,25 @@ class ActivityService:
         if summary:
             updates["progress_summary"] = summary.strip()
         return self._mutate(current, updates, "activity.paused", "activity_paused")
+
+    def report_delivery(
+        self,
+        activity_id: str,
+        *,
+        delivered: bool,
+        target: str = "",
+    ) -> ActivityRun:
+        current = self.require(activity_id)
+        return self._mutate(
+            current,
+            {
+                "delivery_status": "delivered" if delivered else "not_delivered",
+                "delivery_target": target.strip() or current.delivery_target,
+                "delivered_at": self._clock() if delivered else None,
+            },
+            "activity.delivery",
+            "activity_delivery",
+        )
 
     def resume(self, activity_id: str, *, summary: str = "") -> ActivityRun:
         current = self.require(activity_id)
@@ -374,6 +403,9 @@ class ActivityService:
             "result_summary": activity.result_summary,
             "error_code": activity.error_code,
             "error_message": activity.error_message,
+            "delivery_status": activity.delivery_status,
+            "delivery_target": activity.delivery_target,
+            "delivered_at": activity.delivered_at,
             "checkpoint_type": activity.checkpoint_type,
             "checkpoint_ref": activity.checkpoint_ref,
             "revision": activity.revision,

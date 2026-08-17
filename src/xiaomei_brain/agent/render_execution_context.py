@@ -88,11 +88,19 @@ def render_execution_context(agent: Any, user_input: str) -> str:
     from xiaomei_brain.workspaces import render_workspace_context
     from xiaomei_brain.processes import render_process_context
     from xiaomei_brain.assignments import render_assignment_context
+    from xiaomei_brain.consciousness.shared_experience import render_shared_experience
 
     _append_section(agent, parts, "project", render_project_context(agent))
     _append_section(agent, parts, "workspace", render_workspace_context(agent, user_input))
     _append_section(agent, parts, "process", render_process_context(agent))
     _append_section(agent, parts, "assignment", render_assignment_context(agent))
+    _append_section(agent, parts, "shared_experience", render_shared_experience(
+        activity_service=getattr(agent, "activity_service", None),
+        mission_service=getattr(agent, "mission_service", None),
+        person_id=str(getattr(agent, "user_id", "") or ""),
+        session_id=str(getattr(agent, "session_id", "") or ""),
+        include_agent_scope=False,
+    ))
     return "\n\n".join(parts)
 
 

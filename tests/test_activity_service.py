@@ -174,6 +174,69 @@ def test_failure_and_cancel_are_terminal(tmp_path) -> None:
     assert cancelled.status is ActivityStatus.CANCELLED
 
 
+def test_activity_delivery_receipt_is_persisted_separately(tmp_path) -> None:
+    service, store, _stream = _service(tmp_path)
+    activity = service.create(
+        category="communication",
+        kind="proactive_expression",
+        title="Send a result",
+        scope_type="session",
+        scope_id="session-1",
+        person_id="person-1",
+        origin_session_id="session-1",
+        delivery_status="pending",
+        delivery_target="session-1",
+    )
+
+    delivered = service.report_delivery(
+        activity.id,
+        delivered=True,
+        target="session-1",
+    )
+
+    assert delivered.delivery_status == "delivered"
+    assert delivered.delivery_target == "session-1"
+    assert delivered.delivered_at is not None
+    assert store.get(activity.id) == delivered
+
+
+def test_shared_experience_is_a_scoped_activity_projection(tmp_path) -> None:
+    from xiaomei_brain.consciousness.shared_experience import render_shared_experience
+
+    service, _store, _stream = _service(tmp_path)
+    own = service.create(
+        category="work",
+        kind="autonomous_work",
+        title="Write the report",
+        scope_type="session",
+        scope_id="session-1",
+        person_id="person-1",
+        origin_session_id="session-1",
+        progress_summary="Report is ready",
+        delivery_status="pending",
+    )
+    service.start(own.id, runtime_session_id="autonomous:work:run-1")
+    service.create(
+        category="work",
+        kind="autonomous_work",
+        title="Another person's private task",
+        scope_type="person",
+        scope_id="person-2",
+        person_id="person-2",
+        progress_summary="Private result",
+    )
+
+    rendered = render_shared_experience(
+        activity_service=service,
+        person_id="person-1",
+        session_id="session-1",
+    )
+
+    assert own.title in rendered
+    assert "delivery=pending" in rendered
+    assert "Another person's private task" not in rendered
+
+
 def test_recover_interrupted_only_pauses_running_rows(tmp_path) -> None:
     service, store, stream = _service(tmp_path)
     running = service.create(
@@ -271,7 +334,7 @@ def test_activity_schema_does_not_change_existing_user_id_tables(tmp_path) -> No
 
     assert columns == ["id", "user_id", "content"]
     assert row == ("legacy-user", "hello")
-    assert version == (1,)
+    assert version == (2,)
 
 
 def test_run_context_cooperatively_pauses_for_realtime_chat(tmp_path) -> None:

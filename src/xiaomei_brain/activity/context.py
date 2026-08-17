@@ -88,9 +88,20 @@ class ActivityRunContext:
     def complete(self, summary: str) -> ActivityRun:
         return self._service.complete(self.activity_id, summary=summary)
 
+    def report_delivery(
+        self,
+        *,
+        delivered: bool,
+        target: str = "",
+    ) -> ActivityRun:
+        return self._service.report_delivery(
+            self.activity_id,
+            delivered=delivered,
+            target=target,
+        )
+
     def fail(self, message: str, code: str = "ACTIVITY_FAILED") -> ActivityRun:
         return self._service.fail(self.activity_id, message=message, code=code)
 
     def cancel(self, summary: str = "") -> ActivityRun:
         return self._service.cancel(self.activity_id, summary=summary)
-

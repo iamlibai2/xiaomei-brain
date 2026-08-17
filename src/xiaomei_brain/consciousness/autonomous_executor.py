@@ -153,12 +153,11 @@ class AutonomousBehaviorExecutor:
             activity_id = queued.activity_id
             with self._lock:
                 self._current = queued
+            action_name = str(
+                getattr(getattr(item, "action_type", None), "value", "action"),
+            )
+            previous_artifact_callback = None
             try:
-                action_name = getattr(
-                    getattr(item, "action_type", None),
-                    "value",
-                    "action",
-                )
                 run_id = uuid.uuid4().hex
                 runtime_session_id = f"autonomous:{action_name}:{run_id}"
                 metadata, scope_type, target_user_id = self._execution_scope(item)
@@ -177,6 +176,28 @@ class AutonomousBehaviorExecutor:
                     activity_id,
                     runtime_session_id,
                 )
+                previous_artifact_callback = getattr(runtime, "on_artifact", None)
+                if activity_context is not None and callable(previous_artifact_callback):
+                    delivery_target = str(
+                        metadata.get("session_id") or target_user_id or ""
+                    )
+
+                    def publish_artifact(*args: Any, **kwargs: Any) -> Any:
+                        published = previous_artifact_callback(*args, **kwargs)
+                        if published:
+                            try:
+                                if activity_context.current.delivery_status != "delivered":
+                                    activity_context.report_delivery(
+                                        delivered=True,
+                                        target=delivery_target,
+                                    )
+                            except Exception:
+                                logger.exception(
+                                    "[AutonomousExecutor] Failed to record artifact delivery",
+                                )
+                        return published
+
+                    runtime.on_artifact = publish_artifact
 
                 def cooperate() -> bool:
                     if self._stop_event.is_set():
@@ -214,6 +235,7 @@ class AutonomousBehaviorExecutor:
                     message=public_error["message"],
                     code=public_error["code"],
                 )
+                self._mark_delivery_failed(activity_id)
             except Exception as exc:
                 logger.exception(
                     "[AutonomousExecutor] Autonomous behavior failed",
@@ -232,7 +254,10 @@ class AutonomousBehaviorExecutor:
                         message=str(exc) or exc.__class__.__name__,
                         code="BEHAVIOR_EXECUTION_FAILED",
                     )
+                    self._mark_delivery_failed(activity_id)
             finally:
+                if previous_artifact_callback is not None:
+                    runtime.on_artifact = previous_artifact_callback
                 with self._lock:
                     self._current = None
                     self._inflight_intent_ids.discard(self._intent_id(item))
@@ -270,10 +295,29 @@ class AutonomousBehaviorExecutor:
                 summary="Agent stopped; behavior execution was interrupted",
             )
         elif succeeded:
+            summary = self._completion_summary(item)
+            if self._activity_service is not None:
+                try:
+                    progress = str(
+                        self._activity_service.require(activity_id).progress_summary
+                        or ""
+                    ).strip()
+                    if progress not in {
+                        "",
+                        "Autonomous behavior started",
+                        "Waiting for the Agent's autonomous executor",
+                    }:
+                        summary = progress
+                except Exception:
+                    logger.debug(
+                        "[AutonomousExecutor] Completion progress unavailable: %s",
+                        activity_id,
+                        exc_info=True,
+                    )
             self._safe_activity_change(
                 "complete",
                 activity_id,
-                summary=self._completion_summary(item),
+                summary=summary,
             )
         else:
             self._safe_activity_change(
@@ -281,6 +325,25 @@ class AutonomousBehaviorExecutor:
                 activity_id,
                 message="The autonomous behavior could not be completed",
                 code="BEHAVIOR_NOT_COMPLETED",
+            )
+            self._mark_delivery_failed(activity_id)
+
+    def _mark_delivery_failed(self, activity_id: str) -> None:
+        if not activity_id or self._activity_service is None:
+            return
+        try:
+            activity = self._activity_service.require(activity_id)
+            if activity.delivery_status == "pending":
+                self._activity_service.report_delivery(
+                    activity_id,
+                    delivered=False,
+                    target=activity.delivery_target,
+                )
+        except Exception:
+            logger.debug(
+                "[AutonomousExecutor] Failed to mark delivery result: %s",
+                activity_id,
+                exc_info=True,
             )
 
     def _create_activity(self, item: Any) -> str:
@@ -324,6 +387,11 @@ class AutonomousBehaviorExecutor:
                 person_id=person_id,
                 origin_session_id=session_id,
                 progress_summary="Waiting for the Agent's autonomous executor",
+                delivery_status=(
+                    "pending" if scope_type in {"person", "session"}
+                    else "not_required"
+                ),
+                delivery_target=session_id or person_id or "",
             )
             return activity.id
         except Exception:

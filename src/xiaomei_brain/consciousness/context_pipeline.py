@@ -592,7 +592,23 @@ def _build_simple_context_impl(
         projected.current_user_relation = (
             identity_mgr.get_relation(user_id) if identity_mgr and user_id else ""
         )
-    return inject_consciousness(projected, mode=mode, user_input=user_input, profile=profile)
+    rendered = inject_consciousness(
+        projected,
+        mode=mode,
+        user_input=user_input,
+        profile=profile,
+    )
+    if agent is None:
+        return rendered
+    from .shared_experience import render_shared_experience
+    shared = render_shared_experience(
+        activity_service=getattr(agent, "activity_service", None),
+        mission_service=getattr(agent, "mission_service", None),
+        person_id=str(user_id or ""),
+        session_id=str(session_id or ""),
+        include_agent_scope=True,
+    )
+    return "\n\n".join(part for part in (rendered, shared) if part)
 
 
 # ── Profile 加载辅助 ────────────────────────────────────

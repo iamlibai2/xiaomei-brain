@@ -245,7 +245,10 @@ def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> 
     entered = threading.Event()
     finished = threading.Event()
 
-    def execute(_item, _runtime, cancel_check, activity_context):
+    def prepare(runtime, _item):
+        runtime.on_artifact = lambda *_args: [{"id": "artifact-1"}]
+
+    def execute(_item, runtime, cancel_check, activity_context):
         assert activity_context is not None
         entered.set()
         assert cancel_check() is False
@@ -253,6 +256,7 @@ def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> 
             summary="Collected source material",
             current_step="summarize",
         )
+        runtime.on_artifact("call-1", "present_artifacts", {}, "ok")
         finished.set()
         return True
 
@@ -262,6 +266,7 @@ def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> 
         execute,
         activity_service=service,
         realtime_busy=realtime_busy.is_set,
+        runtime_preparer=prepare,
     )
     item = SimpleNamespace(
         action_type=SimpleNamespace(value="tool"),
@@ -303,6 +308,8 @@ def test_autonomous_executor_projects_lifecycle_and_realtime_pause(tmp_path) -> 
     assert completed.status is ActivityStatus.COMPLETED
     assert completed.current_step == "summarize"
     assert completed.runtime_session_id.startswith("autonomous:tool:")
+    assert completed.delivery_status == "delivered"
+    assert completed.delivery_target == "person_1"
     store.close()
 
 
