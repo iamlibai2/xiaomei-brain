@@ -32,6 +32,8 @@ class ShortTermMemoryCandidate:
     structured_value: dict[str, Any] | None = None
     evidence_refs: tuple[tuple[str, str], ...] = ()
     formation_source: str = "immediate"
+    event_time: float | None = None
+    event_time_end: float | None = None
 
 
 class ShortTermMemoryStore(SQLiteStore):
@@ -65,6 +67,8 @@ class ShortTermMemoryStore(SQLiteStore):
                 emotion_intensity REAL NOT NULL DEFAULT 0.0,
                 reinforcement_count INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'active',
+                event_time REAL DEFAULT NULL,
+                event_time_end REAL DEFAULT NULL,
                 created_at REAL NOT NULL,
                 last_seen_at REAL NOT NULL,
                 expires_at REAL NOT NULL,
@@ -107,7 +111,54 @@ class ShortTermMemoryStore(SQLiteStore):
             conn.execute(
                 "ALTER TABLE memories0 ADD COLUMN formation_source TEXT NOT NULL DEFAULT 'unknown'"
             )
+        if "event_time" not in columns:
+            conn.execute("ALTER TABLE memories0 ADD COLUMN event_time REAL DEFAULT NULL")
+        if "event_time_end" not in columns:
+            conn.execute("ALTER TABLE memories0 ADD COLUMN event_time_end REAL DEFAULT NULL")
+        messages_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+        ).fetchone()
+        if messages_table:
+            self._backfill_event_times(conn, table="memories0", layer="short_term")
+        longterm_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'"
+        ).fetchone()
+        if longterm_table:
+            longterm_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+            }
+            if messages_table and {"event_time", "event_time_end"}.issubset(longterm_columns):
+                self._backfill_event_times(conn, table="memories", layer="long_term")
         conn.commit()
+
+    @staticmethod
+    def _backfill_event_times(conn: Any, *, table: str, layer: str) -> None:
+        """Backfill old memories from their exact message evidence links."""
+        conn.execute(
+            f"""UPDATE {table}
+                SET event_time = COALESCE(event_time, (
+                        SELECT MIN(msg.created_at)
+                        FROM memory_evidence_links link
+                        JOIN messages msg ON CAST(msg.id AS TEXT) = link.evidence_id
+                        WHERE link.memory_layer = ? AND link.memory_id = {table}.id
+                          AND link.evidence_type = 'message'
+                    )),
+                    event_time_end = COALESCE(event_time_end, (
+                        SELECT MAX(msg.created_at)
+                        FROM memory_evidence_links link
+                        JOIN messages msg ON CAST(msg.id AS TEXT) = link.evidence_id
+                        WHERE link.memory_layer = ? AND link.memory_id = {table}.id
+                          AND link.evidence_type = 'message'
+                    ))
+                WHERE (event_time IS NULL OR event_time_end IS NULL)
+                  AND EXISTS (
+                      SELECT 1 FROM memory_evidence_links link
+                      WHERE link.memory_layer = ? AND link.memory_id = {table}.id
+                        AND link.evidence_type = 'message'
+                  )""",
+            (layer, layer, layer),
+        )
 
     @staticmethod
     def normalize_content(content: str) -> str:
@@ -124,7 +175,8 @@ class ShortTermMemoryStore(SQLiteStore):
         expires_at = now + max(60.0, float(candidate.retention_seconds))
         conn = self._get_conn()
         existing = conn.execute(
-            """SELECT id, confidence, importance, reinforcement_count
+            """SELECT id, confidence, importance, reinforcement_count,
+                      event_time, event_time_end
                FROM memories0
                WHERE scope_type = ? AND scope_id = ?
                  AND normalized_content = ? AND status = 'active'
@@ -142,6 +194,16 @@ class ShortTermMemoryStore(SQLiteStore):
                        confidence = MAX(confidence, ?),
                        importance = MAX(importance, ?),
                        emotion_intensity = MAX(emotion_intensity, ?),
+                       event_time = CASE
+                           WHEN event_time IS NULL THEN ?
+                           WHEN ? IS NULL THEN event_time
+                           ELSE MIN(event_time, ?)
+                       END,
+                       event_time_end = CASE
+                           WHEN event_time_end IS NULL THEN ?
+                           WHEN ? IS NULL THEN event_time_end
+                           ELSE MAX(event_time_end, ?)
+                       END,
                        last_seen_at = ?, expires_at = MAX(expires_at, ?)
                    WHERE id = ?""",
                 (
@@ -149,6 +211,12 @@ class ShortTermMemoryStore(SQLiteStore):
                     candidate.confidence,
                     candidate.importance,
                     candidate.emotion_intensity,
+                    candidate.event_time,
+                    candidate.event_time,
+                    candidate.event_time,
+                    candidate.event_time_end,
+                    candidate.event_time_end,
+                    candidate.event_time_end,
                     now,
                     expires_at,
                     memory_id,
@@ -161,8 +229,8 @@ class ShortTermMemoryStore(SQLiteStore):
                        scope_type, scope_id, person_id, session_id,
                        confidence, importance, emotion_intensity,
                        reinforcement_count, status, created_at, last_seen_at,
-                       expires_at, formation_source
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?, ?)""",
+                       expires_at, formation_source, event_time, event_time_end
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?, ?, ?, ?)""",
                 (
                     candidate.kind,
                     content,
@@ -179,6 +247,8 @@ class ShortTermMemoryStore(SQLiteStore):
                     now,
                     expires_at,
                     candidate.formation_source,
+                    candidate.event_time,
+                    candidate.event_time_end,
                 ),
             )
             memory_id = int(cur.lastrowid)
@@ -263,6 +333,16 @@ class ShortTermMemoryStore(SQLiteStore):
                        confidence = MAX(confidence, ?),
                        importance = MAX(importance, ?),
                        emotion_intensity = MAX(emotion_intensity, ?),
+                       event_time = CASE
+                           WHEN event_time IS NULL THEN ?
+                           WHEN ? IS NULL THEN event_time
+                           ELSE MIN(event_time, ?)
+                       END,
+                       event_time_end = CASE
+                           WHEN event_time_end IS NULL THEN ?
+                           WHEN ? IS NULL THEN event_time_end
+                           ELSE MAX(event_time_end, ?)
+                       END,
                        reinforcement_count = reinforcement_count + 1,
                        last_seen_at = ?, expires_at = MAX(expires_at, ?)
                    WHERE id = ? AND status = 'active'""",
@@ -275,6 +355,12 @@ class ShortTermMemoryStore(SQLiteStore):
                     candidate.confidence,
                     candidate.importance,
                     candidate.emotion_intensity,
+                    candidate.event_time,
+                    candidate.event_time,
+                    candidate.event_time,
+                    candidate.event_time_end,
+                    candidate.event_time_end,
+                    candidate.event_time_end,
                     now,
                     expires_at,
                     int(target_memory_id),

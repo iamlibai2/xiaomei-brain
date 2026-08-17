@@ -122,6 +122,8 @@ class MemoryFormationService:
                 scene_tags=list(candidate.scenes),
                 mem_type="common",
                 confidence=candidate.confidence,
+                event_time=candidate.event_time,
+                event_time_end=candidate.event_time_end,
             )
             self._link_long_term_evidence(memory_id, candidate.evidence_refs)
             return FormationResult(
@@ -145,6 +147,8 @@ class MemoryFormationService:
             structured_value=candidate.structured_value,
             evidence_refs=candidate.evidence_refs,
             formation_source=source,
+            event_time=candidate.event_time,
+            event_time_end=candidate.event_time_end,
         )
         short_id = self.short_term.apply_action(
             short_candidate,
@@ -209,6 +213,8 @@ class MemoryFormationService:
                 user_id=user_id,
                 mem_type="common",
                 confidence=float(item.get("confidence", 0.7)),
+                event_time=item.get("event_time"),
+                event_time_end=item.get("event_time_end"),
             )
             self.short_term.mark_consolidated(int(item["id"]), memory_id)
             consolidated += 1
@@ -286,6 +292,7 @@ class MemoryFormationService:
         structured = raw.get("structured_value")
         if not isinstance(structured, dict):
             structured = {}
+        event_time, event_time_end = self._evidence_time_range(evidence_refs)
         return MemoryCandidate(
             content=content,
             operation=operation,
@@ -299,6 +306,8 @@ class MemoryFormationService:
             scenes=tuple(str(item).strip() for item in scenes if str(item).strip())[:3],
             structured_value=structured,
             evidence_refs=evidence_refs,
+            event_time=event_time,
+            event_time_end=event_time_end,
         )
 
     @staticmethod
@@ -419,3 +428,37 @@ class MemoryFormationService:
                 (memory_id, evidence_type, evidence_id, time.time()),
             )
         conn.commit()
+
+    def _evidence_time_range(
+        self,
+        evidence_refs: tuple[tuple[str, str], ...],
+    ) -> tuple[float | None, float | None]:
+        """Derive event time only from trusted source messages.
+
+        Model-written dates are deliberately ignored: a memory may summarize
+        several messages, so its factual time is the source range, while
+        ``created_at`` remains the later formation time.
+        """
+        if self.conversation_db is None:
+            return None, None
+        timestamps: list[float] = []
+        getter = getattr(self.conversation_db, "get_message_created_at", None)
+        if not callable(getter):
+            return None, None
+        for evidence_type, evidence_id in evidence_refs:
+            if evidence_type != "message":
+                continue
+            try:
+                value = getter(int(evidence_id))
+            except Exception as exc:
+                logger.debug(
+                    "[MemoryFormation] evidence timestamp lookup failed for %s: %s",
+                    evidence_id,
+                    exc,
+                )
+                value = None
+            if value is not None:
+                timestamps.append(float(value))
+        if not timestamps:
+            return None, None
+        return min(timestamps), max(timestamps)

@@ -115,6 +115,21 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
 
         # ── 4. 按 type 分拣，三段式输出 ─────────────────
         import time as _time
+
+        def time_label(memory: dict) -> str:
+            event_start = memory.get("event_time")
+            event_end = memory.get("event_time_end")
+            if event_start:
+                start = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(float(event_start)))
+                if event_end and abs(float(event_end) - float(event_start)) >= 60:
+                    end = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(float(event_end)))
+                    return f"发生于 {start} 至 {end}"
+                return f"发生于 {start}"
+            formed = memory.get("created_at")
+            if formed:
+                value = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(float(formed)))
+                return f"形成于 {value}，发生时间未知"
+            return "发生时间未知"
         # Memory types have expanded beyond the original experience / knowledge /
         # skill trio.  Never count a recalled memory without returning its content:
         # an empty-looking successful result encourages the model to retry the same
@@ -138,15 +153,13 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
         if experiences:
             lines.append("### 相关经验")
             for m in experiences:
-                ts = m.get("created_at", 0)
-                date_str = _time.strftime("%Y-%m-%d", _time.localtime(ts)) if ts else "?"
-                lines.append(f"- {date_str}: {m.get('content', '')[:200]}")
+                lines.append(f"- [{time_label(m)}] {m.get('content', '')[:200]}")
             lines.append("")
 
         if knowledges:
             lines.append("### 我知道什么")
             for m in knowledges:
-                lines.append(f"- {m.get('content', '')[:300]}")
+                lines.append(f"- [{time_label(m)}] {m.get('content', '')[:300]}")
             lines.append("")
 
         if skills:
@@ -154,16 +167,16 @@ def create_memory_search_tools(agent: Any = None) -> list[Tool]:
             for m in skills:
                 conf = m.get("confidence")
                 if conf is not None:
-                    lines.append(f"- {m.get('content', '')[:200]} (confidence={conf:.2f})")
+                    lines.append(f"- [{time_label(m)}] {m.get('content', '')[:200]} (confidence={conf:.2f})")
                 else:
-                    lines.append(f"- {m.get('content', '')[:200]}")
+                    lines.append(f"- [{time_label(m)}] {m.get('content', '')[:200]}")
             lines.append("")
 
         if others:
             lines.append("### 其他相关记忆")
             for m in others:
                 mem_type = str(m.get("type") or "未分类")
-                lines.append(f"- [{mem_type}] {str(m.get('content') or '')[:300]}")
+                lines.append(f"- [{mem_type}] [{time_label(m)}] {str(m.get('content') or '')[:300]}")
             lines.append("")
 
         # 清理内部字段

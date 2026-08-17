@@ -1,3 +1,4 @@
+from datetime import datetime
 from types import SimpleNamespace
 
 from xiaomei_brain.tools.builtin.memory_search import create_memory_search_tools
@@ -87,3 +88,31 @@ def test_memory_search_does_not_report_empty_content_as_results():
 
     assert result == "没有找到与「world 文件」相关的记忆。"
     assert "共 2 条" not in result
+
+
+def test_memory_search_distinguishes_event_time_from_formation_time():
+    memory = _Memory()
+    memory.recall = lambda query, *, user_id, top_k: [
+        {
+            "id": 1,
+            "type": "common",
+            "content": "有可信消息证据",
+            "event_time": datetime(2026, 8, 17, 16, 12).timestamp(),
+            "event_time_end": datetime(2026, 8, 17, 16, 14).timestamp(),
+            "created_at": datetime(2026, 8, 18, 8, 0).timestamp(),
+            "score": 0.9,
+        },
+        {
+            "id": 2,
+            "type": "knowledge",
+            "content": "旧记忆没有事件证据",
+            "created_at": datetime(2026, 8, 18, 8, 0).timestamp(),
+            "score": 0.8,
+        },
+    ]
+    agent = SimpleNamespace(longterm_memory=memory, memory_scope_id="person-1", user_id="global")
+
+    result = create_memory_search_tools(agent)[0].execute(query="时间")
+
+    assert "发生于 2026-08-17 16:12 至 2026-08-17 16:14" in result
+    assert "形成于 2026-08-18 08:00，发生时间未知" in result

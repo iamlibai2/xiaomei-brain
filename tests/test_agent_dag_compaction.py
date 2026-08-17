@@ -2,6 +2,7 @@
 
 import threading
 import time
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -296,3 +297,19 @@ def test_dag_summary_input_contains_tool_arguments_and_result_facts():
     assert "write_document" in formatted
     assert "report.docx" in formatted
     assert "created report.docx" in formatted
+
+
+def test_dag_summary_input_preserves_source_message_time():
+    dag = object.__new__(DAGSummaryGraph)
+    formatted = dag._format_messages_for_summary([
+        _message(
+            1,
+            "user",
+            "记住这件事",
+            "turn-1",
+            created_at=datetime(2026, 8, 17, 16, 12, 40).timestamp(),
+        ),
+    ])
+
+    assert "2026-08-17 16:12:40" in formatted
+    assert "记住这件事" in formatted

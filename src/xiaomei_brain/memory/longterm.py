@@ -780,6 +780,7 @@ class LongTermMemory(SQLiteStore):
                 last_strengthen REAL DEFAULT 0,
                 scene_tags TEXT DEFAULT '[]',
                 event_time REAL DEFAULT NULL,
+                event_time_end REAL DEFAULT NULL,
                 valid_until REAL DEFAULT NULL,
                 experience_type TEXT DEFAULT '',
                 project_id TEXT DEFAULT '',
@@ -931,6 +932,9 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         if current_version < 2:
             self._migrate_v2(conn)
 
+        if current_version < 5:
+            self._migrate_v5(conn)
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength)")
 
@@ -947,6 +951,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
             ("last_strengthen", "REAL DEFAULT 0"),
             ("scene_tags", "TEXT DEFAULT '[]'"),
             ("event_time", "REAL DEFAULT NULL"),
+            ("event_time_end", "REAL DEFAULT NULL"),
             ("valid_until", "REAL DEFAULT NULL"),
             ("type", "TEXT DEFAULT 'experience'"),
             ("confidence", "REAL DEFAULT NULL"),
@@ -1027,6 +1032,49 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         self._set_schema_version("longterm", 4)
         logger.info("[LongTerm] Schema migrated to v4")
 
+    def _migrate_v5(self, conn: sqlite3.Connection) -> None:
+        """v4 → v5：事件结束时间与记忆形成时间分离。"""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "event_time_end" not in columns:
+            conn.execute("ALTER TABLE memories ADD COLUMN event_time_end REAL DEFAULT NULL")
+        evidence_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_evidence_links'"
+        ).fetchone()
+        messages_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+        ).fetchone()
+        if evidence_table and messages_table:
+            conn.execute(
+                """UPDATE memories
+                   SET event_time = COALESCE(event_time, (
+                           SELECT MIN(msg.created_at)
+                           FROM memory_evidence_links link
+                           JOIN messages msg ON CAST(msg.id AS TEXT) = link.evidence_id
+                           WHERE link.memory_layer = 'long_term'
+                             AND link.memory_id = memories.id
+                             AND link.evidence_type = 'message'
+                       )),
+                       event_time_end = COALESCE(event_time_end, (
+                           SELECT MAX(msg.created_at)
+                           FROM memory_evidence_links link
+                           JOIN messages msg ON CAST(msg.id AS TEXT) = link.evidence_id
+                           WHERE link.memory_layer = 'long_term'
+                             AND link.memory_id = memories.id
+                             AND link.evidence_type = 'message'
+                       ))
+                   WHERE (event_time IS NULL OR event_time_end IS NULL)
+                     AND EXISTS (
+                         SELECT 1 FROM memory_evidence_links link
+                         WHERE link.memory_layer = 'long_term'
+                           AND link.memory_id = memories.id
+                           AND link.evidence_type = 'message'
+                     )"""
+            )
+        self._set_schema_version("longterm", 5)
+        logger.info("[LongTerm] Schema migrated to v5")
+
     # ── Public API ──────────────────────────────────────────────
 
     def store(
@@ -1042,6 +1090,7 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         mem_type: str = "experience",
         confidence: float | None = None,
         skill_domain: str | None = None,
+        event_time_end: float | None = None,
     ) -> int:
         """Store a memory entry. Returns the ID.
 
@@ -1065,9 +1114,9 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         now = time.time()
 
         cur = conn.execute(
-            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen, scene_tags, event_time, valid_until, type, confidence, skill_domain)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, content, source, importance, now, 1.0, now, json.dumps(scene_tags or []), event_time, valid_until, mem_type, confidence, skill_domain),
+            """INSERT INTO memories (user_id, content, source, importance, created_at, strength, last_strengthen, scene_tags, event_time, event_time_end, valid_until, type, confidence, skill_domain)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, content, source, importance, now, 1.0, now, json.dumps(scene_tags or []), event_time, event_time_end, valid_until, mem_type, confidence, skill_domain),
         )
         memory_id = cur.lastrowid
 
@@ -2203,12 +2252,12 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                 if next_ids:
                     mem_placeholders = ",".join("?" * len(next_ids))
                     mem_rows = conn.execute(
-                        f"""SELECT id, content FROM memories
+                        f"""SELECT id, content, created_at, event_time, event_time_end, type FROM memories
                             WHERE id IN ({mem_placeholders})
                               AND status != '{STATUS_EXTINCT}'""",
                         list(next_ids),
                     ).fetchall()
-                    mem_map = {r["id"]: r["content"] for r in mem_rows}
+                    mem_map = {r["id"]: dict(r) for r in mem_rows}
 
                     for rr in rows:
                         from_id, to_id = rr["from_memory_id"], rr["to_memory_id"]
@@ -2217,7 +2266,8 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                             continue
                         visited.add(other_id)
                         next_frontier.add(other_id)
-                        content = mem_map.get(other_id, "")
+                        memory = mem_map.get(other_id, {})
+                        content = memory.get("content", "")
                         chain.append({
                             "memory_id": other_id,
                             "content": content,
@@ -2227,6 +2277,10 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
                             "weight": rr["weight"] or 1.0,
                             "source_type": rr["source_type"],
                             "target_type": rr["target_type"],
+                            "type": memory.get("type"),
+                            "created_at": memory.get("created_at"),
+                            "event_time": memory.get("event_time"),
+                            "event_time_end": memory.get("event_time_end"),
                         })
 
                 frontier = next_frontier

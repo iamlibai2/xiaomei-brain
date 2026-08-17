@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -251,7 +252,10 @@ class TurnBatchMemoryReviewer:
                 if role not in {"user", "assistant"}:
                     continue
                 content = str(message.get("content") or "").strip()
-                lines.append(f"[{role}] {content[:2000]}")
+                timestamp = TurnBatchMemoryReviewer._format_timestamp(
+                    message.get("created_at")
+                )
+                lines.append(f"[{timestamp} {role}] {content[:2000]}")
                 refs.append(("message", str(message.get("id"))))
             lines.append("</turn>")
             evidence[turn_id] = tuple(refs)
@@ -316,7 +320,8 @@ class TurnBatchMemoryReviewer:
         if not items:
             return "（无相关短期记忆）"
         return "\n".join(
-            f'- [memory_id={item["id"]} scope={item.get("scope_type")}:{item.get("scope_id")}] '
+            f'- [memory_id={item["id"]} scope={item.get("scope_type")}:{item.get("scope_id")} '
+            f'time={TurnBatchMemoryReviewer._format_time_range(item)}] '
             f'{item.get("content", "")}'
             for item in items
         )
@@ -326,9 +331,25 @@ class TurnBatchMemoryReviewer:
         if not items:
             return "（无相关长期记忆）"
         return "\n".join(
-            f'- [long_term_id={item.get("id")}] {item.get("content", "")}'
+            f'- [long_term_id={item.get("id")} '
+            f'time={TurnBatchMemoryReviewer._format_time_range(item)}] {item.get("content", "")}'
             for item in items
         )
+
+    @staticmethod
+    def _format_timestamp(value: Any) -> str:
+        try:
+            return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError, OverflowError):
+            return "time-unknown"
+
+    @staticmethod
+    def _format_time_range(item: dict[str, Any]) -> str:
+        start = item.get("event_time") or item.get("created_at")
+        end = item.get("event_time_end") or start
+        start_text = TurnBatchMemoryReviewer._format_timestamp(start)
+        end_text = TurnBatchMemoryReviewer._format_timestamp(end)
+        return start_text if start_text == end_text else f"{start_text}..{end_text}"
 
     @staticmethod
     def _parse_response(content: str) -> dict[str, Any]:

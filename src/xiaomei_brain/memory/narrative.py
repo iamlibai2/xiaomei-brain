@@ -29,6 +29,7 @@ import re
 import logging
 import json
 import time
+from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -72,13 +73,20 @@ def learn_narratives(
 
     # 2. 格式化对话
     lines: list[str] = []
+    source_times: list[float] = []
     for m in recent:
         role = m.get("role", "")
         content = m.get("content", "")[:500]
+        try:
+            source_time = float(m.get("created_at"))
+            source_times.append(source_time)
+            time_label = datetime.fromtimestamp(source_time).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError, OverflowError):
+            time_label = "time-unknown"
         if role == "user":
-            lines.append(f"[对方] {content}")
+            lines.append(f"[{time_label} 对方] {content}")
         elif role == "assistant":
-            lines.append(f"[{agent_name}] {content}")
+            lines.append(f"[{time_label} {agent_name}] {content}")
     recent_dialogue = "\n".join(lines)
 
     if len(recent_dialogue) < 100:
@@ -117,6 +125,11 @@ def learn_narratives(
         return []
 
     new_ids: list[str] = []
+    source_timestamp = None
+    if source_times:
+        start = datetime.fromtimestamp(min(source_times)).strftime("%Y-%m-%d %H:%M:%S")
+        end = datetime.fromtimestamp(max(source_times)).strftime("%Y-%m-%d %H:%M:%S")
+        source_timestamp = start if start == end else f"{start} 至 {end}"
     for nb in narr_blocks:
         try:
             nm_id = longterm_memory.store_narrative_memory(
@@ -128,7 +141,7 @@ def learn_narratives(
                 weight=nb.get("weight", 0.8),
                 related_narrative_id=None,
                 source="round",
-                timestamp=nb.get("timestamp"),
+                timestamp=source_timestamp,
                 user_id=user_id,
             )
             new_ids.append(nm_id)

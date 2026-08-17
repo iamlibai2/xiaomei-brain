@@ -20,6 +20,8 @@ class MemoryCandidate:
     scenes: tuple[str, ...] = ()
     structured_value: dict[str, Any] = field(default_factory=dict)
     evidence_refs: tuple[tuple[str, str], ...] = ()
+    event_time: float | None = None
+    event_time_end: float | None = None
 
 
 @dataclass(frozen=True)

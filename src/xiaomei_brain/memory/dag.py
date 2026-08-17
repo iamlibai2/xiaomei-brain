@@ -15,6 +15,7 @@ import json
 import logging
 import sqlite3
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -227,7 +228,14 @@ class DAGSummaryGraph(SQLiteStore):
             # Take the oldest batch
             batch = rows[:self.PROMOTE_THRESHOLD]
             child_ids = [r["id"] for r in batch]
-            contents = [r["content"] for r in batch]
+            contents = [
+                "<summary time_start=\"{}\" time_end=\"{}\">\n{}\n</summary>".format(
+                    datetime.fromtimestamp(float(r["time_start"])).strftime("%Y-%m-%d %H:%M:%S"),
+                    datetime.fromtimestamp(float(r["time_end"])).strftime("%Y-%m-%d %H:%M:%S"),
+                    r["content"],
+                )
+                for r in batch
+            ]
 
             # Summarize the batch
             if self.llm:
@@ -616,6 +624,12 @@ class DAGSummaryGraph(SQLiteStore):
             if turn_id and turn_id != current_turn_id:
                 lines.append(f"\n<Turn {turn_id}>")
                 current_turn_id = turn_id
+            try:
+                timestamp = datetime.fromtimestamp(float(m.get("created_at"))).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            except (TypeError, ValueError, OSError, OverflowError):
+                timestamp = "time-unknown"
             if role == "tool":
                 tool_name = m.get("tool_name", "tool")
                 tool_call_id = str(m.get("tool_call_id") or "")
@@ -623,7 +637,7 @@ class DAGSummaryGraph(SQLiteStore):
                 facts = f" id={tool_call_id}" if tool_call_id else ""
                 if duration_ms is not None:
                     facts += f" duration_ms={duration_ms}"
-                lines.append(f"[tool result: {tool_name}{facts}] {content[:1000]}")
+                lines.append(f"[{timestamp} tool result: {tool_name}{facts}] {content[:1000]}")
             elif role == "assistant":
                 tool_calls = m.get("tool_calls") or metadata.get("tool_calls") or []
                 if tool_calls:
@@ -638,12 +652,12 @@ class DAGSummaryGraph(SQLiteStore):
                         if not isinstance(arguments, str):
                             arguments = json.dumps(arguments, ensure_ascii=False, default=str)
                         rendered_calls.append(f"{name}({arguments[:500]})")
-                    lines.append("[assistant tool calls] " + "; ".join(rendered_calls))
+                    lines.append(f"[{timestamp} assistant tool calls] " + "; ".join(rendered_calls))
                 if content.strip():
-                    lines.append(f"[assistant] {content[:2000]}")
+                    lines.append(f"[{timestamp} assistant] {content[:2000]}")
             else:
                 label = m.get("user_id") or m.get("user_display_name") or role
-                lines.append(f"[{label}] {content[:2000]}")
+                lines.append(f"[{timestamp} {label}] {content[:2000]}")
         return "\n".join(lines)
 
     def _llm_summarize(self, formatted: str, prompt_template: str | None = None) -> str | None:

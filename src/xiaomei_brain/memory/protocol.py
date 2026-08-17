@@ -40,6 +40,7 @@ class LongTermMemoryProtocol(Protocol):
         mem_type: str = "experience",
         confidence: float | None = None,
         skill_domain: str | None = None,
+        event_time_end: float | None = None,
     ) -> int: ...
 
     def search_by_tags(

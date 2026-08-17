@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -134,6 +135,54 @@ def test_three_turn_review_is_scoped_and_links_exact_evidence(tmp_path):
     assert checkpoint_a["last_message_id"] == a3[1]
     assert checkpoint_a["reviewed_turn_count"] == 3
     assert checkpoint_b["last_message_id"] == 0
+
+
+def test_review_uses_source_message_time_as_memory_event_range(tmp_path):
+    response = """{
+      "actions": [{
+        "operation": "ADD",
+        "kind": "event",
+        "content": "博士明确要求空闲时自主完成工作并交付",
+        "scope_type": "person",
+        "confidence": 0.9,
+        "importance": 0.8,
+        "evidence_turn_ids": ["turn-1", "turn-3"]
+      }]
+    }"""
+    reviewer, db, short_term, llm = _reviewer(tmp_path, response)
+    first = _log_turn(
+        db, person_id="person-a", session_id="session-a", turn_id="turn-1",
+        user="闲了就自己做", assistant="明白",
+    )
+    _log_turn(
+        db, person_id="person-a", session_id="session-a", turn_id="turn-2",
+        user="不是等我催", assistant="知道了",
+    )
+    last = _log_turn(
+        db, person_id="person-a", session_id="session-a", turn_id="turn-3",
+        user="做完自己交付", assistant="记住了",
+    )
+    source_times = {
+        first[0]: datetime(2026, 8, 17, 16, 12, 40).timestamp(),
+        first[1]: datetime(2026, 8, 17, 16, 12, 45).timestamp(),
+        last[0]: datetime(2026, 8, 17, 16, 14, 20).timestamp(),
+        last[1]: datetime(2026, 8, 17, 16, 14, 25).timestamp(),
+    }
+    for message_id, created_at in source_times.items():
+        db._get_conn().execute(
+            "UPDATE messages SET created_at = ? WHERE id = ?",
+            (created_at, message_id),
+        )
+    db._get_conn().commit()
+
+    reviewer.review_next(person_id="person-a", session_id="session-a", user_name="博士")
+
+    memory = short_term.list_active()[0]
+    assert memory["event_time"] == datetime(2026, 8, 17, 16, 12, 40).timestamp()
+    assert memory["event_time_end"] == datetime(2026, 8, 17, 16, 14, 25).timestamp()
+    prompt = llm.calls[0]["messages"][0]["content"]
+    assert "2026-08-17 16:12:40" in prompt
+    assert "2026-08-17 16:14:25" in prompt
 
 
 def test_review_waits_for_three_complete_turns(tmp_path):

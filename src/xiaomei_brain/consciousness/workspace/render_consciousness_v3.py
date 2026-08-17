@@ -725,6 +725,25 @@ def _render_observed(si) -> list[str]:
     return lines
 
 
+def _format_memory_time(item: dict, *, include_formation_fallback: bool = True) -> str:
+    """Render factual event time separately from memory formation time."""
+    event_start = item.get("event_time")
+    event_end = item.get("event_time_end")
+    try:
+        if event_start:
+            start = datetime.fromtimestamp(float(event_start)).strftime("%Y-%m-%d %H:%M:%S")
+            if event_end and abs(float(event_end) - float(event_start)) >= 1:
+                end = datetime.fromtimestamp(float(event_end)).strftime("%Y-%m-%d %H:%M:%S")
+                return f"发生于 {start} 至 {end}"
+            return f"发生于 {start}"
+        if include_formation_fallback and item.get("created_at"):
+            formed = datetime.fromtimestamp(float(item["created_at"])).strftime("%Y-%m-%d %H:%M:%S")
+            return f"形成于 {formed}（发生时间未知）"
+    except (TypeError, ValueError, OSError, OverflowError):
+        pass
+    return "发生时间未知"
+
+
 def _render_short_term_memories(si) -> list[str]:
     """渲染仍在短期保持、尚未巩固为长期认知的近期经历。"""
     items = getattr(si.memory, "short_term_memories", None) or []
@@ -738,7 +757,8 @@ def _render_short_term_memories(si) -> list[str]:
         content = str(item.get("content", ""))[:240]
         confidence = float(item.get("confidence", 0.0) or 0.0)
         kind = str(item.get("kind", "event"))
-        lines.append(f"- [{kind} 置信度{confidence:.0%}] {content}")
+        time_label = _format_memory_time(item)
+        lines.append(f"- [{kind} 置信度{confidence:.0%}；{time_label}] {content}")
     lines.append("</短期记忆>")
     return lines
 
@@ -771,7 +791,7 @@ def _render_longterm_memories(si) -> list[str]:
         "\n<长期记忆>",
         "以下是你的长期记忆，当对方问及相关信息时，你必须主动引用这些记忆来回答，"
         "不要说'你不记得'或让对方自己回答。"
-        "记忆时间格式为 @2026-05-04T12:00:00，可用于时间推理（判断'上周'/'上个月'等）。",
+        "“发生于”来自原始消息证据，可用于时间推理；“形成于”只表示何时记住，不能当作事情发生时间。",
     ]
     for m in items:
         content = m.get("content", "")
@@ -781,13 +801,8 @@ def _render_longterm_memories(si) -> list[str]:
         level = _strength_level(eff)
         tags = m.get("tags") or []
         tag_str = ",".join(tags) if tags else ""
-        created_ts = m.get("created_at", 0)
-        if created_ts:
-            time_str = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%dT%H:%M:%S")
-            time_part = f" @{time_str}"
-        else:
-            time_part = ""
-        lines.append(f"- [{level} {eff:.2f}] {content}{time_part}  [{tag_str}]")
+        time_part = _format_memory_time(m)
+        lines.append(f"- [{level} {eff:.2f}；{time_part}] {content}  [{tag_str}]")
     lines.append("</长期记忆>")
     return lines
 
@@ -1077,10 +1092,15 @@ def _render_narratives(si) -> list[str]:
         changed = n.get("changed_me", "")
         scene_tags = n.get("scene_tags", [])
         scene = scene_tags[0] if scene_tags else ""
+        timestamp = str(n.get("timestamp") or "").strip()
 
         header = f"- [{category}]"
         if scene:
             header += f" {scene}"
+        if timestamp:
+            header += f"；发生于 {timestamp}"
+        elif n.get("created_at"):
+            header += f"；{_format_memory_time(n)}"
         lines.append(header)
         lines.append(f"  {content}")
         if feels:
@@ -1098,13 +1118,21 @@ def _render_internal_narratives(si) -> list[str]:
     if not narratives:
         return []
 
-    recent = narratives[-3:]
+    # get_narratives() returns newest first. Keep that order so “上一次”
+    # really means the most recent thought rather than an older tail item.
+    recent = narratives[:3]
     labels = ["你上一次想了", "你再上一次想了", "你还想过"]
 
     lines = ["\n<内部叙事>"]
     for i, n in enumerate(recent):
         label = labels[min(i, len(labels) - 1)]
-        lines.append(f"{label}：{n.get('content', '')}")
+        try:
+            thought_at = datetime.fromtimestamp(float(n.get("created_at"))).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except (TypeError, ValueError, OSError, OverflowError):
+            thought_at = "时间未知"
+        lines.append(f"{label}（思考于 {thought_at}）：{n.get('content', '')}")
     if len(recent) > 1:
         lines.append("（以上是你近期的思考。不要重复，去找新的角度或更深的变化。）")
     lines.append("</内部叙事>")
@@ -1181,7 +1209,13 @@ def _render_recent_dialog(si) -> list[str]:
         content = d.get('content', '')
         speaker = d.get("user_id", "") if role == "user" else ""
         speaker_label = f"/{speaker}" if speaker and speaker != "global" else ""
-        lines.append(f"- 对话{i}[{role}{speaker_label}]：{content}")
+        try:
+            occurred_at = datetime.fromtimestamp(float(d.get("created_at"))).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except (TypeError, ValueError, OSError, OverflowError):
+            occurred_at = "时间未知"
+        lines.append(f"- 对话{i}[{occurred_at} {role}{speaker_label}]：{content}")
     lines.append("</最近对话>")
     return lines
 
@@ -1209,7 +1243,7 @@ def _render_cross_user_dialog(si) -> list[str]:
             if not content:
                 continue
             ts = m.get("created_at", 0)
-            time_str = datetime.fromtimestamp(ts).strftime("%H:%M") if ts else ""
+            time_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "时间未知"
             label = "对方" if role == "user" else "我"
             lines.append(f"  [{time_str}] {label}：{content}")
     lines.append("</与其他用户的互动>")
