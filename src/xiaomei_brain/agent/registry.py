@@ -19,6 +19,7 @@ from datetime import date
 from typing import Any
 
 from xiaomei_brain.agent.instance import AgentConfig, AgentInstance, _extract_name_from_identity
+from xiaomei_brain.agent.initializer import AgentInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ class AgentRegistry:
             raise ValueError(f"Agent '{agent_id}' already registered")
 
         agent_dir = self.agent_dir(agent_id)
-        os.makedirs(agent_dir, exist_ok=True)
+        AgentInitializer.ensure(agent_dir)
 
         identity_path = os.path.join(agent_dir, "identity.md")
         if config.identity_content and not os.path.exists(identity_path):
@@ -407,10 +408,11 @@ class AgentRegistry:
         if os.path.exists(agent_dir):
             raise ValueError(f"Agent '{name}' 已存在")
 
-        # 确定 model 配置
-        model_config = {"primary": "deepseek/deepseek-v4-flash"}
+        # 确定 model 配置。优先继承明确的源 Agent，其次使用已发现
+        # Agent，最后使用全局默认；不再把某个供应商写死进创建逻辑。
+        model_config: dict[str, str] = {}
         if copy_from:
-            source = self._agents.get(copy_from)
+            source = self._agents.get(copy_from) or self.discover(copy_from)
             if source:
                 model_config = {"primary": f"{source.provider}/{source.model}" if source.provider else source.model}
         else:
@@ -420,16 +422,17 @@ class AgentRegistry:
                     copy_from = a.id
                     break
 
-        # 目录结构
-        dirs = [
-            agent_dir,
-            os.path.join(agent_dir, "consciousness"),
-            os.path.join(agent_dir, "contacts"),
-            os.path.join(agent_dir, "logs"),
-            os.path.join(agent_dir, "debug"),
-        ]
-        for d in dirs:
-            os.makedirs(d, exist_ok=True)
+        if not model_config:
+            global_config = self._read_global_config()
+            defaults = global_config.get("agents", {}).get("defaults", {})
+            default_model = defaults.get("model", {}) if isinstance(defaults, dict) else {}
+            primary = default_model.get("primary", "") if isinstance(default_model, dict) else ""
+            if primary:
+                model_config = {"primary": str(primary)}
+
+        # 当前完整且幂等的基础布局。数据库文件和表由各 Store 在首次
+        # 启动时按 schema_versions 初始化，创建阶段不复制表结构。
+        AgentInitializer.ensure(agent_dir)
 
         # identity.md
         identity_path = os.path.join(agent_dir, "identity.md")
@@ -484,22 +487,14 @@ class AgentRegistry:
         with open(brain_yaml_path, "w", encoding="utf-8") as f:
             f.write(brain_yaml_content)
 
-        # contacts/identities.yaml
-        identities_path = os.path.join(agent_dir, "contacts", "identities.yaml")
-        with open(identities_path, "w", encoding="utf-8") as f:
-            f.write("# 关系类型可选值：普通用户 / 朋友 / 恋人 / 家人 / 同事 / 师生 / 上级 / 仇人\n")
-            f.write("people:\n")
-            f.write("  - id: xiaoshuai\n")
-            f.write("    name: 小帅\n")
-            f.write("    relation: 普通用户\n")
-
         # agent config.json（per-agent，不修改全局 config.json）
         agent_config = {
             "name": display_name,
             "description": description,
             "enabled": True,
-            "model": model_config,
         }
+        if model_config:
+            agent_config["model"] = model_config
         if ws_port >= 0:
             agent_config["ws_port"] = ws_port
             agent_config["admin_port"] = ws_port + 1

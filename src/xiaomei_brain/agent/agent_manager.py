@@ -9,6 +9,7 @@ import logging
 import os
 
 from xiaomei_brain.agent.instance import AgentConfig, AgentInstance
+from xiaomei_brain.agent.initializer import AgentInitializer
 from xiaomei_brain.agent.registry import AgentRegistry
 from xiaomei_brain.base.config import Config
 from xiaomei_brain.cli.boot import boot_section, boot_line
@@ -582,6 +583,10 @@ class AgentManager:
                 agent = self.get(agent_id)
             if agent is None:
                 raise ValueError(f"Agent '{agent_id}' not found")
+
+        # Reconcile the durable layout on every first build.  This upgrades
+        # older Agents safely without overwriting configuration or data.
+        AgentInitializer.ensure(self._agent_dir(agent.id))
 
         if agent.llm is None:
             gcfg = global_config or self._get_global_config()

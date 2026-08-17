@@ -175,7 +175,9 @@ class IdentityManager:
                 else:
                     # 无 PyYAML 时尝试基本解析
                     data = _parse_simple_yaml(yaml_file.read_text(encoding="utf-8"))
-                for person in data.get("people", []):
+                data = data if isinstance(data, dict) else {}
+                people = data.get("people") or []
+                for person in people:
                     pid = person["id"]
                     self._identities[pid] = {
                         "name": person.get("name", pid),
