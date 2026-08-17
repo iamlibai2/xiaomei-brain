@@ -161,6 +161,66 @@ def test_person_proactive_is_persisted_to_latest_session():
     assert deliveries == [("hello", route)]
 
 
+def test_person_proactive_syncs_to_matching_live_conversation():
+    route = SimpleNamespace(type="ws", target="session-a")
+    router = SimpleNamespace(
+        session_for_user=lambda user_id: "session-a",
+        route_for_session=lambda session_id: route,
+        route_for_user=lambda user_id: route,
+        deliver=lambda content, target: True,
+    )
+    core = SimpleNamespace(
+        user_id="person-a",
+        session_id="session-a",
+        messages=[],
+    )
+    db = SimpleNamespace(log=lambda **record: 42)
+    living = ConsciousLiving.__new__(ConsciousLiving)
+    living.agent = SimpleNamespace(
+        conversation_db=db,
+        name="test",
+        _get_agent=lambda: core,
+    )
+    living._router = router
+    living.on_proactive = None
+    living._agent_id = "test"
+
+    assert living._send_proactive("hello", user_id="person-a") is True
+    assert core.messages == [{
+        "role": "assistant",
+        "content": "hello",
+        "id": 42,
+    }]
+
+
+def test_person_proactive_does_not_pollute_other_live_conversation():
+    route = SimpleNamespace(type="ws", target="session-a")
+    router = SimpleNamespace(
+        session_for_user=lambda user_id: "session-a",
+        route_for_session=lambda session_id: route,
+        route_for_user=lambda user_id: route,
+        deliver=lambda content, target: True,
+    )
+    core = SimpleNamespace(
+        user_id="person-a",
+        session_id="session-b",
+        messages=[],
+    )
+    db = SimpleNamespace(log=lambda **record: 42)
+    living = ConsciousLiving.__new__(ConsciousLiving)
+    living.agent = SimpleNamespace(
+        conversation_db=db,
+        name="test",
+        _get_agent=lambda: core,
+    )
+    living._router = router
+    living.on_proactive = None
+    living._agent_id = "test"
+
+    assert living._send_proactive("hello", user_id="person-a") is True
+    assert core.messages == []
+
+
 def test_autonomous_runtime_artifacts_are_bound_to_owner_session():
     calls = []
     callback = object()

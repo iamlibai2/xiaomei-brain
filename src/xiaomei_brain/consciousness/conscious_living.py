@@ -2753,15 +2753,22 @@ class ConsciousLiving(Living):
         logger.info("[ConsciousLiving/Proactive] 主动发送 (%d 字) to %s", len(content), target_user)
 
         persisted = False
+        message_id: int | None = None
         if self.agent.conversation_db and target_session:
             try:
-                self.agent.conversation_db.log(
+                message_id = self.agent.conversation_db.log(
                     session_id=target_session,
                     role="assistant",
                     content=content,
                     user_id=target_user,
                 )
                 persisted = True
+                self._sync_proactive_to_live_conversation(
+                    content=content,
+                    user_id=target_user,
+                    session_id=target_session,
+                    message_id=message_id,
+                )
             except Exception as e:
                 logger.warning("[ConsciousLiving/Proactive] 对话日志写入失败: %s", e)
 
@@ -2792,3 +2799,52 @@ class ConsciousLiving(Living):
         else:
             print(f"\n\033[36m[{self.agent.name or self._agent_id}] {content}\033[0m", flush=True)
             return True
+
+    def _sync_proactive_to_live_conversation(
+        self,
+        *,
+        content: str,
+        user_id: str,
+        session_id: str,
+        message_id: int | None,
+    ) -> None:
+        """Add a persisted proactive reply to its matching realtime Core.
+
+        Autonomous execution uses an isolated Core, while realtime conversation
+        keeps an in-memory message tail. Without this sync, the user's next
+        short reply cannot see what the Agent just proactively said.
+
+        Scope matching is intentionally strict. A reply for another Person or
+        session remains database-only until that conversation is opened.
+        """
+        if message_id is None or not user_id or not session_id:
+            return
+        get_agent = getattr(self.agent, "_get_agent", None)
+        if not callable(get_agent):
+            return
+        try:
+            live_core = get_agent()
+        except Exception:
+            logger.debug(
+                "[ConsciousLiving/Proactive] unable to inspect realtime Core",
+                exc_info=True,
+            )
+            return
+        if (
+            str(getattr(live_core, "user_id", "") or "") != user_id
+            or str(getattr(live_core, "session_id", "") or "") != session_id
+        ):
+            return
+        messages = getattr(live_core, "messages", None)
+        if not isinstance(messages, list):
+            return
+        if any(
+            isinstance(message, dict) and message.get("id") == message_id
+            for message in messages
+        ):
+            return
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "id": message_id,
+        })
