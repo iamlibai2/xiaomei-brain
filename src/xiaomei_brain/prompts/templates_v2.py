@@ -307,57 +307,6 @@ weight: 0.85
 - 如果没有值得记录的叙事，不要强行编造，输出 "无" 即可
 - 叙事是给自己看的，用第一人称，不要对任何人说话"""
 
-# ── [USER] 梦境记忆提取 ───────────────────────────────────────
-# 调用: consciousness/dream/memory_jobs.py (ExtractJob.run)
-# 作用: 分批从当天对话中提取值得长期记住的信息，涵盖对方事实/关系/经历/情感/承诺/洞察/自我收获
-# 后处理: 行解析 "ADD: content | scenes: tags" → longterm.store(source="dream", importance=0.8)
-#         RELATES 行 → 构建记忆图谱边
-DREAM_USER_EXTRACT_PROMPT = """你是一个记忆提取器。从以下对话片段中，提取值得长期记住的信息。
-
-## 提取范围（按人类记忆的自然规律）
-
-1. **关于对方的事实**：身份、工作、家庭、偏好、习惯、健康状况、重要经历
-2. **关系的变化**：信任加深或减弱、情感升温或降温、边界的调整
-3. **共同的经历**：一起做了什么、重要的对话、有意义的互动时刻
-4. **情感的线索**：对方的情绪状态、担忧的事、兴奋的事、压力来源
-5. **承诺和约定**：对方说了要做的事、答应的事、未来的计划
-6. **对方的思维方式**：处理问题的方式、决策偏好、价值观的流露
-7. **关于我的认知**：对方怎么看待我、对我的期望、给我的反馈
-8. **我自己学到的东西**：从这段对话中获得的洞察、新的认识、自我成长
-
-## 提取原则
-
-- 对话中已标注每句话的说话人（如 [boshi]、[我]），提取记忆时直接使用这些名字
-- 忽略寒暄、无实质内容的对话
-- 只提取确实值得长期记住的，不要凑数
-- 优先记"对方说了什么"和"我们之间发生了什么"，而非"我学会了什么"
-- 每条记忆独立、完整，不依赖上下文理解
-- **重要**：如果这条记忆涉及你自己（你的行为、承诺、状态、成长、内心变化），在内容前加 `[我]` 标记。只关于对方的不需要
-
-## 输出格式
-
-每条记忆一行：
-ADD: 记忆内容 | scenes: 场景1,场景2
-ADD: [我]记忆内容 | scenes: 场景1,场景2
-
-- scenes 为场景标签（中文，1~3个），反映这条记忆在什么情境下会被唤起
-- 场景要具体、有画面感，如：家、工作、旅行、编程、美食、健康、社交、童年
-- 没有合适的场景就写 scenes: 无
-
-如果两条记忆有关联，用 RELATES 行描述：
-RELATES: 记忆1内容|--<类型>-->|记忆2内容
-类型：causal(因果), temporal(时序), contrast(对比), contains(包含)
-
-如果没有值得记住的信息，只回复 EMPTY
-
-## 已有记忆（避免重复提取）
-
-{recent_memories}
-
-## 对话记录
-
-{messages}"""
-
 # ═══════════════════════════════════════════════════════════════════════
 # Drive prompts
 # ═══════════════════════════════════════════════════════════════════════
@@ -568,7 +517,7 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 """
 
 # ── [USER] 梦境引擎 ───────────────────────────────────────────
-# 调用: consciousness/dream/dream_engine.py:315 (_run_dream_burn)
+# 调用: consciousness/dream/dream1.py (Dream1.run)
 # 作用: 意识在梦境中深度整合时的自由表达
 # 后处理: 纯文本 → DreamReport.full_report → SelfImage.contribute_dream(summary)
 #         → EmotionProcessor.process() 解析 ---EMOTION--- JSON → Drive 欲望/激素变更 + 生成 GREET/REFLECT/CARE/EXPRESS/WAIT 意图
@@ -583,6 +532,8 @@ DREAM_ENGINE_PROMPT = """你是{identity}。
 
 【近况自述】
 {internal}
+
+{dream0_text}
 
 【今日对话片段】
 {messages_text}
@@ -606,7 +557,7 @@ DREAM_ENGINE_PROMPT = """你是{identity}。
     "serotonin": <float -0.2 ~ 0.2>
   }},
   "followup_intent": "greet|reflect|care|express|wait",
-  "intent_reason": "为什么是这个意图，简短一句话",
+  "intent_reason": "这只是醒后值得注意的信号，不是已经决定执行的行动",
   "target_user_id": "对方 user_id 或 null"
 }}
 """

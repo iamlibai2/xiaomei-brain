@@ -81,26 +81,27 @@ class NarrativeConsolidationJob:
         conn = self.ltm._get_conn()
         # 找出现有 active scene_tags
         rows = conn.execute(
-            """SELECT scene_tags FROM narrative_memories
+            """SELECT user_id, scene_tags FROM narrative_memories
                WHERE status = 'active'""",
         ).fetchall()
 
         import json
-        all_tags: set[str] = set()
-        for (tags_json,) in rows:
+        all_tags: set[tuple[str, str]] = set()
+        for (user_id, tags_json) in rows:
             try:
                 tags = json.loads(tags_json or "[]")
-                all_tags.update(tags)
+                all_tags.update((str(user_id or "global"), str(tag)) for tag in tags)
             except Exception as e:
                 logger.debug("scene_tags JSON 解析失败: %s", e)
 
-        for scene_tag in all_tags:
-            # 查找该 scene_tag 下的所有 active 记录
+        for user_id, scene_tag in all_tags:
+            # 同一 scene_tag 也必须按人物作用域隔离，不能把不同人物的
+            # 私有关系叙事合并成 Agent 全局叙事。
             tag_rows = conn.execute(
                 """SELECT id, content, changed_me, weight, category
                    FROM narrative_memories
-                   WHERE status = 'active' AND scene_tags LIKE ?""",
-                (f'%"{scene_tag}"%',),
+                   WHERE status = 'active' AND user_id = ? AND scene_tags LIKE ?""",
+                (user_id, f'%"{scene_tag}"%'),
             ).fetchall()
 
             if len(tag_rows) < 2:
@@ -120,6 +121,7 @@ class NarrativeConsolidationJob:
                 scene_tag=scene_tag,
                 merged_content=merged_content,
                 merged_changed_me=latest_changed,
+                user_id=user_id,
             )
             result.consolidated += 1
             logger.info("%s Consolidated %d NARRs with tag '%s'",

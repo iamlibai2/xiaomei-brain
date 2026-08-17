@@ -629,6 +629,7 @@ class L2Engine:
             context_user_id=scoped_user_id or "",
             context_session_id=scoped_session_id or "",
             decision_scopes=scopes,
+            dream_signal=dict(getattr(c, "_dream_followup_signal", {}) or {}),
         )
 
         messages = [
@@ -662,6 +663,10 @@ class L2Engine:
             else:
                 logger.error("[Consciousness] ReAct 意图决策失败: %s", e, exc_info=True)
             return ""
+        finally:
+            # A dream observation participates in one decision only.  The
+            # decision may choose WAIT; Dream1 itself never retries or acts.
+            c._dream_followup_signal = {}
 
     def _build_intent_prompt(
         self,
@@ -671,6 +676,7 @@ class L2Engine:
         context_user_id: str = "",
         context_session_id: str = "",
         decision_scopes: list[dict[str, Any]] | None = None,
+        dream_signal: dict[str, Any] | None = None,
     ) -> str:
         """构建意图决策问题 prompt。"""
         context_note = ""
@@ -734,6 +740,16 @@ class L2Engine:
             + "- sleep：能量已经很困了，或者手头确实无事可做，主动进入休眠节省资源\n"
             + f"可选意图：{intents}\n"
         )
+        if dream_signal:
+            signal_reason = str(dream_signal.get("reason") or "").strip()
+            signal_kind = str(dream_signal.get("kind") or "").strip()
+            signal_user = str(dream_signal.get("user_id") or "").strip()
+            prompt += (
+                "\n醒后观察信号（仅供判断，不代表已经决定行动）：\n"
+                f"- 类型：{signal_kind or '未分类'}\n"
+                f"- 原因：{signal_reason or '无'}\n"
+                f"- 可能相关人物：{signal_user or '未确定'}\n"
+            )
         # 有未完成目标时，优先推进
         if has_goal:
             prompt += (

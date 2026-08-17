@@ -48,7 +48,16 @@ from .action_dispatcher import ActionDispatcher, ActionExecutor
 from .config import LivingConfig
 from .memory_window import refresh_memory_window
 from .attention import select_attention
-from .dream import DreamEngine, DreamReport, EmotionProcessor, DreamStorage, ReinforceJob, ExtractJob
+from .dream import (
+    Dream0,
+    Dream0Report,
+    Dream1,
+    Dream1Report,
+    DreamEngine,
+    DreamReport,
+    EmotionProcessor,
+    ReinforceJob,
+)
 from .associative_chain import AssociativeChain, AssociativeResult, AssociationHop
 
 __all__ = [
@@ -98,10 +107,12 @@ __all__ = [
     # Dream
     "DreamEngine",
     "DreamReport",
+    "Dream0",
+    "Dream0Report",
+    "Dream1",
+    "Dream1Report",
     "EmotionProcessor",
-    "DreamStorage",
     "ReinforceJob",
-    "ExtractJob",
     # AssociativeChain
     "AssociativeChain",
     "AssociativeResult",

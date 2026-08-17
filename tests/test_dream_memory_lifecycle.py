@@ -41,6 +41,44 @@ def test_dream_ignores_legacy_session_scoped_memories(tmp_path) -> None:
 
     result = service.consolidate_for_dream()
 
-    assert result == {"consolidated": 0, "retained": 0, "expired": 0}
+    assert result["consolidated"] == 0
+    assert result["retained"] == 0
+    assert result["expired"] == 0
+    assert result["created"] == 0
+    assert result["reused"] == 0
+    assert result["material"] == []
     long_term.store.assert_not_called()
     assert short_term.list_active()[0]["scope_type"] == "session"
+
+
+def test_dream_reuses_exact_long_term_memory_instead_of_duplicating(tmp_path) -> None:
+    short_term = ShortTermMemoryStore(str(tmp_path / "brain.db"))
+    candidate = ShortTermMemoryCandidate(
+        content="博士偏好简洁且直接的设置页面。",
+        scope_type="person",
+        scope_id="person-a",
+        person_id="person-a",
+        importance=0.9,
+    )
+    short_id = short_term.remember(candidate)
+    existing = {"id": 42}
+    cursor = MagicMock()
+    cursor.fetchone.return_value = existing
+    conn = MagicMock()
+    conn.execute.side_effect = [cursor, MagicMock()]
+    long_term = MagicMock()
+    long_term._get_conn.return_value = conn
+    service = MemoryFormationService(short_term=short_term, long_term=long_term)
+
+    result = service.consolidate_for_dream()
+
+    assert result["consolidated"] == 1
+    assert result["created"] == 0
+    assert result["reused"] == 1
+    long_term.store.assert_not_called()
+    row = short_term._get_conn().execute(
+        "SELECT status, consolidated_memory_id FROM memories0 WHERE id = ?",
+        (short_id,),
+    ).fetchone()
+    assert row["status"] == "consolidated"
+    assert row["consolidated_memory_id"] == 42

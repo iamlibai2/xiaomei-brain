@@ -1,90 +1,60 @@
-"""DreamEngine: 梦境总控。
-
-DREAMING 状态时做深度离线处理。
-
-串行流程：
-1a. 记忆提取（ExtractJob）— 从今日对话提取新记忆
-1b. 记忆强化（ReinforceJob）— 低强度记忆强化 + extinct
-1c. 关系强化（RelationReinforceJob）— 共现→关系加固 + 衰减
-3.  梦境深度燃烧（LLM）— 完整的梦境意识报告（含 ---EMOTION--- 情绪块）
-4.  反省（Reflection）— 预留
-
-DreamEngine 由 ConsciousLiving._loop_dreaming() 调用，
-不依赖独立调度器。
-
-Usage:
-    engine = DreamEngine(
-        consciousness=consciousness,
-        drive=drive,
-        ltm=agent.longterm_memory,
-        extractor=agent.memory_extractor,
-        llm=agent.llm,
-    )
-    report = engine.run()
-"""
+"""DreamEngine: coordinate deterministic Dream0 and generative Dream1."""
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .emotion_processor import EmotionProcessor
-from .memory_jobs import ConsolidateShortTermJob, ReinforceJob, RelationReinforceJob
-from .reflection import Reflection
+from .dream0 import Dream0, Dream0Report, DreamStageResult
+from .dream1 import Dream1, Dream1Report
+
 logger = logging.getLogger(__name__)
 
 
-# ── DreamReport ──────────────────────────────────────────────
-
 @dataclass
 class DreamReport:
-    """梦境产物"""
+    """One complete sleep-cycle report.
+
+    The legacy aggregate fields remain available to existing UI and activity
+    projections.  ``stages`` is the authoritative account of what actually
+    completed, skipped, or failed.
+    """
+
     summary: str = ""
-    """一句话梦境摘要"""
     full_report: str = ""
-    """完整 LLM 报告"""
-    memories_reinforced: int = 0
-    """强化了多少条记忆"""
-    memories_extracted: int = 0
+    memories_consolidated: int = 0
+    memories_created: int = 0
+    memories_reused: int = 0
     memories_retained: int = 0
     memories_expired: int = 0
-    """提取了多少条新记忆"""
+    memories_reinforced: int = 0
+    memories_faded: int = 0
+    # Compatibility alias: this used to be labelled "extracted" even though
+    # it has represented short-term -> long-term consolidation since memories0.
+    memories_extracted: int = 0
     relations_reinforced: int = 0
-    """加固了多少条关系"""
     relations_created: int = 0
-    """新建了多少条关系"""
     relations_decayed: int = 0
-    """衰减了多少条关系"""
     relations_dormant: int = 0
-    """休眠了多少条关系"""
     procedures_archived: int = 0
-    """归档了多少条 procedure"""
     procedures_decayed: int = 0
-    """衰减了多少条 procedure"""
     narratives_archived: int = 0
-    """归档了多少条 narrative"""
     narratives_consolidated: int = 0
-    """合并了多少条 narrative"""
     patterns_extracted: int = 0
-    """提取/更新了多少条模式"""
-    emotion_changes: dict = field(default_factory=dict)
-    """情绪/欲望变化"""
+    emotion_changes: dict[str, float] = field(default_factory=dict)
+    followup_signal: dict[str, Any] = field(default_factory=dict)
+    stages: list[DreamStageResult] = field(default_factory=list)
     elapsed_seconds: float = 0.0
-    """总耗时"""
     errors: int = 0
-    """错误数"""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-# ── DreamEngine ──────────────────────────────────────────────
-
 class DreamEngine:
-    """梦境总控"""
+    """Run one uninterruptible dream cycle, then return to sleeping."""
 
     def __init__(
         self,
@@ -105,263 +75,102 @@ class DreamEngine:
         self.storage = storage
         self.procedure_memory = procedure_memory
         self.exp_stream = exp_stream
-
-        # 子系统
-        self.emotion_processor = EmotionProcessor()
-        self.reflection = Reflection()
+        self.dream0 = Dream0(
+            consciousness=consciousness,
+            ltm=ltm,
+            extractor=extractor,
+            procedure_memory=procedure_memory,
+        )
+        self.dream1 = Dream1(
+            consciousness=consciousness,
+            drive=drive,
+            ltm=ltm,
+            extractor=extractor,
+            exp_stream=exp_stream,
+        )
 
     def run(self) -> DreamReport:
-        """执行梦境。
+        started_at = time.time()
+        cutoff = started_at
+        logger.info("[DreamEngine] 开始梦境周期 cutoff=%.3f", cutoff)
 
-        Returns:
-            DreamReport
-        """
-        t0 = time.time()
-        report = DreamReport()
+        dream0_report = self.dream0.run(cutoff=cutoff)
+        logger.info(
+            "[Dream0] 完成: 巩固=%d 保留=%d 淡忘=%d errors=%d",
+            dream0_report.memories_consolidated,
+            dream0_report.memories_retained,
+            dream0_report.memories_expired,
+            dream0_report.errors,
+        )
 
-        logger.info("[DreamEngine] 开始梦境")
+        dream1_report = self.dream1.run(dream0_report)
+        logger.info(
+            "[Dream1] 完成: summary=%s patterns=%d errors=%d",
+            dream1_report.summary[:60],
+            dream1_report.patterns_extracted,
+            dream1_report.errors,
+        )
 
-        # ── 阶段1a：短期记忆巩固 ────────────────────────
-        # 对话阶段已经把经历放入 memories0。梦境只整理梦开始前的
-        # 固定集合，不再从原始消息旁路生成另一批长期记忆。
-        try:
-            formation = getattr(self.extractor, "formation_service", None)
-            if formation:
-                e = ConsolidateShortTermJob(formation).run()
-                report.memories_extracted = e.saved
-                report.memories_retained = e.retained
-                report.memories_expired = e.extinct
-                logger.info("[DreamEngine] 短期记忆巩固: %s", e.details)
-        except Exception as e:
-            logger.error("[DreamEngine] 短期记忆巩固失败: %s", e)
-            report.errors += 1
+        report = self._combine(dream0_report, dream1_report)
+        report.elapsed_seconds = time.time() - started_at
+        report.errors = dream0_report.errors + dream1_report.errors
 
-        # ── 阶段1b：记忆强化 ────────────────────────────
-        # 梦境处理所有用户的记忆，不限定 user_id
-        try:
-            if self.ltm:
-                rj = ReinforceJob(self.ltm)
-                r = rj.run()
-                report.memories_reinforced = r.reinforced
-                logger.info("[DreamEngine] 记忆强化: reinforced=%d extinct=%d", r.reinforced, r.extinct)
-        except Exception as e:
-            logger.error("[DreamEngine] 记忆强化失败: %s", e)
-            report.errors += 1
-
-        # ── 阶段1c：关系强化 ────────────────────────────
-        # 梦境处理所有用户的关系，不限定 user_id
-        try:
-            if self.ltm:
-                rrj = RelationReinforceJob(self.ltm)
-                rr = rrj.run()
-                report.relations_reinforced = rr.reinforced
-                report.relations_created = rr.created
-                report.relations_decayed = rr.decayed
-                report.relations_dormant = rr.dormant
-                logger.info("[DreamEngine] 关系强化: reinforced=%d created=%d", rr.reinforced, rr.created)
-        except Exception as e:
-            logger.error("[DreamEngine] 关系强化失败: %s", e)
-            report.errors += 1
-
-        # ── 阶段2.5：Procedure 巩固 ──────────────────────
-        if self.procedure_memory:
-            try:
-                from .procedure_jobs import ProcedureConsolidationJob
-                job = ProcedureConsolidationJob(self.procedure_memory)
-                proc_result = job.run()
-                report.procedures_archived = proc_result.archived
-                report.procedures_decayed = proc_result.decayed
-                logger.info("[DreamEngine] Procedure巩固: %s", proc_result)
-            except Exception as e:
-                logger.warning("[DreamEngine] Procedure巩固失败: %s", e)
-
-        # ── 阶段2.x：Narrative 整合 ─────────────────────
-        if self.ltm:
-            try:
-                from .narrative_jobs import NarrativeConsolidationJob
-                job = NarrativeConsolidationJob(self.ltm, self.cs)
-                narr_result = job.run()
-                report.narratives_archived = narr_result.archived
-                report.narratives_consolidated = narr_result.consolidated
-                logger.info("[DreamEngine] Narrative巩固: archived=%d consolidated=%d",
-                            narr_result.archived, narr_result.consolidated)
-            except Exception as e:
-                logger.warning("[DreamEngine] Narrative巩固失败: %s", e)
-
-        # ── 阶段3：Pattern 提取 ──────────────────────────
-        if self.exp_stream and self.ltm:
-            try:
-                from ...memory.pattern import PatternStorage, PatternExtractor
-                pstorage = PatternStorage(self.ltm)
-                extractor = PatternExtractor(
-                    storage=pstorage,
-                    exp_stream=self.exp_stream,
-                    conversation_db=getattr(
-                        self.extractor, 'db', None,
-                    ) if self.extractor else None,
-                    ltm=self.ltm,
-                )
-                patterns = extractor.extract(self.llm)
-                report.patterns_extracted = len(patterns)
-                logger.info("[DreamEngine] Pattern 提取: %d 条", len(patterns))
-            except Exception as e:
-                logger.warning("[DreamEngine] Pattern 提取失败: %s", e)
-
-        # ── 阶段4：梦境深度燃烧 ─────────────────────
-        # 有新记忆被提取 → 重新生成摘要；否则复用缓存
-        last_summary = self.cs.self_image.history.last_dream_summary
-        if report.memories_extracted > 0:
-            self._run_dream_burn(report)
-        elif last_summary:
-            report.summary = last_summary
-            report.full_report = self.cs.self_image.history.last_dream_summary
-            logger.info("[DreamEngine] 无新记忆，复用已有梦境摘要: %s", report.summary[:30])
-        else:
-            self._run_dream_burn(report)
-
-        # ── 阶段5：反省（预留）──────────────────────────
-        try:
-            self.reflection.reflect(self.cs)
-        except Exception as e:
-            logger.warning("[DreamEngine] 反省失败: %s", e)
-
-        report.elapsed_seconds = time.time() - t0
-
-        # ── 存储（可选）───────────────────────────────────
-        if self.storage:
+        if not report.summary:
+            report.summary = str(
+                getattr(self.cs.self_image.history, "last_dream_summary", "") or ""
+            )
+        if self.storage is not None:
             self.storage.save(report)
+        self._record_experience(report)
 
         logger.info(
-            "[DreamEngine] 完成: 强化%d条, 提取%d条, 耗时%.1fs",
-            report.memories_reinforced,
-            report.memories_extracted,
+            "[DreamEngine] 完成: 巩固=%d 衰减=%d 模式=%d errors=%d elapsed=%.1fs",
+            report.memories_consolidated,
+            report.memories_faded,
+            report.patterns_extracted,
+            report.errors,
             report.elapsed_seconds,
         )
-
-        # ── 经验流 ──
-        if self.exp_stream:
-            try:
-                parts = [f"梦境完成: {report.summary[:200]}" if report.summary else "梦境完成（无摘要）"]
-                if report.memories_reinforced:
-                    parts.append(f"记忆强化{report.memories_reinforced}条")
-                if report.memories_extracted:
-                    parts.append(f"记忆提取{report.memories_extracted}条")
-                if report.patterns_extracted:
-                    parts.append(f"模式提取{report.patterns_extracted}条")
-                if report.emotion_changes:
-                    parts.append(f"情绪变化: {report.emotion_changes}")
-                self.exp_stream.log(
-                    type="dream",
-                    content=" | ".join(parts),
-                    importance=0.6,
-                )
-            except Exception as e:
-                logger.debug("[ExpStream] dream write failed: %s", e)
         return report
 
-    def _run_dream_burn(self, report: DreamReport) -> None:
-        """梦境深度燃烧 → 委托给 L3Engine。
-
-        与清醒态的 tick_L3() 是不同的路径：
-        - tick_L3(): 清醒时触发，产出 → last_l3_summary，trigger="L3"
-        - burn_dream(): DREAMING 中触发，产出 → last_dream_summary，trigger="dream"
-        """
-        # 构建上下文
-        messages_text = self._get_today_messages()
-        desire_text = self._get_desire_text()
-        internal_text = self._get_internal_text()
-
-        # 委托给 L3Engine（manage_side_effects=False，由 DreamEngine 编排后续）
-        from ..l3_engine import L3Engine
-        l3_engine = L3Engine(self.cs)
-        result = l3_engine.burn_dream(
-            messages_text=messages_text,
-            desire_text=desire_text,
-            internal_text=internal_text,
-            manage_side_effects=False,
+    @staticmethod
+    def _combine(dream0: Dream0Report, dream1: Dream1Report) -> DreamReport:
+        return DreamReport(
+            summary=dream1.summary,
+            full_report=dream1.full_report,
+            memories_consolidated=dream0.memories_consolidated,
+            memories_created=dream0.memories_created,
+            memories_reused=dream0.memories_reused,
+            memories_retained=dream0.memories_retained,
+            memories_expired=dream0.memories_expired,
+            memories_reinforced=dream0.memories_reinforced,
+            memories_faded=dream0.memories_faded,
+            memories_extracted=dream0.memories_consolidated,
+            relations_reinforced=dream0.relations_reinforced,
+            relations_created=dream0.relations_created,
+            relations_decayed=dream0.relations_decayed,
+            relations_dormant=dream0.relations_dormant,
+            procedures_archived=dream0.procedures_archived,
+            procedures_decayed=dream0.procedures_decayed,
+            narratives_archived=dream0.narratives_archived,
+            narratives_consolidated=dream0.narratives_consolidated,
+            patterns_extracted=dream1.patterns_extracted,
+            emotion_changes=dream1.emotion_changes,
+            followup_signal=dream1.followup_signal,
+            stages=[*dream0.stages, *dream1.stages],
         )
 
-        full_report = result.full_report
-        report.full_report = full_report
-        report.summary = result.summary
-
-        # 消耗 + 恢复能量
-        if self.drive:
-            self.drive.consume_energy(0.1)
-            self.drive.restore_energy(0.2)
-
-        # 同步到 SelfImage（写 last_dream_summary，不是 last_l3_summary）
-        self.cs.self_image.contribute_dream(report.summary)
-
-        # 存储到 consciousness_stream
-        if full_report:
-            ltm = self.ltm
-            if ltm:
-                try:
-                    ltm.store_narrative(
-                        content=full_report[:500],
-                        trigger='dream',
-                        energy_level=self.cs.body.energy if self.cs.self_image else None,
-                        user_id=getattr(self.cs.agent, "user_id", "global"),
-                    )
-                except Exception as e:
-                    logger.debug("[DreamEngine] store_narrative failed: %s", e)
-
-        # 经验流
-        if self.exp_stream:
-            try:
-                self.exp_stream.log(
-                    type="dream",
-                    content=f"梦境完成: {report.summary[:120]}" if report.summary else "梦境完成（无摘要）",
-                    importance=0.6,
-                )
-            except Exception as e:
-                logger.debug("[ExpStream] dream write failed: %s", e)
-
-        # 情绪整理：从梦境报告中提取 ---EMOTION--- 块，应用 Drive 变更，生成后续 intent
-        changes = self.emotion_processor.process(self.drive, full_report, self.cs)
-        report.emotion_changes = changes
-        if changes:
-            logger.info("[DreamEngine] 情绪整理: %s", changes)
-
-        logger.info("[DreamEngine] 梦境深度燃烧完成 (%d 字)", len(full_report))
-
-    def _get_today_messages(self) -> str:
-        """获取今日对话片段（供 L3Engine.burn_dream() 使用）。"""
-        if self.extractor and self.extractor.db:
-            today_start = datetime.now().replace(
-                hour=0, minute=0, second=0, microsecond=0,
-            ).timestamp()
-            messages = self.extractor.db.query(since=today_start, limit=200)
-            if messages:
-                lines = []
-                for m in messages[-50:]:
-                    role = m.get("role", "?")
-                    uid = m.get("user_id", "")
-                    content = m.get("content", "")[:200]
-                    label = f"{role}:{uid}" if uid else role
-                    lines.append(f"[{label}] {content}")
-                return "\n".join(lines)
-        return ""
-
-    def _get_desire_text(self) -> str:
-        """获取欲望状态文本（供 L3Engine.burn_dream() 使用）。"""
-        if self.drive:
-            d = self.drive.desire
-            return (
-                f"归属欲：{d.belonging:.2f}，"
-                f"认知欲：{d.cognition:.2f}，"
-                f"成就欲：{d.achievement:.2f}，"
-                f"表达欲：{d.expression:.2f}"
-            )
-        return ""
-
-    def _get_internal_text(self) -> str:
-        """获取近况自述文本（供 L3Engine.burn_dream() 使用）。"""
-        si = self.cs.self_image
-        history = si.history
-        return "".join(filter(None, [
-            history.emotional_trajectory,
-            history.goal_rhythm,
-            history.consciousness_rhythm,
-        ])) or "无"
+    def _record_experience(self, report: DreamReport) -> None:
+        if self.exp_stream is None:
+            return
+        try:
+            parts = [
+                f"梦境完成: {report.summary[:200]}" if report.summary else "梦境完成（无摘要）",
+                f"短期记忆巩固{report.memories_consolidated}条",
+                f"长期记忆衰减{report.memories_faded}条",
+            ]
+            if report.patterns_extracted:
+                parts.append(f"模式发现{report.patterns_extracted}条")
+            self.exp_stream.log(type="dream", content=" | ".join(parts), importance=0.6)
+        except Exception as exc:
+            logger.debug("[DreamEngine] experience write failed: %s", exc)

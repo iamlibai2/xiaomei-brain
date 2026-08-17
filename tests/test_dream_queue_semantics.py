@@ -1,6 +1,6 @@
 import json
 
-from xiaomei_brain.consciousness.dream.memory_jobs import ExtractJob
+from xiaomei_brain.consciousness.dream.dream1 import Dream1
 
 
 def test_extract_ignores_human_messages_that_have_not_run_yet():
@@ -20,10 +20,10 @@ def test_extract_ignores_human_messages_that_have_not_run_yet():
         "metadata": json.dumps({"status": "completed"}),
     }
 
-    assert ExtractJob._is_unprocessed_human_message(queued) is True
-    assert ExtractJob._is_unprocessed_human_message(processing) is True
-    assert ExtractJob._is_unprocessed_human_message(completed) is False
-    assert ExtractJob._is_unprocessed_human_message({
+    assert Dream1._is_unprocessed_human_message(queued) is True
+    assert Dream1._is_unprocessed_human_message(processing) is True
+    assert Dream1._is_unprocessed_human_message(completed) is False
+    assert Dream1._is_unprocessed_human_message({
         "role": "assistant",
         "content": "回复",
         "metadata": json.dumps({"status": "queued"}),

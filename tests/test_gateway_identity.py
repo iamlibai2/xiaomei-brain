@@ -187,6 +187,48 @@ def test_fresh_tail_queries_only_the_authenticated_session():
     ]
 
 
+def test_fresh_tail_keeps_user_time_but_cleans_assistant_time_prefixes():
+    """时间用于理解对话，不应成为 Assistant 模仿并重复输出的正文格式。"""
+    from datetime import datetime
+
+    from xiaomei_brain.consciousness.conscious_living import ConsciousLiving
+
+    created_at = datetime(2026, 8, 17, 18, 54).timestamp()
+
+    class ConversationDB:
+        def get_recent(self, _count, **_filters):
+            return [
+                {
+                    "id": 1,
+                    "role": "user",
+                    "content": "换个 happy 点的",
+                    "created_at": created_at,
+                    "metadata": {},
+                },
+                {
+                    "id": 2,
+                    "role": "assistant",
+                    "content": "[08-17 18:53] [08-17 18:54] happy 版播了",
+                    "created_at": created_at,
+                    "metadata": {},
+                },
+            ]
+
+    living = SimpleNamespace(
+        agent=SimpleNamespace(
+            conversation_db=ConversationDB(),
+            _get_agent=lambda: SimpleNamespace(messages=[]),
+        ),
+        user_id="person-1",
+        _config=SimpleNamespace(context=SimpleNamespace(fresh_tail_count=40)),
+    )
+
+    restored = ConsciousLiving.load_fresh_tail(living, "ws-current")
+
+    assert restored[0]["content"] == "[08-17 18:54] 换个 happy 点的"
+    assert restored[1]["content"] == "happy 版播了"
+
+
 def test_register_challenge_binds_server_verified_person_to_connection(tmp_path):
     living = _Living(tmp_path / "brain.db")
     router = MethodRouter(living=living)

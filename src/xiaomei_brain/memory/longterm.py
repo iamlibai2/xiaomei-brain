@@ -1379,8 +1379,8 @@ CREATE INDEX IF NOT EXISTS idx_consciousness_stream_trigger ON consciousness_str
         # 查找所有 active 的同 scene_tag 记录
         rows = conn.execute(
             """SELECT id, content, changed_me, weight, timestamp FROM narrative_memories
-               WHERE scene_tags LIKE ? AND status = 'active'""",
-            (f'%"{scene_tag}"%',),
+               WHERE user_id = ? AND scene_tags LIKE ? AND status = 'active'""",
+            (user_id, f'%"{scene_tag}"%'),
         ).fetchall()
 
         if not rows:

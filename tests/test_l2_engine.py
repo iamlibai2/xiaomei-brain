@@ -338,6 +338,27 @@ def test_l2_sees_active_missions_owned_by_other_people_without_context_leakage()
     assert "session_2" in prompt
 
 
+def test_intent_prompt_treats_dream1_output_as_observation_not_action():
+    engine = L2Engine(SimpleNamespace(
+        agent=SimpleNamespace(people_service=None),
+        intent_slot=SimpleNamespace(urgent_intents=set()),
+    ))
+    engine._mission_service = None
+
+    prompt = engine._build_intent_prompt(
+        "",
+        dream_signal={
+            "kind": "care",
+            "reason": "醒来后仍然在意博士昨晚的低落",
+            "user_id": "person_1",
+        },
+    )
+
+    assert "醒后观察信号" in prompt
+    assert "不代表已经决定行动" in prompt
+    assert "醒来后仍然在意博士昨晚的低落" in prompt
+
+
 def test_person_directed_intent_keeps_the_conversation_that_fueled_decision():
     person = SimpleNamespace(person_id="person_1", display_name="博士")
     store = SimpleNamespace(list_people=lambda **_kwargs: [person])

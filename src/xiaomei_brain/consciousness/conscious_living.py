@@ -70,6 +70,10 @@ from ..cli.boot import boot_section, boot_line
 
 logger = logging.getLogger(__name__)
 
+_ASSISTANT_TIME_PREFIX_RE = re.compile(
+    r"^(?:\[\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*)+"
+)
+
 
 # ── 配置辅助 ──────────────────────────────────────────────────────
 
@@ -2041,9 +2045,13 @@ class ConsciousLiving(Living):
                     scope_id="global",
                     progress_summary="准备整理记忆与内在经验",
                     steps=(
-                        ActivityStep("memory", "整理和强化记忆", "running"),
-                        ActivityStep("relations", "整理关系与经验"),
-                        ActivityStep("patterns", "发现模式并反省"),
+                        ActivityStep("memory", "短期记忆巩固", "running"),
+                        ActivityStep("long_term", "长期记忆维护"),
+                        ActivityStep("relations", "记忆关系维护"),
+                        ActivityStep("procedures", "过程记忆维护"),
+                        ActivityStep("narratives", "叙事记忆维护"),
+                        ActivityStep("dream1", "自由梦境"),
+                        ActivityStep("patterns", "模式联想"),
                     ),
                 )
                 activity = activity_service.start(
@@ -2055,17 +2063,17 @@ class ConsciousLiving(Living):
             except Exception:
                 logger.exception("[ConsciousLiving] Failed to start Dream Activity")
 
-        # 运行 DreamEngine（串行执行：情绪整理→记忆强化→梦境燃烧→反省）
+        # Dream0 做确定性整理，Dream1 根据真实整理结果自由发散。
         try:
             report = self._dream_engine.run()
             logger.info(
-                "[ConsciousLiving] DreamEngine 完成: 强化%d条, 提取%d条, 摘要: %s",
+                "[ConsciousLiving] DreamEngine 完成: 强化%d条, 巩固%d条, 摘要: %s",
                 report.memories_reinforced,
-                report.memories_extracted,
+                report.memories_consolidated,
                 report.summary[:50] if report.summary else "",
             )
             self._print_dream_results(report)
-            if report.memories_extracted or getattr(report, "memories_expired", 0):
+            if report.memories_consolidated or getattr(report, "memories_expired", 0):
                 event_hub = getattr(self, "_event_hub", None)
                 if event_hub is not None:
                     event_hub.publish(
@@ -2073,7 +2081,7 @@ class ConsciousLiving(Living):
                         {
                             "source": "dream",
                             "summary": {
-                                "consolidated": report.memories_extracted,
+                                "consolidated": report.memories_consolidated,
                                 "retained": getattr(report, "memories_retained", 0),
                                 "expired": getattr(report, "memories_expired", 0),
                             },
@@ -2086,12 +2094,12 @@ class ConsciousLiving(Living):
                     report.summary.strip()[:240]
                     if report.summary
                     else (
-                        f"梦境整理完成：提取 {report.memories_extracted} 条记忆，"
+                        f"梦境整理完成：巩固 {report.memories_consolidated} 条记忆，"
                         f"强化 {report.memories_reinforced} 条记忆"
                     )
                 )
                 memory_summary = (
-                    f"记忆整理：巩固 {report.memories_extracted} 条，"
+                    f"记忆整理：巩固 {report.memories_consolidated} 条，"
                     f"保留 {getattr(report, 'memories_retained', 0)} 条，"
                     f"淡忘 {getattr(report, 'memories_expired', 0)} 条"
                 )
@@ -2099,17 +2107,22 @@ class ConsciousLiving(Living):
                     f"{report.summary.strip()[:150]} · {memory_summary}"
                     if report.summary else memory_summary
                 )
+                activity_steps = tuple(
+                    ActivityStep(
+                        stage.name,
+                        stage.title,
+                        stage.status,
+                        stage.summary,
+                    )
+                    for stage in report.stages
+                )
                 activity_service.report_progress(
                     dream_activity_id,
                     summary=summary,
                     current_step="",
-                    completed_steps=3,
-                    total_steps=3,
-                    steps=(
-                        ActivityStep("memory", "整理和强化记忆", "completed"),
-                        ActivityStep("relations", "整理关系与经验", "completed"),
-                        ActivityStep("patterns", "发现模式并反省", "completed"),
-                    ),
+                    completed_steps=sum(step.status in {"completed", "skipped"} for step in activity_steps),
+                    total_steps=len(activity_steps),
+                    steps=activity_steps,
                 )
                 activity_service.complete(dream_activity_id, summary=summary)
         except FatalLLMError as error:
@@ -2155,8 +2168,8 @@ class ConsciousLiving(Living):
         C_OK = "\033[38;5;203m"
         RESET = "\033[0m"
         lines = []
-        if report.memories_extracted:
-            lines.append(f"🧠 记忆提取: {report.memories_extracted} 条")
+        if report.memories_consolidated:
+            lines.append(f"🧠 记忆巩固: {report.memories_consolidated} 条")
         if report.memories_reinforced:
             lines.append(f"🔗 记忆强化: {report.memories_reinforced} 条")
         if report.patterns_extracted:
@@ -2460,7 +2473,9 @@ class ConsciousLiving(Living):
 
         # 第二遍：重建消息列表，从 DB metadata 恢复 tool_calls / reasoning_content
         # 同时复制 DB id（DAG 压缩需要，用于 filter_compressed_messages 匹配）
-        # 给 user/assistant 消息加上 [HH:MM] 时间前缀，让 LLM 感知对话发生的时间
+        # 用户消息携带时间，帮助 LLM 感知对话发生的时刻。Assistant 的
+        # 精确时间已经由 created_at 和意识上下文中的最近对话提供；不要再
+        # 拼进正文，否则模型会模仿该格式，并在多次恢复后累积重复前缀。
         restored: list[dict] = []
         for m in recent:
             role = m.get("role", "user")
@@ -2480,7 +2495,7 @@ class ConsciousLiving(Living):
                 or ""
             )
             time_prefix = ""
-            if created_ts and role in ("user", "assistant"):
+            if created_ts and role == "user":
                 try:
                     time_prefix = datetime.fromtimestamp(created_ts).strftime("[%m-%d %H:%M] ")
                 except Exception:
@@ -2495,7 +2510,12 @@ class ConsciousLiving(Living):
                     msg["turn_id"] = turn_id
                 restored.append(msg)
             elif role == "assistant":
-                msg: dict[str, Any] = {"role": "assistant", "content": f"{time_prefix}{m.get('content', '')}"}
+                assistant_content = str(m.get("content", ""))
+                assistant_content = _ASSISTANT_TIME_PREFIX_RE.sub("", assistant_content)
+                msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": assistant_content,
+                }
                 if db_id is not None:
                     msg["id"] = db_id
                 if created_ts:

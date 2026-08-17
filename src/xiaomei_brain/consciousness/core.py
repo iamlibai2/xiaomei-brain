@@ -182,6 +182,7 @@ class Consciousness:
         self._social_cognition_lock = threading.Lock()
         self._agent_state: str = "awake"             # 当前生命状态（主循环写入，Layer 2 读取）
         self._dream_signal: bool = False             # Layer 2 设置的入梦信号（主循环读取）
+        self._dream_followup_signal: dict[str, Any] = {}  # Dream1 观察，供下一次意图决策审视
         self._queue_depth: int = 0                   # 消息队列深度（Living._heartbeat 写入，Layer0 读取）
         self._interoception_signals: Any = None      # InteroceptionSignals（Layer0 写入，Living 读取）
 

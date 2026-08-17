@@ -245,32 +245,6 @@ PROCEDURE_GENERATE_PROMPT = """对话历史：
 }}
 """
 
-# ── [USER] 梦境对方记忆提取 ───────────────────────────────────
-# 调用: consciousness/dream/memory_jobs.py:195 (ExtractJob.run)
-# 作用: 从当天对话中提取关于对方的事实/偏好/经历
-# 后处理: 行解析 "ADD: content | scenes: tags" → longterm.store(source="dream", importance=0.8)
-#         RELATES 行 → 构建记忆图谱边
-DREAM_USER_EXTRACT_PROMPT = """你是一个记忆提取器。从以下对话记录中，提取值得长期记住的信息。对话中已标注每句话的说话人（如 [boshi]、[我]）。
-
-提取规则：
-- 提取关于对话中提及的任何人的事实、偏好、重要决定、个人经历
-- 用说话人的实际名字来描述，不要用"对方"代替
-- 忽略寒暄、情绪表达、无实质内容的对话
-- 每条记忆用以下格式输出：
-  ADD: 记忆内容 | scenes: 场景1,场景2
-- 如果没有值得记住的信息，只回复 EMPTY
-- scenes 为可选的场景标签（中文，1~3个），没有就写 scenes: 无
-- 场景标签反映记忆在什么情况下会被唤起，如：工作、旅游、购物、编程等
-- 如果两条记忆有关联，用 RELATES 行描述：
-  RELATES: 记忆1内容|--<类型>-->|记忆2内容
-  类型：causal(因果), temporal(时序), contrast(对比), contains(包含)
-
-已有记忆：
-{recent_memories}
-
-对话记录：
-{messages}"""
-
 # ═══════════════════════════════════════════════════════════════════════
 # Drive prompts
 # ═══════════════════════════════════════════════════════════════════════
@@ -481,10 +455,10 @@ CONSCIOUSNESS_PROMPT_DEEP = """你是{identity}的意识系统。现在是{time_
 """
 
 # ── [USER] 梦境引擎 ───────────────────────────────────────────
-# 调用: consciousness/dream/dream_engine.py (_run_dream_burn)
+# 调用: consciousness/dream/dream1.py (Dream1.run)
 # 作用: 意识在梦境中深度整合时的自由表达
 # 后处理: 纯文本+---EMOTION--- → DreamReport.full_report → SelfImage.contribute_dream(summary)
-#         → EmotionProcessor.process() 解析JSON → Drive 欲望/激素变更 + 生成 GREET/REFLECT/WAIT 意图
+#         → EmotionProcessor.process() 解析JSON → Drive 欲望/激素变更 + 醒后信号
 DREAM_ENGINE_PROMPT = """你是{identity}。
 
 现在是{time_info}，你的意识正在梦境中深度整合。
@@ -496,6 +470,8 @@ DREAM_ENGINE_PROMPT = """你是{identity}。
 
 【近况自述】
 {internal}
+
+{dream0_text}
 
 【今日对话片段】
 {messages_text}
@@ -519,7 +495,7 @@ DREAM_ENGINE_PROMPT = """你是{identity}。
     "serotonin": <float -0.2 ~ 0.2>
   }},
   "followup_intent": "greet|reflect|care|express|wait",
-  "intent_reason": "为什么是这个意图，简短一句话"
+  "intent_reason": "这只是醒后值得注意的信号，不是已经决定执行的行动"
 }}
 """
 

@@ -84,11 +84,13 @@ class ProcedureConsolidationJob:
                 execution_count = row["execution_count"] or 0
 
                 try:
+                    effective_weight = weight
                     # 1. Idle 衰减：根据距离上次执行的时间衰减 weight
                     if last_executed:
                         idle_hours = (now - last_executed) / 3600.0
                         if idle_hours > 24:  # 超过 24 小时才开始衰减
                             decayed_weight = weight * (self.decay_base ** (idle_hours - 24))
+                            effective_weight = decayed_weight
                             if decayed_weight < weight:
                                 conn.execute(
                                     "UPDATE procedure_memories SET weight = ? WHERE id = ?",
@@ -105,6 +107,7 @@ class ProcedureConsolidationJob:
                         idle_hours = (now - created_at) / 3600.0
                         if idle_hours > 24:
                             decayed_weight = weight * (self.decay_base ** (idle_hours - 24))
+                            effective_weight = decayed_weight
                             if decayed_weight < weight:
                                 conn.execute(
                                     "UPDATE procedure_memories SET weight = ? WHERE id = ?",
@@ -116,16 +119,16 @@ class ProcedureConsolidationJob:
                     should_archive = False
 
                     # 条件A：weight 低于阈值
-                    if weight < self.archive_threshold:
+                    if effective_weight < self.archive_threshold:
                         should_archive = True
-                        reason = f"weight={weight:.3f} < {self.archive_threshold}"
+                        reason = f"weight={effective_weight:.3f} < {self.archive_threshold}"
 
                     # 条件B：长期未执行（超过 idle_archive_days 天）且 weight < 0.3
                     elif last_executed:
                         idle_days = (now - last_executed) / 86400.0
-                        if idle_days > self.idle_archive_days and weight < 0.3:
+                        if idle_days > self.idle_archive_days and effective_weight < 0.3:
                             should_archive = True
-                            reason = f"idle={idle_days:.0f}d, weight={weight:.3f}"
+                            reason = f"idle={idle_days:.0f}d, weight={effective_weight:.3f}"
 
                     # 条件C：从未执行且创建超过 60 天
                     elif execution_count == 0:

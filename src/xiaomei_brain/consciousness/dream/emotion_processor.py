@@ -28,23 +28,25 @@ class EmotionProcessor:
         changes = processor.process(drive, full_report="...---EMOTION---...", cs=consciousness)
     """
 
-    def process(self, drive: Any, full_report: str, cs: Any) -> dict[str, float]:
-        """从梦境报告中提取情绪块，应用 Drive 变更，生成 Intent。
+    def __init__(self) -> None:
+        self.last_signal: dict[str, Any] = {}
+
+    def process(self, drive: Any, full_report: str, cs: Any = None) -> dict[str, float]:
+        """从梦境报告中提取情绪块并应用有界的 Drive 变更。
+
+        梦境只形成醒后信号，不直接写入意图队列。真正要不要行动，仍由
+        统一的意图决策结合当时的人物、会话和现实条件决定。
 
         Args:
             drive: DriveEngine 实例
             full_report: LLM 完整梦境报告（含 ---EMOTION--- 块）
-            cs: ConsciousnessState 实例（用于 contribute_intent）
+            cs: 保留的兼容参数；不再由梦境直接写入 Intent
 
         Returns:
             实际发生的变化 dict {field: delta}
         """
-        from ..intent import (
-            create_greet_intent, create_reflect_intent, create_wait_intent,
-            create_care_intent, create_express_intent,
-        )
-
         changes: dict[str, float] = {}
+        self.last_signal = {}
 
         if "---EMOTION---" not in full_report:
             return changes
@@ -78,47 +80,17 @@ class EmotionProcessor:
                     setattr(drive.hormone, field, new)
                     changes[field] = round(new - old, 3)
 
-        # 生成后续意图
+        # 记录醒后信号。它不是 Intent，也不会直接进入 ActionDispatcher。
         intent_type = data.get("followup_intent", "wait")
         reason = data.get("intent_reason", "")
-        default_priority = {
-            "greet": 70, "care": 75, "reflect": 50,
-            "express": 60, "wait": 10,
-        }
-        priority = data.get("intent_priority", default_priority.get(intent_type, 50))
-
-        intent_map = {
-            "greet": lambda: create_greet_intent(reason[:50], priority=priority),
-            "reflect": lambda: create_reflect_intent(reason[:50], priority=priority),
-            "care": lambda: create_care_intent(reason[:50], priority=priority),
-            "express": lambda: create_express_intent(reason[:50], priority=priority),
-            "wait": lambda: create_wait_intent(),
-        }
-        intent = intent_map.get(intent_type, create_wait_intent)()
-
-        # 携带目标用户 ID（用于多用户路由）
         target_user_id = data.get("target_user_id")
-        person_directed = intent_type in {"greet", "care", "express"}
-        if target_user_id and target_user_id != "null":
-            intent_dict = intent.to_dict()
-            intent_dict.update({
-                "scope_type": "person",
-                "user_id": target_user_id,
-                "session_id": "",
-            })
-            intent_dict["params"].update({
-                "scope_type": "person",
-                "user_id": target_user_id,
-                "session_id": "",
-            })
-        else:
-            intent_dict = intent.to_dict()
-
-        # WAIT is a retained semantic, not executable work. Likewise an
-        # outward dream follow-up without a concrete Person stays internal.
-        should_queue = intent_type != "wait" and not (person_directed and not target_user_id)
-        if cs.self_image and should_queue:
-            cs.self_image.contribute_intent(intent_dict)
+        if intent_type != "wait":
+            self.last_signal = {
+                "kind": str(intent_type),
+                "reason": str(reason)[:200],
+                "user_id": str(target_user_id) if target_user_id and target_user_id != "null" else "",
+                "source": "dream1",
+            }
 
         logger.info(
             "[EmotionProcessor] 情绪整理: desire=%s hormone=%s intent=%s",

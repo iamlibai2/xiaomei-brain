@@ -197,11 +197,11 @@ class L3Engine:
         return report
 
     def burn_dream(self, messages_text: str = "", desire_text: str = "",
-                   internal_text: str = "",
+                   internal_text: str = "", dream0_text: str = "",
                    manage_side_effects: bool = True) -> DreamBurnReport:
         """梦境深度燃烧 — LLM 生成梦境意识报告。
 
-        从 DreamEngine._run_dream_burn() 迁出 LLM 调用部分。
+        由 Dream1 调用，只负责自由联想和梦境叙事。
 
         Args:
             messages_text: 今日对话片段
@@ -221,6 +221,7 @@ class L3Engine:
             messages_text=messages_text,
             desire_text=desire_text,
             internal_text=internal_text,
+            dream0_text=dream0_text,
         )
 
         full_report = ""
@@ -278,7 +279,8 @@ class L3Engine:
 
     def _build_dream_prompt(self, messages_text: str = "",
                             desire_text: str = "",
-                            internal_text: str = "") -> str:
+                            internal_text: str = "",
+                            dream0_text: str = "") -> str:
         """构建梦境深度燃烧的用户提示词。"""
         from ..prompts import DREAM_ENGINE_PROMPT
 
@@ -299,6 +301,7 @@ class L3Engine:
             desire_text=desire,
             internal=internal,
             messages_text=msgs,
+            dream0_text=dream0_text or "（本轮没有需要特别说明的整理变化）",
         )
 
     # ── 存储 ─────────────────────────────────────────────────

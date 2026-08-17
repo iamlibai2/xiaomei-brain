@@ -193,7 +193,10 @@ class MemoryFormationService:
             (dream_cutoff,),
         ).fetchall()
         consolidated = 0
+        created = 0
+        reused = 0
         retained = 0
+        material: list[str] = []
         for raw in rows:
             item = dict(raw)
             stable = (
@@ -203,25 +206,61 @@ class MemoryFormationService:
             )
             if not stable:
                 retained += 1
+                if (
+                    float(item.get("importance", 0.0)) >= 0.65
+                    or float(item.get("emotion_intensity", 0.0)) >= 0.6
+                ) and len(material) < 20:
+                    material.append(str(item.get("content") or ""))
                 continue
             user_id = item.get("person_id") or "global"
-            memory_id = self.long_term.store(
-                content=item["content"],
-                source="dream",
-                tags=[item.get("kind") or "event"],
-                importance=float(item.get("importance", 0.5)),
-                user_id=user_id,
-                mem_type="common",
-                confidence=float(item.get("confidence", 0.7)),
-                event_time=item.get("event_time"),
-                event_time_end=item.get("event_time_end"),
-            )
+            existing = self.long_term._get_conn().execute(
+                """SELECT id FROM memories
+                   WHERE user_id = ? AND status = 'active' AND TRIM(content) = TRIM(?)
+                   ORDER BY created_at ASC LIMIT 1""",
+                (user_id, item["content"]),
+            ).fetchone()
+            if existing:
+                memory_id = int(existing["id"])
+                self.long_term._get_conn().execute(
+                    """UPDATE memories
+                       SET importance = MAX(importance, ?),
+                           confidence = MAX(COALESCE(confidence, 0), ?),
+                           strength = MIN(0.95, strength + 0.1 * (1.0 - strength)),
+                           last_strengthen = ?
+                       WHERE id = ?""",
+                    (
+                        float(item.get("importance", 0.5)),
+                        float(item.get("confidence", 0.7)),
+                        dream_cutoff,
+                        memory_id,
+                    ),
+                )
+                self.long_term._get_conn().commit()
+                reused += 1
+            else:
+                memory_id = self.long_term.store(
+                    content=item["content"],
+                    source="dream",
+                    tags=[item.get("kind") or "event"],
+                    importance=float(item.get("importance", 0.5)),
+                    user_id=user_id,
+                    mem_type="common",
+                    confidence=float(item.get("confidence", 0.7)),
+                    event_time=item.get("event_time"),
+                    event_time_end=item.get("event_time_end"),
+                )
+                created += 1
             self.short_term.mark_consolidated(int(item["id"]), memory_id)
             consolidated += 1
+            if len(material) < 20:
+                material.append(str(item.get("content") or ""))
         return {
             "consolidated": consolidated,
+            "created": created,
+            "reused": reused,
             "retained": retained,
             "expired": expired,
+            "material": material,
         }
 
     def _candidate_from_action(

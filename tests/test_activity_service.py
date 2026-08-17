@@ -480,11 +480,19 @@ def test_dream_lifecycle_is_agent_global(tmp_path) -> None:
     service, store, _stream = _service(tmp_path)
     living = object.__new__(ConsciousLiving)
     living._load_consciousness = True
+    living._model_service_health = SimpleNamespace(available=True)
     living._activity_service = service
     living._dream_engine = SimpleNamespace(run=lambda: SimpleNamespace(
         memories_reinforced=3,
+        memories_consolidated=2,
         memories_extracted=2,
+        memories_retained=1,
+        memories_expired=0,
         summary="Integrated recent experiences",
+        stages=(
+            SimpleNamespace(name="memory", title="短期记忆巩固", status="completed", summary="巩固 2 条"),
+            SimpleNamespace(name="dream1", title="自由梦境", status="completed", summary="形成梦境"),
+        ),
     ))
     living._print_section = lambda *_args, **_kwargs: None
     living._print_dream_results = lambda _report: None
@@ -500,6 +508,6 @@ def test_dream_lifecycle_is_agent_global(tmp_path) -> None:
     assert activity.scope_type == "agent"
     assert activity.scope_id == "global"
     assert activity.status is ActivityStatus.COMPLETED
-    assert activity.completed_steps == 3
+    assert activity.completed_steps == 2
     assert all(step.status == "completed" for step in activity.steps)
     assert states == [LivingState.SLEEPING]
