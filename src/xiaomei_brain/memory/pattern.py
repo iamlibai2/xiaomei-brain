@@ -13,11 +13,28 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_existing_pattern_id(value: Any) -> int | None:
+    """Normalize the small formatting variations commonly returned by an LLM."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and value > 0 else None
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*#?\s*(\d+)\s*", value)
+        if match:
+            memory_id = int(match.group(1))
+            return memory_id if memory_id > 0 else None
+    return None
 
 
 # ── Pattern 数据结构 ─────────────────────────────────────
@@ -344,7 +361,16 @@ class PatternExtractor:
 
             memory_id = 0
             if action == "UPDATE":
-                memory_id = int(item.get("existing_pattern_id", 0) or 0)
+                parsed_id = _parse_existing_pattern_id(
+                    item.get("existing_pattern_id"),
+                )
+                if parsed_id is None:
+                    logger.warning(
+                        "[PatternExtractor] UPDATE ignored: invalid existing_pattern_id=%r",
+                        item.get("existing_pattern_id"),
+                    )
+                    continue
+                memory_id = parsed_id
             elif action == "MERGE":
                 memory_id = 0  # 新建合并后的模式
 
