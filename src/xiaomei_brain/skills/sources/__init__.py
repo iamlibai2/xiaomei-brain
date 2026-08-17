@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from .base import BaseSourceAdapter, SourceBundle
+from .marketplace import MarketplaceSourceAdapter
 from .url import URLSourceAdapter
 from .github import GitHubSourceAdapter
 
@@ -27,6 +28,7 @@ _ADAPTERS: list[BaseSourceAdapter] = []
 def _ensure_adapters() -> None:
     """首次使用时初始化内置 adapter 列表。"""
     if not _ADAPTERS:
+        _ADAPTERS.append(MarketplaceSourceAdapter())
         _ADAPTERS.append(URLSourceAdapter())
         _ADAPTERS.append(GitHubSourceAdapter())
 
@@ -49,6 +51,8 @@ def resolve_source(identifier: str) -> BaseSourceAdapter:
         f"支持的格式:\n"
         f"  - URL: https://example.com/path/to/SKILL.md\n"
         f"  - GitHub: owner/repo[/path/to/skill]\n"
+        f"  - Skill 站点: skills.sh 或 skillhub.cloud.tencent.com 的详情页\n"
+        f"  - 安装命令: npx skills add ... 或 skillhub install ...\n"
     )
 
 

@@ -60,7 +60,6 @@ class ActionExecutor:
             "tool": self._do_tool,
             "notify": self._do_notify,
             "talk_to_agent": self._do_talk_to_agent,
-            "meta_skill_pull": self._do_meta_skill_pull,
         }
         handler = handlers.get(item.action_type.value)
         if not handler:
@@ -632,8 +631,6 @@ class ActionExecutor:
             success = self._do_pleasure_lever(item)
         elif tool_name == "pleasure_release":
             success = self._do_pleasure_release(item)
-        elif tool_name == "meta_skill_pull":
-            success = self._do_meta_skill_pull(item)
         else:
             logger.warning("[ActionExecutor] 未知工具: %s", tool_name)
             return False
@@ -1185,25 +1182,6 @@ class ActionExecutor:
             return ok
         return False
 
-    # ── TOOL: meta_skill_pull ──────────────────────────────────
-
-    def _do_meta_skill_pull(self, item: ActionItem) -> bool:
-        """元技能拉取 → 委托给 LearningEngine"""
-        engine = getattr(self, "_learn_engine", None)
-        if not engine:
-            return False
-
-        skill_domain = (item.metadata or {}).get("skill_domain", "") or item.content
-        if not skill_domain:
-            logger.warning("[ActionExecutor] 元技能: 缺少 skill_domain")
-            return False
-
-        return engine.pull_meta_skill(
-            skill_domain,
-            runtime=self._agent_core(),
-            cancel_check=self._cancel_check(),
-        )
-
     # ── TOOL: pleasure_lever ──────────────────────────────────
 
     def _do_pleasure_lever(self, item: ActionItem) -> bool:
@@ -1577,7 +1555,6 @@ class ActionDispatcher:
                 tool_label = {
                     "learn_topic": "学习", "progress_goal": "推进目标",
                     "pleasure_lever": "快乐中枢", "pleasure_release": "释放",
-                    "meta_skill_pull": "元技能",
                 }.get(sub, "TOOL")
             reason = item.reason or item.content or ""
             display.record_action(icon, tool_label, reason)

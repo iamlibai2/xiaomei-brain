@@ -9,9 +9,13 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import os
 import re
+import zipfile
+from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import requests
 
@@ -21,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 # 匹配: owner/repo[/path][:ref]
 _PATTERN = re.compile(r'^([\w.-]+)/([\w.-]+)(?:/([\w./-]+))?(?::([\w./-]+))?$')
+_GITHUB_URL_PATTERN = re.compile(
+    r"^https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$",
+    re.IGNORECASE,
+)
 
 # GitHub raw 镜像列表（按优先级）
 _MIRRORS: list[str] = []
@@ -95,6 +103,7 @@ class GitHubSourceAdapter(BaseSourceAdapter):
         last_error = None
         main_resp = None
         main_url = ""
+        preloaded_files: dict[str, str | bytes] | None = None
         for url in urls:
             try:
                 resp = requests.get(url, timeout=30, allow_redirects=True)
@@ -103,6 +112,12 @@ class GitHubSourceAdapter(BaseSourceAdapter):
                         f"SKILL.md 未找到: {url}\n"
                         f"请检查仓库是否存在、路径是否正确。"
                     )
+                if resp.status_code in {403, 429} or resp.status_code >= 500:
+                    last_error = requests.HTTPError(
+                        f"HTTP {resp.status_code} from {url}", response=resp
+                    )
+                    logger.debug("GitHub raw source throttled/unavailable: %s", last_error)
+                    continue
                 resp.raise_for_status()
                 main_resp = resp
                 main_url = url
@@ -113,18 +128,36 @@ class GitHubSourceAdapter(BaseSourceAdapter):
                 continue
             except FileNotFoundError:
                 raise
+        if main_resp is None:
+            skill_path = f"{path}/SKILL.md" if path else "SKILL.md"
+            api_content = self._fetch_file_content(owner, repo, skill_path, ref)
+            if api_content is None:
+                codeload = self._fetch_from_codeload(owner, repo, path, ref)
+                if codeload is None:
+                    raise RuntimeError(
+                        f"所有 GitHub 源均不可达，最后错误: {last_error}\n"
+                        f"尝试的 URL: {urls}\n"
+                        f"提示: 可设置 GITHUB_RAW_MIRRORS 环境变量添加自定义镜像"
+                    )
+                main_content, preloaded_files, main_url = codeload
+            else:
+                main_content = api_content
+                main_url = (
+                    f"https://api.github.com/repos/{owner}/{repo}/contents/"
+                    f"{skill_path}?ref={ref}"
+                )
         else:
-            raise RuntimeError(
-                f"所有 GitHub 源均不可达，最后错误: {last_error}\n"
-                f"尝试的 URL: {urls}\n"
-                f"提示: 可设置 GITHUB_RAW_MIRRORS 环境变量添加自定义镜像"
-            )
+            main_content = main_resp.text
 
         # 2. 下载目录中所有文件（Trees API → Contents 递归兜底）
-        files = self._download_directory(owner, repo, path, ref)
+        files = (
+            preloaded_files
+            if preloaded_files is not None
+            else self._download_directory(owner, repo, path, ref)
+        )
 
         return SourceBundle(
-            content=main_resp.text,
+            content=main_content,
             source="github",
             identifier=identifier,
             resolved_url=main_url,
@@ -136,6 +169,150 @@ class GitHubSourceAdapter(BaseSourceAdapter):
             },
             files=files,
         )
+
+    @staticmethod
+    def _fetch_from_codeload(
+        owner: str, repo: str, path: str, ref: str
+    ) -> tuple[str, dict[str, str | bytes], str] | None:
+        """在 raw/API 被限流时，从 GitHub codeload ZIP 获取目标 Skill。"""
+        url = (
+            f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/"
+            f"{quote(ref, safe='')}"
+        )
+        try:
+            response = requests.get(url, timeout=60, allow_redirects=True)
+            if response.status_code != 200 or len(response.content) > 50 * 1024 * 1024:
+                return None
+            archive = zipfile.ZipFile(io.BytesIO(response.content))
+        except (requests.RequestException, zipfile.BadZipFile):
+            return None
+
+        suffix = f"/{path.strip('/')}/" if path else "/"
+        manifest_suffix = f"{suffix}SKILL.md"
+        manifests = [
+            name for name in archive.namelist()
+            if name.replace("\\", "/").endswith(manifest_suffix)
+        ]
+        if len(manifests) != 1:
+            return None
+        manifest = manifests[0]
+        root = PurePosixPath(manifest).parent
+        files: dict[str, str | bytes] = {}
+        for name in archive.namelist():
+            normalized = name.replace("\\", "/")
+            item = PurePosixPath(normalized)
+            if normalized.endswith("/") or item == PurePosixPath(manifest):
+                continue
+            if root not in item.parents:
+                continue
+            relative = item.relative_to(root).as_posix()
+            raw = archive.read(name)
+            try:
+                files[relative] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                files[relative] = raw
+        try:
+            content = archive.read(manifest).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return content, files, url
+
+    def fetch_named(self, repository: str, skill_name: str) -> SourceBundle:
+        """从一个多 Skill 仓库中按目录名查找并获取指定 Skill。"""
+        match = _GITHUB_URL_PATTERN.match(repository.strip())
+        if match:
+            owner, repo = match.group(1), match.group(2)
+        else:
+            owner, repo, path, _ref = _parse_identifier(repository.strip())
+            if path:
+                return self.fetch(repository)
+
+        branch, entries = self._fetch_repo_tree(owner, repo, "main")
+        if branch is None:
+            fallback = self._fetch_named_from_codeload(
+                owner, repo, skill_name, refs=("main", "master")
+            )
+            if fallback is not None:
+                return fallback
+            raise RuntimeError(f"无法读取 GitHub 仓库目录: {owner}/{repo}")
+        normalized = skill_name.strip().strip("/")
+        candidates = []
+        for item in entries:
+            path = str(item.get("path") or "")
+            if item.get("type") != "blob" or not path.endswith("/SKILL.md"):
+                continue
+            directory = path[: -len("/SKILL.md")]
+            if directory.rsplit("/", 1)[-1].casefold() == normalized.casefold():
+                candidates.append(directory)
+        if not candidates:
+            raise FileNotFoundError(
+                f"仓库 {owner}/{repo} 中未找到名为 {skill_name!r} 的 Skill"
+            )
+        candidates.sort(key=lambda value: (value.count("/"), len(value)))
+        return self.fetch(f"{owner}/{repo}/{candidates[0]}:{branch}")
+
+    @staticmethod
+    def _fetch_named_from_codeload(
+        owner: str, repo: str, skill_name: str, *, refs: tuple[str, ...]
+    ) -> SourceBundle | None:
+        """不依赖 GitHub API，从仓库 ZIP 中按目录名寻找 Skill。"""
+        normalized_skill = skill_name.strip().strip("/").casefold()
+        for ref in refs:
+            url = (
+                f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/"
+                f"{quote(ref, safe='')}"
+            )
+            try:
+                response = requests.get(url, timeout=60, allow_redirects=True)
+                if response.status_code != 200 or len(response.content) > 50 * 1024 * 1024:
+                    continue
+                archive = zipfile.ZipFile(io.BytesIO(response.content))
+            except (requests.RequestException, zipfile.BadZipFile):
+                continue
+            manifests = []
+            for name in archive.namelist():
+                path = PurePosixPath(name.replace("\\", "/"))
+                if path.name != "SKILL.md" or len(path.parts) < 2:
+                    continue
+                if path.parent.name.casefold() == normalized_skill:
+                    manifests.append(name)
+            if not manifests:
+                continue
+            manifests.sort(key=lambda value: (value.count("/"), len(value)))
+            manifest = manifests[0]
+            root = PurePosixPath(manifest).parent
+            files: dict[str, str | bytes] = {}
+            for name in archive.namelist():
+                item = PurePosixPath(name.replace("\\", "/"))
+                if name.endswith("/") or item == PurePosixPath(manifest):
+                    continue
+                if root not in item.parents:
+                    continue
+                relative = item.relative_to(root).as_posix()
+                raw = archive.read(name)
+                try:
+                    files[relative] = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    files[relative] = raw
+            try:
+                content = archive.read(manifest).decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            relative_root = "/".join(root.parts[1:])
+            return SourceBundle(
+                content=content,
+                source="github",
+                identifier=f"{owner}/{repo}/{relative_root}:{ref}",
+                resolved_url=url,
+                metadata={
+                    "repo_owner": owner,
+                    "repo_name": repo,
+                    "repo_path": relative_root,
+                    "ref": ref,
+                },
+                files=files,
+            )
+        return None
 
     # ── 目录下载 ─────────────────────────────────────────────────
 

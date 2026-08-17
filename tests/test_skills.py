@@ -866,13 +866,15 @@ class TestSkillTools:
         skill_view_fn(name="browser-automation")
         assert populated_storage.view_skill("browser-automation")["usage_count"] == 1
 
-    def test_create_skill_tools_returns_three_tools(self, storage):
+    def test_create_skill_tools_returns_five_tools(self, storage):
         from xiaomei_brain.skills.tools import create_skill_tools
         agent = self._make_agent(storage)
         tools = create_skill_tools(agent)
-        assert len(tools) == 3
+        assert len(tools) == 5
         names = {t.name for t in tools}
-        assert names == {"skills_list", "skill_view", "create_skill"}
+        assert names == {
+            "skills_list", "skill_view", "create_skill", "find_skill", "learn_skill"
+        }
 
     def test_skills_list_no_loader(self):
         """When agent has no _skill_loader, returns hint message."""

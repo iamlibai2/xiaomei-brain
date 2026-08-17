@@ -402,40 +402,6 @@ LEARN_REACT_PROMPT = """我想深入学习「{topic}」这个主题。
 
 深入、准确，不要泛泛而谈。"""
 
-# ── [USER] 元技能拉取 ─────────────────────────────────────────
-# 调用: learn/meta_skill.py:56 (MetaSkillPuller.pull)
-# 作用: 从 Hub/开源仓库搜索并拉取技能文件
-# 后处理: react_nodb() ReAct 循环 → 纯文本 → ltm.store(mem_type="skill")
-#         → _storage.build_relations() 构建语义图谱边
-META_SKILL_PROMPT = """我想学习或获取「{skill_domain}」领域的技能。
-
-请你用 ReAct 方式获取技能：
-1. 用 websearch 搜索 clawhub.ai 或 GitHub awesome-skills 上与 {skill_domain} 相关的技能
-2. 评估搜索结果：优先 GitHub stars > 100、最近半年更新的
-3. 用 web_fetch 拉取最合适的 SKILL.md 全文
-4. 阅读后，用中文总结这个技能，格式如下：
-
-## {{skill_name}}
-type: skill
-domain: [{skill_domain}]
-confidence: 0.5
-
-### 什么时候用
-...
-
-### 怎么做
-...
-
-### 注意
-...
-
-### 关联
-→ 知识点: [...]
-→ 相关技能: [...]
-→ 工具: ...
-
-5. 总结完成后，不需要写文件——直接输出上述格式的技能内容。"""
-
 # ── [USER] 主动工作触发 ────────────────────────────────────────
 # 调用: consciousness/action_dispatcher.py:_do_work()
 # 作用: WORK 意图触发时，从待办列表选择任务并执行

@@ -29,7 +29,7 @@ class SourceBundle:
     identifier: str
     resolved_url: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    files: dict[str, str] = field(default_factory=dict)
+    files: dict[str, str | bytes] = field(default_factory=dict)
 
 
 class BaseSourceAdapter(ABC):

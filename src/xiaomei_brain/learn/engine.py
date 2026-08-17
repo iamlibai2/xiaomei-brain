@@ -12,7 +12,6 @@ import time
 from ..prompts import LEARN_REACT_PROMPT
 from .queue import LearningQueue
 from .storage import KnowledgeStorage
-from .meta_skill import MetaSkillPuller
 from ..consciousness.context_pipeline import build_simple_context
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ class LearningEngine:
     """学习引擎 — 学习主循环的编排者。
 
     使用方式：
-        engine = LearningEngine(cl, queue, storage, meta_skill)
+        engine = LearningEngine(cl, queue, storage)
         success = engine.learn()  # 由 ActionExecutor._do_learn_topic 调用
     """
 
@@ -33,12 +32,10 @@ class LearningEngine:
         conscious_living,
         queue: LearningQueue,
         storage: KnowledgeStorage,
-        meta_skill: MetaSkillPuller,
     ) -> None:
         self._cl = conscious_living
         self._queue = queue
         self._storage = storage
-        self._meta_skill = meta_skill
         self._last_topic: str = ""
         self._last_preview: str = ""
         self._last_word_count: int = 0
@@ -95,14 +92,6 @@ class LearningEngine:
 
         logger.info("[LearningEngine] 学习完成: %s (%d 字)", topic, len(knowledge))
         return True
-
-    def pull_meta_skill(self, skill_domain: str, *, runtime=None, cancel_check=None) -> bool:
-        """拉取元技能。"""
-        return self._meta_skill.pull(
-            skill_domain,
-            runtime=runtime,
-            cancel_check=cancel_check,
-        )
 
     # ── 主题选择 ──────────────────────────────────────────
 

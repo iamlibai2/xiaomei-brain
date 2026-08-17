@@ -3,7 +3,9 @@
 渐进式披露：
 - skills_list: 列出所有可用技能，支持语义搜索，显示使用频率和工具绑定
 - skill_view: 查看指定技能的完整 SKILL.md 内容，自动记录使用
-- create_skill: 从受控 Workspace 安装或更新 Skill，并立即热加载
+- create_skill: 从受控 Workspace 安装或更新 Agent 自己编写的 Skill
+- find_skill: 从结构化 Skill 生态搜索候选
+- learn_skill: 从外部来源学习、校验、安装并热加载 Skill
 
 用法::
 
@@ -21,8 +23,10 @@ from typing import TYPE_CHECKING
 
 from ..tools.base import Tool, tool
 from ..tools.execution_context import current_tool_execution
-from .authoring import install_authored_skill
+from .authoring import install_authored_skill, install_external_skill
 from .resources import activate_skill_resource_root
+from .search import find_external_skills
+from .sources import resolve_source
 
 if TYPE_CHECKING:
     from ..agent.instance import AgentInstance
@@ -38,6 +42,19 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
 
     def _loader():
         return getattr(agent, "_skill_loader", None)
+
+    def _refresh_installed_skill(loader, name: str) -> dict:
+        loader.refresh_if_changed()
+        skill = loader.view_skill(name)
+        if not skill:
+            raise RuntimeError(f"Skill 已写入但热加载失败: {name}")
+        configure_paths = getattr(agent, "configure_tool_paths", None)
+        agent_dir = getattr(agent, "agent_dir", None)
+        if callable(configure_paths) and callable(agent_dir):
+            base_dir = agent_dir()
+            if base_dir:
+                configure_paths(base_dir, extra_read_only_roots=loader.resource_roots())
+        return skill
 
     @tool(
         name="skills_list",
@@ -200,20 +217,7 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
             skills_dir=loader.skills_dir,
             tool_registry=context.tool_registry,
         )
-        loader.refresh_if_changed()
-        skill = loader.view_skill(installed.name)
-        if not skill:
-            raise RuntimeError(f"Skill 已写入但热加载失败: {installed.name}")
-
-        # Newly installed resources become readable by all subsequent isolated
-        # runtimes without restarting the Agent.  Selection and full content
-        # are still exposed only when the Skill is relevant or explicitly read.
-        configure_paths = getattr(agent, "configure_tool_paths", None)
-        agent_dir = getattr(agent, "agent_dir", None)
-        if callable(configure_paths) and callable(agent_dir):
-            base_dir = agent_dir()
-            if base_dir:
-                configure_paths(base_dir, extra_read_only_roots=loader.resource_roots())
+        _refresh_installed_skill(loader, installed.name)
 
         bound_mission: dict | None = None
         normalized_mission_id = str(mission_id or "").strip()
@@ -245,4 +249,68 @@ def create_skill_tools(agent: "AgentInstance") -> list[Tool]:
             ),
         }, ensure_ascii=False)
 
-    return [skills_list, skill_view, create_skill]
+    @tool(
+        name="find_skill",
+        description=(
+            "按任务或领域搜索外部标准 Skill。当前搜索 skills.sh，并在本机存在 SkillHub CLI 时"
+            "同时搜索 SkillHub；返回候选名称、来源、安装量和可直接交给 learn_skill 的 source。"
+            "它只搜索和比较，不安装。如果结果不足或结构化来源不可用，结果会建议你自行调用"
+            "web_search 扩大范围；找到合适候选后再调用 learn_skill。"
+        ),
+    )
+    def find_skill(query: str, limit: int = 8) -> str:
+        return json.dumps(
+            find_external_skills(query, limit=limit),
+            ensure_ascii=False,
+        )
+
+    @tool(
+        name="learn_skill",
+        description=(
+            "从可信外部来源获取并安装一个标准 Skill，安装后立即热加载，无需重启 Agent。"
+            "source 支持 GitHub、skills.sh、腾讯 SkillHub、直接 SKILL.md/ZIP 地址，"
+            "以及 npx skills add 或 skillhub install 安装命令。也可使用用户指定的网页；"
+            "网页必须公开可识别的安装命令或标准 Skill 下载地址。"
+            "当现有技能不足、当前任务反复失败，或你判断值得借鉴外部成熟经验时使用；"
+            "应先搜索并比较来源，再安装最合适的一项。安装成功后必须用 skill_view 阅读完整指南，"
+            "并在真实任务中验证效果。安装只写入 Skill 文件，不会自动执行其中脚本。"
+        ),
+    )
+    def learn_skill(source: str) -> str:
+        loader = _loader()
+        if not loader:
+            raise RuntimeError("技能系统未初始化")
+        source = str(source or "").strip()
+        if not source:
+            raise ValueError("source 不能为空")
+        context = current_tool_execution()
+        registry = context.tool_registry if context is not None else None
+        adapter = resolve_source(source)
+        bundle = adapter.fetch(source)
+        installed = install_external_skill(
+            content=bundle.content,
+            files=bundle.files,
+            skills_dir=loader.skills_dir,
+            tool_registry=registry,
+        )
+        _refresh_installed_skill(loader, installed.name)
+        return json.dumps({
+            "success": True,
+            "skill": {
+                "name": installed.name,
+                "description": installed.description,
+                "version": installed.version,
+                "requires_tools": list(installed.requires_tools),
+                "install_dir": str(installed.install_dir),
+            },
+            "source": {
+                "type": bundle.source,
+                "identifier": bundle.identifier,
+                "resolved_url": bundle.resolved_url,
+            },
+            "hot_loaded": True,
+            "restart_required": False,
+            "next_step": f"使用 skill_view(name='{installed.name}') 阅读完整指南，并在当前任务中验证。",
+        }, ensure_ascii=False)
+
+    return [skills_list, skill_view, create_skill, find_skill, learn_skill]

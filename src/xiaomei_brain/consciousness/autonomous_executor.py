@@ -477,11 +477,6 @@ class AutonomousBehaviorExecutor:
                     "goal_pace",
                     "推进目标",
                 ),
-                "meta_skill_pull": (
-                    ActivityCategory.WORK,
-                    "autonomous_learning",
-                    "学习元技能",
-                ),
                 "pleasure_lever": (
                     ActivityCategory.COGNITION,
                     "self_regulation",

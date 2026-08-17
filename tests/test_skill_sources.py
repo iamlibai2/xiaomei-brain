@@ -11,8 +11,10 @@ Tests for:
 from __future__ import annotations
 
 import os
+import io
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, Mock
 
@@ -107,6 +109,19 @@ class TestURLSourceAdapter:
         assert bundle.source == "url"
         assert bundle.resolved_url == "https://example.com/SKILL.md"
 
+    def test_github_repository_url_delegates_to_github_adapter(self):
+        from xiaomei_brain.skills.sources.url import URLSourceAdapter
+        from xiaomei_brain.skills.sources.base import SourceBundle
+
+        expected = SourceBundle("content", "github", "owner/repo", "resolved")
+        with patch(
+            "xiaomei_brain.skills.sources.github.GitHubSourceAdapter.fetch",
+            return_value=expected,
+        ) as fetch:
+            result = URLSourceAdapter().fetch("https://github.com/owner/repo")
+        fetch.assert_called_once_with("owner/repo")
+        assert result is expected
+
     def test_fetch_html_error_blob_url(self, mock_requests):
         from xiaomei_brain.skills.sources.url import URLSourceAdapter
 
@@ -130,6 +145,86 @@ class TestURLSourceAdapter:
         adapter = URLSourceAdapter()
         with pytest.raises(ValueError, match="HTML"):
             adapter.fetch("https://example.com/page")
+
+    def test_fetch_zip_bundle(self, mock_requests):
+        from xiaomei_brain.skills.sources.url import URLSourceAdapter
+
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("demo/SKILL.md", "---\nname: demo\n---\n# Demo")
+            archive.writestr("demo/references/guide.md", "guide")
+        mock_resp = Mock(
+            content=payload.getvalue(),
+            headers={"content-type": "application/zip"},
+        )
+        mock_resp.raise_for_status = Mock()
+        mock_requests.return_value = mock_resp
+
+        bundle = URLSourceAdapter().fetch("https://example.com/demo.zip")
+        assert bundle.source == "url_zip"
+        assert bundle.files["references/guide.md"] == "guide"
+
+
+class TestMarketplaceSourceAdapter:
+    def test_skills_sh_url_uses_official_skills_cli(self):
+        from xiaomei_brain.skills.sources.marketplace import MarketplaceSourceAdapter
+        from xiaomei_brain.skills.sources.base import SourceBundle
+
+        expected = SourceBundle("content", "skills_cli", "owner/repo", "resolved")
+        with patch(
+            "xiaomei_brain.skills.sources.marketplace._fetch_with_skills_cli",
+            return_value=expected,
+        ) as cli:
+            bundle = MarketplaceSourceAdapter().fetch(
+                "https://skills.sh/owner/repo/find-skills"
+            )
+        cli.assert_called_once_with(
+            "https://github.com/owner/repo",
+            "find-skills",
+            "https://skills.sh/owner/repo/find-skills",
+        )
+        assert bundle.source == "skills.sh"
+
+    def test_npx_skills_command_is_executed_by_controlled_adapter(self):
+        from xiaomei_brain.skills.sources.marketplace import MarketplaceSourceAdapter
+        from xiaomei_brain.skills.sources.base import SourceBundle
+
+        expected = SourceBundle("content", "skills_cli", "owner/repo", "resolved")
+        with patch(
+            "xiaomei_brain.skills.sources.marketplace._fetch_with_skills_cli",
+            return_value=expected,
+        ) as cli:
+            MarketplaceSourceAdapter().fetch(
+                "npx skills add https://github.com/owner/repo --skill demo"
+            )
+        cli.assert_called_once_with(
+            "https://github.com/owner/repo",
+            "demo",
+            "npx skills add https://github.com/owner/repo --skill demo",
+        )
+
+    def test_rejects_shell_chaining(self):
+        from xiaomei_brain.skills.sources.marketplace import MarketplaceSourceAdapter
+
+        with pytest.raises(ValueError, match="不能包含"):
+            MarketplaceSourceAdapter().fetch(
+                "npx skills add owner/repo && Remove-Item important.txt"
+            )
+
+    def test_github_repository_uses_official_skills_cli(self):
+        from xiaomei_brain.skills.sources.marketplace import MarketplaceSourceAdapter
+        from xiaomei_brain.skills.sources.base import SourceBundle
+
+        expected = SourceBundle("content", "skills_cli", "source", "resolved")
+        with patch(
+            "xiaomei_brain.skills.sources.marketplace._fetch_with_skills_cli",
+            return_value=expected,
+        ) as cli:
+            bundle = MarketplaceSourceAdapter().fetch("owner/repo")
+        cli.assert_called_once_with(
+            "https://github.com/owner/repo", "", "owner/repo"
+        )
+        assert bundle.source == "github_cli"
 
 
 # ── GitHub Adapter ─────────────────────────────────────────────
@@ -279,6 +374,54 @@ class TestGitHubSourceAdapter:
         # Should have used the mirror URL
         assert "raw.githubusercontent.com" not in bundle.resolved_url
 
+    def test_fetch_rate_limit_falls_back_to_contents(self, mock_requests):
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+        from xiaomei_brain.skills.sources import github as github_mod
+
+        throttled = Mock(status_code=429)
+        github_mod._MIRRORS.clear()
+        mock_requests.return_value = throttled
+        adapter = GitHubSourceAdapter()
+        with patch.object(
+            adapter, "_fetch_file_content", return_value="---\nname: demo\n---\n"
+        ), patch.object(adapter, "_download_directory", return_value={}):
+            bundle = adapter.fetch("owner/repo")
+        assert bundle.content.startswith("---")
+        assert bundle.resolved_url.startswith("https://api.github.com/")
+
+    def test_fetch_rate_limit_falls_back_to_codeload(self, mock_requests):
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+        from xiaomei_brain.skills.sources import github as github_mod
+
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("repo-main/skills/demo/SKILL.md", "---\nname: demo\n---\n")
+            archive.writestr("repo-main/skills/demo/scripts/run.py", "print('ok')")
+        throttled = Mock(status_code=429)
+        codeload = Mock(status_code=200, content=archive_bytes.getvalue())
+        github_mod._MIRRORS.clear()
+        mock_requests.side_effect = [throttled, throttled, throttled, codeload]
+        adapter = GitHubSourceAdapter()
+        with patch.object(adapter, "_fetch_file_content", return_value=None):
+            bundle = adapter.fetch("owner/repo/skills/demo")
+        assert bundle.content.startswith("---")
+        assert bundle.files["scripts/run.py"] == "print('ok')"
+        assert bundle.resolved_url.startswith("https://codeload.github.com/")
+
+    def test_fetch_named_falls_back_to_codeload_when_tree_is_unavailable(self):
+        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+
+        expected = Mock()
+        adapter = GitHubSourceAdapter()
+        with patch.object(adapter, "_fetch_repo_tree", return_value=(None, [])), patch.object(
+            adapter, "_fetch_named_from_codeload", return_value=expected
+        ) as fallback:
+            result = adapter.fetch_named("owner/repo", "demo")
+        fallback.assert_called_once_with(
+            "owner", "repo", "demo", refs=("main", "master")
+        )
+        assert result is expected
+
     def test_fetch_all_fail(self, mock_requests):
         """When all URLs fail, raise RuntimeError."""
         from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
@@ -305,12 +448,12 @@ class TestResolveSource:
 
     def test_github_identifier(self):
         from xiaomei_brain.skills.sources import resolve_source
-        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+        from xiaomei_brain.skills.sources.marketplace import MarketplaceSourceAdapter
         adapter = resolve_source("owner/repo")
-        assert isinstance(adapter, GitHubSourceAdapter)
+        assert isinstance(adapter, MarketplaceSourceAdapter)
 
     def test_github_url_prefers_url_adapter(self):
-        """GitHub URLs should be handled by URL adapter, not GitHub adapter."""
+        """GitHub file URLs remain URL sources; repository URLs use official CLI."""
         from xiaomei_brain.skills.sources import resolve_source
         from xiaomei_brain.skills.sources.url import URLSourceAdapter
         adapter = resolve_source("https://github.com/owner/repo/blob/main/SKILL.md")
@@ -451,7 +594,7 @@ class TestCmdInstall:
     def test_install_from_github(self, tmp_agent_dir, mock_requests):
         """Install a skill from GitHub shorthand."""
         from xiaomei_brain.cli.skill import _cmd_install
-        from xiaomei_brain.skills.sources.github import GitHubSourceAdapter
+        from xiaomei_brain.skills.sources.base import SourceBundle
 
         mock_resp = Mock()
         mock_resp.text = (
@@ -465,9 +608,18 @@ class TestCmdInstall:
         mock_resp.raise_for_status = Mock()
         mock_requests.return_value = mock_resp
 
+        bundle = SourceBundle(
+            content=mock_resp.text,
+            source="github_cli",
+            identifier="owner/repo",
+            resolved_url="https://github.com/owner/repo",
+        )
         with patch("xiaomei_brain.cli.skill._skills_dir", return_value=os.path.join(tmp_agent_dir, "skills")):
             with patch("xiaomei_brain.cli.skill._brain_db_path", return_value=os.path.join(tmp_agent_dir, "brain.db")):
-                with patch.object(GitHubSourceAdapter, "_download_directory", return_value={}):
+                with patch(
+                    "xiaomei_brain.skills.sources.marketplace._fetch_with_skills_cli",
+                    return_value=bundle,
+                ):
                     with patch.object(
                         __import__("xiaomei_brain.skills.storage", fromlist=["SkillStorage"]).SkillStorage,
                         "_get_lance_table", return_value=None,
@@ -521,8 +673,12 @@ class TestCmdInstall:
 
         with patch("xiaomei_brain.cli.skill._skills_dir", return_value=os.path.join(tmp_agent_dir, "skills")):
             with patch("xiaomei_brain.cli.skill._brain_db_path", return_value=os.path.join(tmp_agent_dir, "brain.db")):
-                with pytest.raises(SystemExit):
-                    _cmd_install("owner/nonexistent", "testbot", None)
+                with patch(
+                    "xiaomei_brain.skills.sources.marketplace._fetch_with_skills_cli",
+                    side_effect=FileNotFoundError("SKILL.md 未找到"),
+                ):
+                    with pytest.raises(SystemExit):
+                        _cmd_install("owner/nonexistent", "testbot", None)
 
 
 # ── CLI List & Remove ──────────────────────────────────────────

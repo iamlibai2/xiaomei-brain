@@ -539,16 +539,12 @@ class ConsciousLiving(Living):
         boot_line("关系引擎", "OK", str(rel_summary))
 
         # ── 学习子系统 ──────────────────────────────────────
-        from ..learn import LearningQueue, KnowledgeStorage, MetaSkillPuller, LearningEngine
+        from ..learn import LearningQueue, KnowledgeStorage, LearningEngine
         ltm = getattr(agent_instance, "longterm_memory", None)
         agent_id = getattr(agent_instance, "id", "") if agent_instance else self._agent_id
         self._learn_queue = LearningQueue(si, storage=queue_storage)
         self._learn_storage = KnowledgeStorage(agent_id, ltm, queue=self._learn_queue)
-        self._learn_meta_skill = MetaSkillPuller(self._learn_storage)
-        self._learn_meta_skill._agent = agent_instance
-        self._learn_meta_skill._consciousness = self.consciousness
-        self._learn_meta_skill._send_proactive = self._send_proactive if hasattr(self, '_send_proactive') else None
-        self._learn_engine = LearningEngine(self, self._learn_queue, self._learn_storage, self._learn_meta_skill)
+        self._learn_engine = LearningEngine(self, self._learn_queue, self._learn_storage)
 
         # InnerVoice → SelfImage 连接
         if self._inner_voice:

@@ -20,7 +20,6 @@ __all__ = [
     "GREETING_PROMPT",
     "TALK_PROMPT",
     "CARE_PROMPT",
-    "META_SKILL_PROMPT",
     "WORK_INSTRUCTIONS_PROMPT",
     # Consciousness
     "CONSCIOUSNESS_PROMPT_DEEP",

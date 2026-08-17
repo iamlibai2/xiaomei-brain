@@ -87,6 +87,77 @@ def install_authored_skill(
     )
 
 
+def install_external_skill(
+    *,
+    content: str,
+    files: dict[str, str | bytes],
+    skills_dir: Path,
+    tool_registry: Any,
+) -> AuthoredSkill:
+    """Validate and atomically install a fetched external Skill bundle.
+
+    Fetching and discovery stay outside this function.  Nothing in the bundle
+    is executed during installation; bundled scripts remain subject to the
+    normal execution backend when the Agent later chooses to use them.
+    """
+    root = skills_dir.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    staging = root / f".external-skill.staging-{uuid.uuid4().hex}"
+    staging.mkdir()
+    backup: Path | None = None
+    destination: Path | None = None
+    try:
+        (staging / "SKILL.md").write_text(str(content), encoding="utf-8")
+        for raw_name, file_content in (files or {}).items():
+            relative = Path(str(raw_name).replace("\\", "/"))
+            if (
+                not relative.parts
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or relative.as_posix() == "SKILL.md"
+            ):
+                raise ValueError(f"Skill 包含不安全的资源路径: {raw_name}")
+            target = (staging / relative).resolve()
+            try:
+                target.relative_to(staging)
+            except ValueError as exc:
+                raise ValueError(f"Skill 资源路径越过安装目录: {raw_name}") from exc
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(file_content, bytes):
+                target.write_bytes(file_content)
+            else:
+                target.write_text(str(file_content), encoding="utf-8")
+
+        metadata = _parse_skill(staging / "SKILL.md")
+        missing = [
+            name for name in metadata.requires_tools
+            if tool_registry is None or tool_registry.get(name) is None
+        ]
+        if missing:
+            raise ValueError("Skill 声明了当前 Agent 不存在的工具: " + ", ".join(missing))
+
+        destination = root / metadata.name
+        backup = root / f".{metadata.name}.backup-{uuid.uuid4().hex}"
+        if destination.exists():
+            destination.replace(backup)
+        staging.replace(destination)
+        if backup.exists():
+            shutil.rmtree(backup)
+        return AuthoredSkill(
+            name=metadata.name,
+            description=metadata.description,
+            version=metadata.version,
+            requires_tools=metadata.requires_tools,
+            install_dir=destination,
+        )
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        if backup is not None and backup.exists() and destination is not None and not destination.exists():
+            backup.replace(destination)
+        raise
+
+
 def _parse_skill(path: Path) -> AuthoredSkill:
     text = path.read_text(encoding="utf-8")
     match = _FRONTMATTER_RE.match(text)

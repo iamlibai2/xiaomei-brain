@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from xiaomei_brain.skills.authoring import install_authored_skill
+from xiaomei_brain.skills.authoring import install_authored_skill, install_external_skill
+from xiaomei_brain.skills.sources.base import SourceBundle
 from xiaomei_brain.skills.tools import create_skill_tools
 from xiaomei_brain.tools.base import Tool
 from xiaomei_brain.tools.execution_context import bind_tool_execution
@@ -82,6 +83,41 @@ def test_install_authored_skill_rejects_missing_tools(tmp_path: Path):
         )
 
 
+def test_install_external_skill_installs_resources_atomically(tmp_path: Path):
+    installed = install_external_skill(
+        content=(
+            "---\n"
+            "name: external-guide\n"
+            "description: 外部成熟作业指南\n"
+            "version: 2.0.0\n"
+            "requires_tools: [powershell]\n"
+            "---\n"
+            "先检查输入，再执行任务。\n"
+        ),
+        files={"references/checklist.md": "检查清单"},
+        skills_dir=tmp_path / "skills",
+        tool_registry=_registry(),
+    )
+
+    assert installed.name == "external-guide"
+    assert installed.version == "2.0.0"
+    assert (installed.install_dir / "references" / "checklist.md").read_text(
+        encoding="utf-8"
+    ) == "检查清单"
+
+
+def test_install_external_skill_rejects_escaping_resource_path(tmp_path: Path):
+    with pytest.raises(ValueError, match="不安全"):
+        install_external_skill(
+            content=(
+                "---\nname: unsafe-guide\ndescription: unsafe\n---\ncontent\n"
+            ),
+            files={"../outside.py": "print('bad')"},
+            skills_dir=tmp_path / "skills",
+            tool_registry=_registry(),
+        )
+
+
 def test_create_skill_hot_loads_and_binds_preparing_mission(tmp_path: Path):
     workspace = tmp_path / "workspace"
     _write_skill(workspace)
@@ -150,4 +186,78 @@ def test_create_skill_hot_loads_and_binds_preparing_mission(tmp_path: Path):
     assert agent.mission_service.calls == [
         ("mission-1", {"skill_name": "baidu-hotboard"})
     ]
+    assert agent.path_updates
+
+
+def test_learn_skill_tool_fetches_and_hot_loads(monkeypatch, tmp_path: Path):
+    skills_dir = tmp_path / "agent" / "skills"
+
+    class Loader:
+        def __init__(self):
+            self.skills_dir = skills_dir
+            self.refreshed = False
+
+        def refresh_if_changed(self):
+            self.refreshed = True
+            return True
+
+        def view_skill(self, name):
+            path = self.skills_dir / name / "SKILL.md"
+            return {"name": name} if path.is_file() else None
+
+        def resource_roots(self):
+            return [str(path.parent) for path in self.skills_dir.glob("*/SKILL.md")]
+
+    class Adapter:
+        def fetch(self, identifier):
+            return SourceBundle(
+                content=(
+                    "---\n"
+                    "name: learned-guide\n"
+                    "description: 从外部获取的方法\n"
+                    "version: 1.0.0\n"
+                    "requires_tools: [powershell]\n"
+                    "---\n"
+                    "按步骤完成当前任务。\n"
+                ),
+                source="github",
+                identifier=identifier,
+                resolved_url="https://example.test/SKILL.md",
+                files={"references/example.md": "example"},
+            )
+
+    class Agent:
+        def __init__(self):
+            self._skill_loader = Loader()
+            self.path_updates = []
+
+        def agent_dir(self):
+            return str(tmp_path / "agent")
+
+        def configure_tool_paths(self, base_dir, *, extra_read_only_roots=()):
+            self.path_updates.append((base_dir, list(extra_read_only_roots)))
+
+    monkeypatch.setattr(
+        "xiaomei_brain.skills.tools.resolve_source",
+        lambda _identifier: Adapter(),
+    )
+    agent = Agent()
+    install = next(
+        tool for tool in create_skill_tools(agent) if tool.name == "learn_skill"
+    )
+    with bind_tool_execution(
+        tool_call_id="call-install",
+        tool_name="learn_skill",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(tmp_path / "workspace"),
+        tool_registry=_registry(),
+    ):
+        result = json.loads(install.execute(source="owner/repo/learned-guide"))
+
+    assert result["success"] is True
+    assert result["skill"]["name"] == "learned-guide"
+    assert result["source"]["type"] == "github"
+    assert result["hot_loaded"] is True
+    assert agent._skill_loader.refreshed is True
     assert agent.path_updates
