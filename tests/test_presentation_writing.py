@@ -428,6 +428,12 @@ def test_write_document_rejects_stale_presentation_annotation(tmp_path):
 
 
 def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.chart import XL_LABEL_POSITION, XL_LEGEND_POSITION
+    from pptx.oxml.ns import qn
+    from pptx.oxml.xmlchemy import OxmlElement
+    from pptx.util import Pt
+
     registry = _presentation_registry()
     tool = create_write_document_tool(registry)
     workspace = tmp_path / "workspace"
@@ -448,6 +454,38 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     chart_shape.chart.has_title = True
     chart_shape.chart.chart_title.text_frame.text = "Quarterly sales"
     chart_shape.chart.has_legend = True
+    chart_shape.chart.legend.position = XL_LEGEND_POSITION.RIGHT
+    chart_shape.chart.legend.font.color.rgb = RGBColor(0x61, 0x68, 0x78)
+    chart_shape.chart.legend.font.size = Pt(9)
+    plot = chart_shape.chart.plots[0]
+    plot.gap_width = 175
+    plot.overlap = 20
+    plot.has_data_labels = True
+    plot.data_labels.show_value = True
+    plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+    plot.data_labels.font.color.rgb = RGBColor(0xF2, 0xF2, 0xF2)
+    plot.data_labels.font.size = Pt(10)
+    chart_shape.chart.category_axis.format.line.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    chart_shape.chart.category_axis.format.line.width = Pt(1)
+    chart_shape.chart.category_axis.tick_labels.font.color.rgb = RGBColor(0x8A, 0x8A, 0x8A)
+    chart_shape.chart.category_axis.tick_labels.font.size = Pt(10)
+    chart_shape.chart.value_axis.format.line.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    chart_shape.chart.value_axis.format.line.width = Pt(1)
+    chart_shape.chart.value_axis.tick_labels.font.color.rgb = RGBColor(0x8A, 0x8A, 0x8A)
+    chart_shape.chart.value_axis.tick_labels.font.size = Pt(10)
+    chart_shape.chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0x3A, 0x3A, 0x3A)
+    chart_shape.chart.value_axis.major_gridlines.format.line.width = Pt(0.5)
+    rounded = OxmlElement("c:roundedCorners")
+    rounded.set("val", "1")
+    chart_shape.chart._chartSpace.append(rounded)
+    layout = OxmlElement("c:layout")
+    manual = OxmlElement("c:manualLayout")
+    for name, value in (("x", "0.12"), ("y", "0.10"), ("w", "0.72"), ("h", "0.68")):
+        node = OxmlElement(f"c:{name}")
+        node.set("val", value)
+        manual.append(node)
+    layout.append(manual)
+    chart_shape.chart._chartSpace.find(f".//{qn('c:plotArea')}").insert(0, layout)
     deck.save(source)
 
     from xiaomei_brain.documents.presentation_project import build_presentation_project
@@ -464,6 +502,31 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     assert chart_element["fill"]["color"] == "transparent"
     assert chart_element["categories"] == ["Q1", "Q2", "Q3"]
     assert chart_element["series"][0]["values"] == [10.0, 18.0, 24.0]
+    assert chart_element["categoryAxis"]["visible"] is True
+    assert chart_element["categoryAxis"]["labelsVisible"] is True
+    assert chart_element["categoryAxis"]["line"] == {
+        "type": "solid", "color": "#888888", "width": 1.0,
+    }
+    assert chart_element["categoryAxis"]["labelStyle"]["color"] == "#8A8A8A"
+    assert chart_element["categoryAxis"]["labelStyle"]["fontSize"] == 10.0
+    assert chart_element["valueAxis"]["line"] == {
+        "type": "solid", "color": "#888888", "width": 1.0,
+    }
+    assert chart_element["valueAxis"]["majorGridline"] == {
+        "type": "solid", "color": "#3A3A3A", "width": 0.5,
+    }
+    assert chart_element["legend"]["position"] == "r"
+    assert chart_element["legend"]["style"]["color"] == "#616878"
+    assert chart_element["gapWidth"] == 175.0
+    assert chart_element["overlap"] == 20.0
+    assert chart_element["roundedCorners"] is True
+    assert chart_element["plotArea"] == {
+        "target": "outer", "x": 0.12, "y": 0.1, "w": 0.72, "h": 0.68,
+    }
+    labels = chart_element["series"][0]["dataLabels"]
+    assert labels["showValue"] is True
+    assert labels["position"] == "outEnd"
+    assert labels["style"]["color"] == "#F2F2F2"
 
     spec = workspace / "update-chart.json"
     spec.write_text(json.dumps({
@@ -519,6 +582,7 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
 def test_presentation_preview_preserves_no_fill_and_no_line(tmp_path):
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
+    from pptx.oxml.xmlchemy import OxmlElement
     from xiaomei_brain.documents.presentation_project import (
         PROJECT_GENERATOR_VERSION,
         build_presentation_project,
@@ -536,12 +600,23 @@ def test_presentation_preview_preserves_no_fill_and_no_line(tmp_path):
     text_shape.text = "把对话变成生产力"
     text_shape.fill.background()
     text_shape.line.fill.background()
+    inherited_line_shape = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Cm(2), Cm(6), Cm(20), Cm(3),
+    )
+    inherited_line_shape.text = "Theme line is not an explicit border"
+    for line in inherited_line_shape._element.spPr.findall(
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}ln"
+    ):
+        inherited_line_shape._element.spPr.remove(line)
+    inherited_line_shape._element.spPr.append(OxmlElement("a:ln"))
     deck.save(source)
 
     project_dir = tmp_path / ".presentation" / "dark-cover"
     build_presentation_project(source, project_dir)
     project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
     element = project["slides"][0]["elements"][0]
+    inherited_element = project["slides"][0]["elements"][1]
 
     assert project["generatorVersion"] == PROJECT_GENERATOR_VERSION
     assert project["slides"][0]["background"]["color"] == "#141414"
@@ -551,6 +626,61 @@ def test_presentation_preview_preserves_no_fill_and_no_line(tmp_path):
         "color": "transparent",
         "width": 0,
     }
+    assert inherited_element["line"] == {
+        "type": "none",
+        "color": "transparent",
+        "width": 0,
+    }
+
+
+def test_presentation_preview_preserves_line_width_markers_and_labels(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.chart import XL_LABEL_POSITION, XL_MARKER_STYLE
+    from pptx.util import Pt
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "styled-line.pptx"
+    data = CategoryChartData()
+    data.categories = ["Jan", "Feb", "Mar"]
+    data.add_series("Users", [1, 5, 12])
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    chart = slide.shapes.add_chart(
+        XL_CHART_TYPE.LINE_MARKERS,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        data,
+    ).chart
+    series = chart.series[0]
+    series.format.line.color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    series.format.line.width = Pt(2)
+    series.marker.style = XL_MARKER_STYLE.CIRCLE
+    series.marker.size = 8
+    series.marker.format.fill.solid()
+    series.marker.format.fill.fore_color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    chart.plots[0].has_data_labels = True
+    chart.plots[0].data_labels.show_value = True
+    chart.plots[0].data_labels.position = XL_LABEL_POSITION.ABOVE
+    chart.plots[0].data_labels.font.color.rgb = RGBColor(0xF2, 0xF2, 0xF2)
+    chart.plots[0].data_labels.font.size = Pt(10)
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "styled-line"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    chart_element = project["slides"][0]["elements"][0]
+    preview_series = chart_element["series"][0]
+
+    assert preview_series["line"] == {
+        "type": "solid", "color": "#C6F24E", "width": 2.0,
+    }
+    assert preview_series["marker"]["symbol"] == "circle"
+    assert preview_series["marker"]["size"] == 8.0
+    assert preview_series["marker"]["fill"] == {
+        "type": "solid", "color": "#C6F24E",
+    }
+    assert preview_series["dataLabels"]["showValue"] is True
+    assert preview_series["dataLabels"]["position"] == "t"
+    assert preview_series["dataLabels"]["style"]["fontSize"] == 10.0
 
 
 def test_presentation_preview_preserves_rich_text_layout_and_rotation(tmp_path):
@@ -635,3 +765,66 @@ def test_presentation_preview_preserves_table_cell_styles_and_merges(tmp_path):
     assert cells[0]["textStyle"]["fontSize"] == 18.0
     assert cells[0]["columnSpan"] == 2
     assert cells[1]["hidden"] is True
+
+
+def test_presentation_preview_preserves_group_transform_gradient_crop_and_shadow(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "visual-effects.pptx"
+    image_path = tmp_path / "pixel.png"
+    image_path.write_bytes(PNG_1PX)
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+
+    group = slide.shapes.add_group_shape()
+    grouped = group.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(1), Cm(1), Cm(4), Cm(2))
+    grouped.text = "Grouped"
+    grouped.fill.gradient()
+    grouped.fill.gradient_stops[0].color.rgb = RGBColor(0x14, 0x14, 0x14)
+    grouped.fill.gradient_stops[-1].color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    grouped._element.spPr.append(parse_xml(
+        f'<a:effectLst {nsdecls("a")}>'
+        '<a:outerShdw blurRad="50800" dist="25400" dir="5400000">'
+        '<a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr>'
+        '</a:outerShdw></a:effectLst>'
+    ))
+    group.left = Cm(3)
+    group.top = Cm(4)
+    group.width = Cm(12)
+    group.height = Cm(6)
+
+    picture = slide.shapes.add_picture(str(image_path), Cm(17), Cm(4), Cm(8), Cm(6))
+    picture.crop_left = 0.1
+    picture.crop_top = 0.2
+    picture.crop_right = 0.15
+    picture.crop_bottom = 0.05
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "visual-effects"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    elements = project["slides"][0]["elements"]
+    shape = next(item for item in elements if item["elementType"] == "shape")
+    image = next(item for item in elements if item["elementType"] == "image")
+
+    assert shape["bounds"] == [
+        round(float(group.left) / float(deck.slide_width) * 960, 3),
+        round(float(group.top) / float(deck.slide_height) * project["size"][1], 3),
+        round(float(group.width) / float(deck.slide_width) * 960, 3),
+        round(float(group.height) / float(deck.slide_height) * project["size"][1], 3),
+    ]
+    assert shape["fill"]["type"] == "gradient"
+    assert [stop["color"] for stop in shape["fill"]["stops"]] == ["#141414", "#C6F24E"]
+    assert shape["shadow"] == {
+        "blur": 4.0,
+        "color": "#00000066",
+        "offset": [0.0, 2.0],
+    }
+    assert image["fit"] == {"mode": "fill"}
+    assert image["crop"] == {
+        "left": 0.1, "top": 0.2, "right": 0.15, "bottom": 0.05,
+    }

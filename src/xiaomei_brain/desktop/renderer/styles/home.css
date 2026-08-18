@@ -1225,6 +1225,12 @@ body.is-resizing-artifact-workspace {
 
 .presentation-slide-element.image {
   display: block;
+  overflow: hidden;
+}
+
+.presentation-slide-element.image > img {
+  display: block;
+  max-width: none;
 }
 
 .presentation-slide-element.chart {
@@ -1252,6 +1258,13 @@ body.is-resizing-artifact-workspace {
   white-space: nowrap;
 }
 
+.presentation-chart-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
 .presentation-chart-plot {
   position: relative;
   display: flex;
@@ -1259,7 +1272,6 @@ body.is-resizing-artifact-workspace {
   flex: 1;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid rgba(77, 87, 104, .28);
 }
 
 .presentation-chart-plot > svg {
@@ -1330,6 +1342,28 @@ body.is-resizing-artifact-workspace {
   color: #5e6878;
   font-size: 1.15cqw;
   white-space: nowrap;
+}
+
+.presentation-chart-legend.position-t,
+.presentation-chart-legend.position-tr {
+  padding: 0 0 .5cqw;
+}
+
+.presentation-chart-legend.position-tr {
+  justify-content: flex-end;
+}
+
+.presentation-chart-main > .presentation-chart-legend {
+  max-width: 28%;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: .45cqw;
+  padding: 0 .7cqw 0 0;
+}
+
+.presentation-chart-main > .presentation-chart-legend.position-r {
+  padding: 0 0 0 .7cqw;
 }
 
 .presentation-chart-legend > span {

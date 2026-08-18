@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import mimetypes
 import shutil
 from pathlib import Path
@@ -17,8 +18,10 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 4
+PROJECT_GENERATOR_VERSION = 6
 CANVAS_WIDTH = 960.0
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 
 def presentation_project_directory(output_path: Path) -> Path:
@@ -61,6 +64,12 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
         manifest_pages.append(page_path)
         elements: list[dict[str, Any]] = []
         image_counter = [0]
+        background = _slide_background(
+            slide,
+            slide_index=slide_index,
+            media_dir=media_dir,
+            image_counter=image_counter,
+        )
         for shape in slide.shapes:
             elements.extend(_shape_elements(
                 shape,
@@ -73,7 +82,7 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
             ))
         page = {
             "pageType": "content",
-            "background": {"color": _slide_background(slide)},
+            "background": background,
             "elements": elements,
         }
         _write_json(project_dir / page_path, page)
@@ -147,6 +156,8 @@ def _shape_elements(
     scale_y: float,
     media_dir: Path,
     image_counter: list[int],
+    coordinate_transform: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.0),
+    inherited_rotation: float = 0.0,
 ) -> list[dict[str, Any]]:
     try:
         from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -156,6 +167,8 @@ def _shape_elements(
     shape_type = shape.shape_type
     if shape_type == MSO_SHAPE_TYPE.GROUP:
         nested: list[dict[str, Any]] = []
+        child_transform = _group_child_transform(shape, coordinate_transform)
+        group_rotation = inherited_rotation + _shape_rotation(shape)
         for child in shape.shapes:
             nested.extend(_shape_elements(
                 child,
@@ -165,14 +178,17 @@ def _shape_elements(
                 scale_y=scale_y,
                 media_dir=media_dir,
                 image_counter=image_counter,
+                coordinate_transform=child_transform,
+                inherited_rotation=group_rotation,
             ))
         return nested
 
+    transform_x, transform_y, offset_x, offset_y = coordinate_transform
     bounds = [
-        round(float(shape.left) * scale_x, 3),
-        round(float(shape.top) * scale_y, 3),
-        round(float(shape.width) * scale_x, 3),
-        round(float(shape.height) * scale_y, 3),
+        round((offset_x + float(shape.left) * transform_x) * scale_x, 3),
+        round((offset_y + float(shape.top) * transform_y) * scale_y, 3),
+        round(float(shape.width) * transform_x * scale_x, 3),
+        round(float(shape.height) * transform_y * scale_y, 3),
     ]
     element_id = (
         f"slide-{slide_index}-shape-id-"
@@ -189,18 +205,31 @@ def _shape_elements(
                 "elementId": element_id,
                 "elementType": "image",
                 "bounds": bounds,
-                "rotation": _shape_rotation(shape),
+                "rotation": inherited_rotation + _shape_rotation(shape),
                 "src": f"media/{filename}",
-                "fit": {"mode": "cover"},
+                "fit": {"mode": "fill"},
+                "crop": _picture_crop(shape),
+                "cropShape": _picture_crop_shape(shape),
+                "shadow": _shape_shadow(shape),
             }]
         except Exception:
             return []
 
     if getattr(shape, "has_chart", False):
-        return _chart_elements(shape, element_id, bounds)
+        return _chart_elements(
+            shape,
+            element_id,
+            bounds,
+            rotation=inherited_rotation + _shape_rotation(shape),
+        )
 
     if getattr(shape, "has_table", False):
-        return _table_elements(shape, element_id, bounds)
+        return _table_elements(
+            shape,
+            element_id,
+            bounds,
+            rotation=inherited_rotation + _shape_rotation(shape),
+        )
 
     text = ""
     if getattr(shape, "has_text_frame", False):
@@ -208,16 +237,22 @@ def _shape_elements(
     style = _text_style(shape)
     rich_text = _rich_text(shape.text_frame) if getattr(shape, "has_text_frame", False) else None
     if shape_type in {MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.FREEFORM}:
-        fill = _shape_fill(shape)
+        fill = _shape_fill(
+            shape,
+            slide_index=slide_index,
+            media_dir=media_dir,
+            image_counter=image_counter,
+        )
         line = _shape_line(shape)
         return [{
             "elementId": element_id,
             "elementType": "shape",
             "bounds": bounds,
-            "rotation": _shape_rotation(shape),
+            "rotation": inherited_rotation + _shape_rotation(shape),
             "shapeName": _shape_name(shape),
             "fill": fill,
             "line": line,
+            "shadow": _shape_shadow(shape),
             "text": text,
             "textStyle": style,
             "richText": rich_text,
@@ -227,14 +262,21 @@ def _shape_elements(
             "elementId": element_id,
             "elementType": "text",
             "bounds": bounds,
-            "rotation": _shape_rotation(shape),
+            "rotation": inherited_rotation + _shape_rotation(shape),
             "content": {"text": text, **style},
             "richText": rich_text,
+            "shadow": _shape_shadow(shape),
         }]
     return []
 
 
-def _table_elements(shape: Any, element_id: str, bounds: list[float]) -> list[dict[str, Any]]:
+def _table_elements(
+    shape: Any,
+    element_id: str,
+    bounds: list[float],
+    *,
+    rotation: float = 0.0,
+) -> list[dict[str, Any]]:
     table = shape.table
     rows = len(table.rows)
     columns = len(table.columns)
@@ -260,6 +302,7 @@ def _table_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
         "elementId": element_id,
         "elementType": "table",
         "bounds": bounds,
+        "rotation": rotation,
         "rows": rows,
         "columns": columns,
         "cellWidth": cell_width,
@@ -268,7 +311,15 @@ def _table_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
     }]
 
 
-def _chart_elements(shape: Any, element_id: str, bounds: list[float]) -> list[dict[str, Any]]:
+def _chart_elements(
+    shape: Any,
+    element_id: str,
+    bounds: list[float],
+    *,
+    rotation: float = 0.0,
+) -> list[dict[str, Any]]:
+    from pptx.oxml.ns import qn
+
     chart = shape.chart
     title = ""
     try:
@@ -290,16 +341,21 @@ def _chart_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
             values = [_chart_value(value) for value in series.values]
         except Exception:
             values = []
+        series_element = getattr(series, "_element", None)
         series_items.append({
             "name": str(series.name or f"Series {index + 1}"),
             "values": values,
             "color": _chart_series_color(series, index),
+            "line": _xml_line(series_element.find(qn("c:spPr"))) if series_element is not None else None,
+            "marker": _chart_marker(series_element),
+            "dataLabels": _chart_data_labels(series_element),
         })
     chart_type = str(chart.chart_type or "chart").split("(", 1)[0].strip().lower()
     return [{
         "elementId": element_id,
         "elementType": "chart",
         "bounds": bounds,
+        "rotation": rotation,
         "chartType": chart_type,
         "title": title,
         "titleStyle": _chart_title_style(chart),
@@ -307,7 +363,138 @@ def _chart_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
         "categories": categories,
         "series": series_items,
         "hasLegend": bool(chart.has_legend),
+        "legend": _chart_legend(chart),
+        "plotArea": _chart_plot_area(chart),
+        "gapWidth": _chart_number(chart, "gapWidth"),
+        "overlap": _chart_number(chart, "overlap"),
+        "roundedCorners": _chart_flag(chart._chartSpace.find(qn("c:roundedCorners"))),
+        "categoryAxis": _chart_axis(chart, "catAx"),
+        "valueAxis": _chart_axis(chart, "valAx"),
     }]
+
+
+def _chart_marker(series_element: Any) -> dict[str, Any] | None:
+    if series_element is None:
+        return None
+    try:
+        from pptx.oxml.ns import qn
+
+        marker = series_element.find(qn("c:marker"))
+        if marker is None:
+            return None
+        symbol = _element_value(marker.find(qn("c:symbol"))) or "none"
+        if symbol == "none":
+            return {"symbol": "none", "size": 0}
+        size = _element_value(marker.find(qn("c:size")))
+        properties = marker.find(qn("c:spPr"))
+        fill = _xml_solid_fill(properties)
+        return {
+            "symbol": symbol,
+            "size": float(size) if size else 5.0,
+            "fill": fill,
+            "line": _xml_line(properties),
+        }
+    except Exception:
+        return None
+
+
+def _chart_data_labels(series_element: Any) -> dict[str, Any] | None:
+    if series_element is None:
+        return None
+    try:
+        from pptx.oxml.ns import qn
+
+        labels = series_element.find(qn("c:dLbls"))
+        if labels is None and series_element.getparent() is not None:
+            labels = series_element.getparent().find(qn("c:dLbls"))
+        if labels is None:
+            return None
+        return {
+            "showValue": _chart_flag(labels.find(qn("c:showVal"))),
+            "showCategory": _chart_flag(labels.find(qn("c:showCatName"))),
+            "showSeries": _chart_flag(labels.find(qn("c:showSerName"))),
+            "showPercent": _chart_flag(labels.find(qn("c:showPercent"))),
+            "position": _element_value(labels.find(qn("c:dLblPos"))) or "outEnd",
+            "numberFormat": _element_value(labels.find(qn("c:numFmt")), "formatCode"),
+            "style": _chart_text_properties(labels.find(qn("c:txPr"))),
+        }
+    except Exception:
+        return None
+
+
+def _chart_legend(chart: Any) -> dict[str, Any] | None:
+    if not chart.has_legend:
+        return None
+    try:
+        from pptx.oxml.ns import qn
+
+        legend = chart._chartSpace.find(f".//{qn('c:legend')}")
+        if legend is None:
+            return None
+        return {
+            "position": _element_value(legend.find(qn("c:legendPos"))) or "r",
+            "overlay": _chart_flag(legend.find(qn("c:overlay"))),
+            "style": _chart_text_properties(legend.find(qn("c:txPr"))),
+            "layout": _chart_manual_layout(legend.find(qn("c:layout"))),
+        }
+    except Exception:
+        return None
+
+
+def _chart_plot_area(chart: Any) -> dict[str, Any] | None:
+    try:
+        from pptx.oxml.ns import qn
+
+        plot_area = chart._chartSpace.find(f".//{qn('c:plotArea')}")
+        return _chart_manual_layout(plot_area.find(qn("c:layout"))) if plot_area is not None else None
+    except Exception:
+        return None
+
+
+def _chart_manual_layout(layout: Any) -> dict[str, Any] | None:
+    if layout is None:
+        return None
+    try:
+        from pptx.oxml.ns import qn
+
+        manual = layout.find(qn("c:manualLayout"))
+        if manual is None:
+            return None
+        result: dict[str, Any] = {
+            "target": _element_value(manual.find(qn("c:layoutTarget"))) or "outer",
+        }
+        for name in ("x", "y", "w", "h"):
+            value = _element_value(manual.find(qn(f"c:{name}")))
+            if value is not None:
+                result[name] = float(value)
+        return result if len(result) > 1 else None
+    except Exception:
+        return None
+
+
+def _chart_number(chart: Any, element_name: str) -> float | None:
+    try:
+        from pptx.oxml.ns import qn
+
+        value = _element_value(chart._chartSpace.find(f".//{qn(f'c:{element_name}')}"))
+        return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _chart_flag(element: Any) -> bool:
+    if element is None:
+        return False
+    return str(element.get("val", "1")).lower() not in {"0", "false", "off"}
+
+
+def _xml_solid_fill(properties: Any) -> dict[str, Any]:
+    if properties is None:
+        return {"type": "none", "color": "transparent"}
+    solid = properties.find(f"{{{A_NS}}}solidFill")
+    if solid is None:
+        return {"type": "none", "color": "transparent"}
+    return {"type": "solid", "color": _xml_color(solid) or "transparent"}
 
 
 def _chart_fill(chart: Any) -> dict[str, Any]:
@@ -335,6 +522,122 @@ def _chart_title_style(chart: Any) -> dict[str, Any]:
     except Exception:
         pass
     return {"fontSize": 18, "color": "#253047", "bold": False, "align": "center"}
+
+
+def _chart_axis(chart: Any, axis_name: str) -> dict[str, Any]:
+    """Extract native axis visibility, labels, line and major gridline style."""
+    try:
+        from pptx.oxml.ns import qn
+
+        axis = chart._chartSpace.find(f".//{qn(f'c:{axis_name}')}")
+        if axis is None:
+            return {"visible": False}
+        deleted = axis.find(qn("c:delete"))
+        label_position = axis.find(qn("c:tickLblPos"))
+        visible = not (deleted is not None and deleted.get("val") == "1")
+        scaling = axis.find(qn("c:scaling"))
+        result: dict[str, Any] = {
+            "visible": visible,
+            "labelsVisible": not (
+                label_position is not None and label_position.get("val") == "none"
+            ),
+            "position": _element_value(axis.find(qn("c:axPos"))),
+            "line": _xml_line(axis.find(qn("c:spPr"))),
+            "labelStyle": _chart_text_properties(axis.find(qn("c:txPr"))),
+            "numberFormat": _element_value(axis.find(qn("c:numFmt")), "formatCode"),
+        }
+        if scaling is not None:
+            for source_name, target_name in (("min", "minimum"), ("max", "maximum")):
+                value = _element_value(scaling.find(qn(f"c:{source_name}")))
+                if value not in (None, ""):
+                    try:
+                        result[target_name] = float(value)
+                    except ValueError:
+                        pass
+        major_unit = _element_value(axis.find(qn("c:majorUnit")))
+        if major_unit not in (None, ""):
+            try:
+                result["majorUnit"] = float(major_unit)
+            except ValueError:
+                pass
+        gridlines = axis.find(qn("c:majorGridlines"))
+        result["majorGridline"] = (
+            _xml_line(gridlines.find(qn("c:spPr")))
+            if gridlines is not None
+            else {"type": "none", "color": "transparent", "width": 0}
+        )
+        return result
+    except Exception:
+        return {"visible": False}
+
+
+def _element_value(element: Any, attribute: str = "val") -> str | None:
+    if element is None:
+        return None
+    value = element.get(attribute)
+    return str(value) if value is not None else None
+
+
+def _chart_text_properties(text_properties: Any) -> dict[str, Any]:
+    style: dict[str, Any] = {
+        "fontSize": 10,
+        "color": "#697386",
+        "bold": False,
+        "fontFamily": "Arial",
+    }
+    if text_properties is None:
+        return style
+    try:
+        run_properties = text_properties.find(f".//{{{A_NS}}}defRPr")
+        if run_properties is None:
+            run_properties = text_properties.find(f".//{{{A_NS}}}rPr")
+        if run_properties is None:
+            return style
+        size = run_properties.get("sz")
+        if size:
+            style["fontSize"] = round(float(size) / 100, 2)
+        if run_properties.get("b") is not None:
+            style["bold"] = run_properties.get("b") in {"1", "true"}
+        color = _xml_color(run_properties)
+        if color:
+            style["color"] = color
+        for tag in ("ea", "latin", "cs"):
+            font = run_properties.find(f"{{{A_NS}}}{tag}")
+            if font is not None and font.get("typeface"):
+                style["fontFamily"] = str(font.get("typeface"))
+                break
+    except Exception:
+        pass
+    return style
+
+
+def _xml_line(properties: Any) -> dict[str, Any]:
+    if properties is None:
+        return {"type": "none", "color": "transparent", "width": 0}
+    try:
+        line = properties.find(f"{{{A_NS}}}ln")
+        if line is None or line.find(f"{{{A_NS}}}noFill") is not None:
+            return {"type": "none", "color": "transparent", "width": 0}
+        explicit_fill = next(
+            (
+                line.find(f"{{{A_NS}}}{fill_name}")
+                for fill_name in ("solidFill", "gradFill", "pattFill", "blipFill")
+                if line.find(f"{{{A_NS}}}{fill_name}") is not None
+            ),
+            None,
+        )
+        if explicit_fill is None:
+            return {"type": "none", "color": "transparent", "width": 0}
+        color = _xml_color(explicit_fill)
+        if not color:
+            return {"type": "unknown", "color": "transparent", "width": 0}
+        width = round(float(line.get("w") or 12700) / 12700, 2)
+        dash = line.find(f"{{{A_NS}}}prstDash")
+        dash_value = str(dash.get("val")) if dash is not None and dash.get("val") else "solid"
+        line_type = "dash" if "dash" in dash_value else "dot" if "dot" in dash_value else "solid"
+        return {"type": line_type, "color": color, "width": width}
+    except Exception:
+        return {"type": "none", "color": "transparent", "width": 0}
 
 
 def _chart_value(value: Any) -> float | str | None:
@@ -551,8 +854,26 @@ def _font_color(font: Any) -> str:
         return ""
 
 
-def _shape_fill(shape: Any) -> dict[str, Any]:
+def _shape_fill(
+    shape: Any,
+    *,
+    slide_index: int,
+    media_dir: Path,
+    image_counter: list[int],
+) -> dict[str, Any]:
     """Return the real fill without inventing a white background."""
+    try:
+        parsed = _xml_fill(
+            shape._element.spPr,
+            part=shape.part,
+            slide_index=slide_index,
+            media_dir=media_dir,
+            image_counter=image_counter,
+        )
+        if parsed is not None:
+            return parsed
+    except Exception:
+        pass
     return _fill_format(shape.fill)
 
 
@@ -572,6 +893,12 @@ def _fill_format(fill: Any) -> dict[str, Any]:
 def _shape_line(shape: Any) -> dict[str, Any]:
     """Return only an explicitly visible line; never synthesize a border."""
     try:
+        properties = shape._element.spPr
+        if properties.find(f"{{{A_NS}}}ln") is not None:
+            return _xml_line(properties)
+    except Exception:
+        pass
+    try:
         fill_type = shape.line.fill.type
         if fill_type is None or "background" in str(fill_type).lower():
             return {"type": "none", "color": "transparent", "width": 0}
@@ -589,12 +916,204 @@ def _shape_line(shape: Any) -> dict[str, Any]:
     return {"type": "unknown", "color": "transparent", "width": 0}
 
 
-def _slide_background(slide: Any) -> str:
+def _slide_background(
+    slide: Any,
+    *,
+    slide_index: int,
+    media_dir: Path,
+    image_counter: list[int],
+) -> dict[str, Any]:
+    try:
+        from pptx.oxml.ns import qn
+
+        background = slide._element.cSld.find(qn("p:bg"))
+        properties = background.find(qn("p:bgPr")) if background is not None else None
+        parsed = _xml_fill(
+            properties,
+            part=slide.part,
+            slide_index=slide_index,
+            media_dir=media_dir,
+            image_counter=image_counter,
+        )
+        if parsed is not None:
+            return parsed
+    except Exception:
+        pass
     try:
         rgb = slide.background.fill.fore_color.rgb
-        return f"#{rgb}" if rgb is not None else "#FFFFFF"
+        return {"type": "solid", "color": f"#{rgb}" if rgb is not None else "#FFFFFF"}
     except Exception:
-        return "#FFFFFF"
+        return {"type": "solid", "color": "#FFFFFF"}
+
+
+def _xml_fill(
+    properties: Any,
+    *,
+    part: Any,
+    slide_index: int,
+    media_dir: Path,
+    image_counter: list[int],
+) -> dict[str, Any] | None:
+    if properties is None:
+        return None
+    if properties.find(f"{{{A_NS}}}noFill") is not None:
+        return {"type": "none", "color": "transparent"}
+    solid = properties.find(f"{{{A_NS}}}solidFill")
+    if solid is not None:
+        return {"type": "solid", "color": _xml_color(solid) or "transparent"}
+    gradient = properties.find(f"{{{A_NS}}}gradFill")
+    if gradient is not None:
+        stops = []
+        for stop in gradient.findall(f".//{{{A_NS}}}gs"):
+            color = _xml_color(stop)
+            if not color:
+                continue
+            stops.append({
+                "position": round(float(stop.get("pos") or 0) / 100000, 4),
+                "color": color,
+            })
+        if len(stops) >= 2:
+            linear = gradient.find(f"{{{A_NS}}}lin")
+            angle = round(float(linear.get("ang") or 0) / 60000, 3) if linear is not None else 0.0
+            return {
+                "type": "gradient",
+                "gradientType": "linear" if linear is not None else "radial",
+                "angle": angle,
+                "stops": stops,
+            }
+    image_fill = properties.find(f"{{{A_NS}}}blipFill")
+    if image_fill is not None:
+        blip = image_fill.find(f"{{{A_NS}}}blip")
+        relationship_id = blip.get(f"{{{R_NS}}}embed") if blip is not None else None
+        source = _write_related_media(
+            part,
+            relationship_id,
+            slide_index=slide_index,
+            media_dir=media_dir,
+            image_counter=image_counter,
+        )
+        if source:
+            return {
+                "type": "image",
+                "src": source,
+                "fit": {"mode": "cover"},
+                "crop": _xml_crop(image_fill),
+            }
+    return None
+
+
+def _write_related_media(
+    part: Any,
+    relationship_id: str | None,
+    *,
+    slide_index: int,
+    media_dir: Path,
+    image_counter: list[int],
+) -> str:
+    if not relationship_id:
+        return ""
+    try:
+        related = part.related_part(relationship_id)
+        extension = Path(str(related.partname)).suffix or mimetypes.guess_extension(related.content_type) or ".png"
+        image_counter[0] += 1
+        filename = f"slide-{slide_index:03d}-{image_counter[0]:03d}{extension.lower()}"
+        (media_dir / filename).write_bytes(related.blob)
+        return f"media/{filename}"
+    except Exception:
+        return ""
+
+
+def _xml_crop(image_fill: Any) -> dict[str, float]:
+    source_rect = image_fill.find(f"{{{A_NS}}}srcRect") if image_fill is not None else None
+    if source_rect is None:
+        return {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+    return {
+        name: round(float(source_rect.get(attribute) or 0) / 100000, 6)
+        for name, attribute in (("left", "l"), ("top", "t"), ("right", "r"), ("bottom", "b"))
+    }
+
+
+def _picture_crop(shape: Any) -> dict[str, float]:
+    return {
+        name: round(float(getattr(shape, f"crop_{name}", 0) or 0), 6)
+        for name in ("left", "top", "right", "bottom")
+    }
+
+
+def _picture_crop_shape(shape: Any) -> str:
+    try:
+        geometry = shape._element.spPr.find(f"{{{A_NS}}}prstGeom")
+        value = str(geometry.get("prst") or "rect") if geometry is not None else "rect"
+        if value in {"ellipse", "oval"}:
+            return "ellipse"
+        if "round" in value.lower():
+            return "roundRect"
+    except Exception:
+        pass
+    return "rect"
+
+
+def _shape_shadow(shape: Any) -> dict[str, Any] | None:
+    try:
+        shadow = shape._element.spPr.find(f".//{{{A_NS}}}outerShdw")
+        if shadow is None:
+            return None
+        blur = round(float(shadow.get("blurRad") or 0) / 12700, 2)
+        distance = float(shadow.get("dist") or 0) / 12700
+        direction = math.radians(float(shadow.get("dir") or 0) / 60000)
+        return {
+            "blur": blur,
+            "color": _xml_color(shadow) or "#00000040",
+            "offset": [
+                round(distance * math.cos(direction), 2),
+                round(distance * math.sin(direction), 2),
+            ],
+        }
+    except Exception:
+        return None
+
+
+def _xml_color(parent: Any) -> str:
+    if parent is None:
+        return ""
+    for tag in ("srgbClr", "sysClr", "schemeClr", "prstClr"):
+        node = parent.find(f".//{{{A_NS}}}{tag}")
+        if node is None:
+            continue
+        value = node.get("val") or node.get("lastClr")
+        if tag == "schemeClr" and not node.get("lastClr"):
+            value = {"dk1": "000000", "lt1": "FFFFFF"}.get(str(value), "")
+        if not value or len(str(value)) != 6:
+            continue
+        alpha = node.find(f"{{{A_NS}}}alpha")
+        if alpha is not None and alpha.get("val"):
+            opacity = max(0, min(255, round(float(alpha.get("val")) / 100000 * 255)))
+            return f"#{str(value).upper()}{opacity:02X}"
+        return f"#{str(value).upper()}"
+    return ""
+
+
+def _group_child_transform(
+    shape: Any,
+    parent: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    parent_x_scale, parent_y_scale, parent_x_offset, parent_y_offset = parent
+    try:
+        xfrm = shape._element.grpSpPr.xfrm
+        child_offset_x = float(xfrm.chOff.x)
+        child_offset_y = float(xfrm.chOff.y)
+        child_extent_x = max(1.0, float(xfrm.chExt.cx))
+        child_extent_y = max(1.0, float(xfrm.chExt.cy))
+        group_x_scale = float(shape.width) / child_extent_x
+        group_y_scale = float(shape.height) / child_extent_y
+        return (
+            parent_x_scale * group_x_scale,
+            parent_y_scale * group_y_scale,
+            parent_x_offset + parent_x_scale * (float(shape.left) - child_offset_x * group_x_scale),
+            parent_y_offset + parent_y_scale * (float(shape.top) - child_offset_y * group_y_scale),
+        )
+    except Exception:
+        return parent
 
 
 def _shape_name(shape: Any) -> str:
