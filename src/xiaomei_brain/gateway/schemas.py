@@ -412,8 +412,11 @@ class ArtifactPresentationSelection(BaseModel):
     kind: Literal["presentation"] = "presentation"
     slide: int = Field(..., ge=1, le=100_000)
     element_id: str = Field(..., min_length=1, max_length=256)
-    element_type: Literal["text", "shape", "image", "table"]
+    element_type: Literal["slide", "text", "shape", "image", "table"]
     selected_text: str = Field(default="", max_length=20_000)
+    source_revision: str = Field(default="", max_length=64, pattern=r"^[a-f0-9]*$")
+    row: int | None = Field(default=None, ge=1, le=10_000)
+    column: int | None = Field(default=None, ge=1, le=10_000)
 
 
 class ChatArtifactReference(BaseModel):

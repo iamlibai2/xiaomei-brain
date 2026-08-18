@@ -1173,9 +1173,10 @@
       "presentationEmpty": "演示文稿没有可预览的页面",
       "presentationPages": "幻灯片页面",
       "presentationPage": "第 {{page}} 页",
-      "presentationSelectionLocation": "第 {{page}} 页 · {{type}}",
+      "presentationSelectionLocation": "第 {{page}} 页 · {{type}}{{cell}}",
       "editPresentationExample": "例如：把文字改得更简洁，或把颜色改为浅色",
       "presentationElement": {
+        "slide": "整页",
         "text": "文字",
         "shape": "形状",
         "image": "图片",

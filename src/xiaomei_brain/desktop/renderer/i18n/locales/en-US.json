@@ -1173,9 +1173,10 @@
       "presentationEmpty": "This presentation has no previewable slides",
       "presentationPages": "Presentation slides",
       "presentationPage": "Slide {{page}}",
-      "presentationSelectionLocation": "Slide {{page}} · {{type}}",
+      "presentationSelectionLocation": "Slide {{page}} · {{type}}{{cell}}",
       "editPresentationExample": "For example: Make the text shorter or change the color to a lighter tone",
       "presentationElement": {
+        "slide": "Whole slide",
         "text": "Text",
         "shape": "Shape",
         "image": "Image",

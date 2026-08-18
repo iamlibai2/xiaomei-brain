@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -26,6 +27,14 @@ def _target_lock(path: Path) -> threading.Lock:
     key = str(path.resolve()).casefold()
     with _TARGET_LOCKS_GUARD:
         return _TARGET_LOCKS.setdefault(key, threading.Lock())
+
+
+def _file_revision(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _workspace_asset_references(value: Any) -> set[str]:
@@ -272,6 +281,21 @@ def create_write_document_tool(
                     # Multiple revisions in one turn must build on the latest
                     # Agent-owned file, not on the immutable ingress snapshot.
                     source_path = candidate
+            annotation = attachment.get("annotation")
+            expected_revision = (
+                str(annotation.get("source_revision") or "").strip().lower()
+                if isinstance(annotation, dict)
+                and annotation.get("kind") == "presentation"
+                else ""
+            )
+            if expected_revision and _file_revision(source_path) != expected_revision:
+                return {
+                    "error": (
+                        "The presentation changed after this preview was opened. "
+                        "Refresh the preview, select the element again, and retry."
+                    ),
+                    "subtype": "stale_presentation_selection",
+                }
 
         if source_asset_id:
             try:

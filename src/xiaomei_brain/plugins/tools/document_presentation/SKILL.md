@@ -1,15 +1,76 @@
 ---
 name: presentation-documents
-description: 创建、修改和验收 PowerPoint PPTX 演示文稿
+description: 创建、修改和验收 PowerPoint PPTX 演示文稿；按分析决策、商业提案、管理汇报、学术研究、教育培训、技术工程和品牌创意等场景规划叙事与页面设计
 version: 1.0.0
 tags: [presentation, powerpoint, pptx, slides]
-requires_tools: [read_document, read_workspace_asset, write, write_document, list_workspace_assets, present_artifacts]
+requires_tools: [read, read_document, read_workspace_asset, write, write_document, list_workspace_assets, present_artifacts]
 ---
+
+## Desktop 精确批注
+
+Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。必须原样使用其中的
+`slide`、`element_id`、`row`、`column`，不要按页面顺序重新猜测元素位置：
+
+- `element_type="slide"`：使用 `update_slide` 修改整页背景、标题、正文或备注；只有用户明确要求时才使用 `move_slide` 或 `delete_slide`。
+- `element_type="text"` 或 `shape`：使用 `update_element`；只有明确删除时才使用 `delete_element`。
+- `element_type="table"` 且提供 `row`、`column`：使用 `update_table_cell`，行列号从 1 开始，可修改 `text`、`fill_color`、`text_color`、`font_size_pt`、`bold`。
+- `element_type="image"`：替换图片时使用 `replace_image`，并提供当前消息中的 `attachment_id` 或受控工作区 `workspace_path`；只改大小和位置时使用 `update_element`。
+
+始终把当前 PPT 附件的真实 ID 作为 `source_attachment_id` 传给 `write_document`。如果工具返回
+`stale_presentation_selection`，说明预览所依据的版本已变化：停止修改，要求刷新预览后重新选择；不要绕过校验。
+
+精确修改示例：
+
+```json
+{
+  "operations": [
+    {
+      "type": "update_table_cell",
+      "slide": 3,
+      "element_id": "slide-3-shape-id-12",
+      "row": 2,
+      "column": 4,
+      "text": "128 万元",
+      "fill_color": "EAF2EC"
+    },
+    {
+      "type": "replace_image",
+      "slide": 5,
+      "element_id": "slide-5-shape-id-9",
+      "attachment_id": "attachment-2"
+    }
+  ]
+}
+```
 
 # 演示文稿工作流
 
 用户要求创建或修改 PPTX 时使用本技能。先规划主题、页面结构、每页核心信息和
 所需图片，再写 JSON specification，最后调用统一的 `write_document`。
+
+## 场景规划
+
+创建新演示文稿前，先读取 `references/slides_categories.md` 的通用规则与场景路由，
+再根据受众、阅读任务和使用方式选择一个主场景，读取对应的场景文档：
+
+- 分析与决策：`references/slides_categories/analysis-decision.md`
+- 商业提案：`references/slides_categories/business-plan.md`
+- 管理汇报：`references/slides_categories/management-report.md`
+- 学术研究：`references/slides_categories/academic-research.md`
+- 教育培训：`references/slides_categories/education-training.md`
+- 技术工程：`references/slides_categories/tech-engineering.md`
+- 品牌创意：`references/slides_categories/brand-creative.md`
+
+只选择一个主场景；确有必要时可增加一个辅助场景，但主场景决定整份文稿的叙事、
+信息密度和视觉语言。用户给出的模板、品牌规范、颜色、字体和风格参考始终优先。
+
+场景文档是设计指导，不是固定工作流或页面模板。根据真实材料增删、合并和调整页面，
+不要为了满足推荐页序而编造数据、案例、结论或来源。缺少事实时标为待补充、假设或示例。
+
+默认根据场景自主设计，不自动套用固定主题。只有用户明确指定主题、模板或视觉风格时，
+才将其映射到 specification 的 `theme`、页面结构和元素样式。场景文档中超出当前
+`write_document` 能力的动画、自定义字体或复杂图形要求，应使用当前 writer 支持的
+结构近似表达，不要输出 PPTD 专属语法。
 
 ## 创建
 

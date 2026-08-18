@@ -8,6 +8,7 @@ remain easy for agents and implementation staff to inspect and revise.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import shutil
@@ -50,6 +51,7 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
     scale_x = canvas_width / slide_width
     scale_y = canvas_height / slide_height
     title = str(presentation.core_properties.title or pptx_path.stem).strip() or pptx_path.stem
+    source_revision = _source_revision(pptx_path)
 
     manifest_pages: list[str] = []
     preview_slides: list[dict[str, Any]] = []
@@ -58,11 +60,11 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
         manifest_pages.append(page_path)
         elements: list[dict[str, Any]] = []
         image_counter = [0]
-        for shape_index, shape in enumerate(slide.shapes, start=1):
+        for shape in slide.shapes:
             elements.extend(_shape_elements(
                 shape,
                 slide_index=slide_index,
-                shape_index=shape_index,
+                shape_id_path=(int(shape.shape_id),),
                 scale_x=scale_x,
                 scale_y=scale_y,
                 media_dir=media_dir,
@@ -87,6 +89,7 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
         "title": title,
         "size": [canvas_width, canvas_height],
         "pages": manifest_pages,
+        "sourceRevision": source_revision,
     }
     _write_json(project_dir / manifest_name, manifest)
     project = {
@@ -94,6 +97,7 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
         "title": title,
         "size": [canvas_width, canvas_height],
         "manifest": manifest_name,
+        "sourceRevision": source_revision,
         "slides": preview_slides,
     }
     _write_json(project_dir / "project.json", project)
@@ -102,7 +106,16 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
         "manifest": manifest_name,
         "slide_count": len(preview_slides),
         "schema": PROJECT_SCHEMA,
+        "source_revision": source_revision,
     }
+
+
+def _source_revision(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_presentation_project(project_dir: Path) -> dict[str, Any]:
@@ -127,7 +140,7 @@ def _shape_elements(
     shape: Any,
     *,
     slide_index: int,
-    shape_index: int,
+    shape_id_path: tuple[int, ...],
     scale_x: float,
     scale_y: float,
     media_dir: Path,
@@ -141,11 +154,11 @@ def _shape_elements(
     shape_type = shape.shape_type
     if shape_type == MSO_SHAPE_TYPE.GROUP:
         nested: list[dict[str, Any]] = []
-        for nested_index, child in enumerate(shape.shapes, start=1):
+        for child in shape.shapes:
             nested.extend(_shape_elements(
                 child,
                 slide_index=slide_index,
-                shape_index=shape_index * 1000 + nested_index,
+                shape_id_path=(*shape_id_path, int(child.shape_id)),
                 scale_x=scale_x,
                 scale_y=scale_y,
                 media_dir=media_dir,
@@ -159,7 +172,10 @@ def _shape_elements(
         round(float(shape.width) * scale_x, 3),
         round(float(shape.height) * scale_y, 3),
     ]
-    element_id = f"slide-{slide_index}-shape-{shape_index}"
+    element_id = (
+        f"slide-{slide_index}-shape-id-"
+        + ".".join(str(shape_id) for shape_id in shape_id_path)
+    )
 
     if shape_type == MSO_SHAPE_TYPE.PICTURE:
         try:

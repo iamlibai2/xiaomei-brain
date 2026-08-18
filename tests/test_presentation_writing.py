@@ -298,4 +298,128 @@ def test_write_document_updates_exact_presentation_element_and_rebuilds_project(
     assert (project_dir / "edited.pptd").is_file()
     project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
     assert project["slides"][0]["elements"][0]["content"]["text"] == "Updated text"
+    assert project["slides"][0]["elements"][0]["elementId"].startswith(
+        "slide-1-shape-id-"
+    )
+    assert len(project["sourceRevision"]) == 64
     assert sorted(path.name for path in (outputs / ".presentation").iterdir()) == ["edited"]
+
+
+def test_presentation_annotation_operations_update_table_cell_and_replace_image(tmp_path):
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "source.pptx"
+    replacement = tmp_path / "replacement.png"
+    replacement.write_bytes(PNG_1PX)
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    table_shape = slide.shapes.add_table(2, 2, Cm(1), Cm(1), Cm(12), Cm(4))
+    table_shape.table.cell(1, 1).text = "Old value"
+    image_shape = slide.shapes.add_picture(str(replacement), Cm(15), Cm(1), width=Cm(3))
+    deck.save(source)
+
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    preview_dir = tmp_path / ".presentation" / "source"
+    build_presentation_project(source, preview_dir)
+    project = json.loads((preview_dir / "project.json").read_text(encoding="utf-8"))
+    elements = project["slides"][0]["elements"]
+    table_id = next(item["elementId"] for item in elements if item["elementType"] == "table")
+    image_id = next(item["elementId"] for item in elements if item["elementType"] == "image")
+    assert table_id.endswith(str(table_shape.shape_id))
+    assert image_id.endswith(str(image_shape.shape_id))
+
+    spec = workspace / "precise-update.json"
+    spec.write_text(json.dumps({
+        "operations": [
+            {
+                "type": "update_table_cell",
+                "slide": 1,
+                "element_id": table_id,
+                "row": 2,
+                "column": 2,
+                "text": "New value",
+                "fill_color": "EAF2EC",
+                "bold": True,
+            },
+            {
+                "type": "replace_image",
+                "slide": 1,
+                "element_id": image_id,
+                "attachment_id": "replacement-image",
+            },
+        ],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-precise-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(
+            {"id": "source-deck", "name": "source.pptx", "kind": "document", "local_path": str(source)},
+            {"id": "replacement-image", "name": "replacement.png", "kind": "image", "local_path": str(replacement)},
+        ),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="precise-update.json",
+            output_name="precise.pptx",
+            source_attachment_id="source-deck",
+        )
+
+    assert result.get("success") is True, result
+    updated = Presentation(outputs / "precise.pptx")
+    assert updated.slides[0].shapes[0].table.cell(1, 1).text == "New value"
+    assert updated.slides[0].shapes[0].table.cell(1, 1).text_frame.paragraphs[0].runs[0].font.bold is True
+
+
+def test_write_document_rejects_stale_presentation_annotation(tmp_path):
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "source.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.shapes.add_textbox(Cm(1), Cm(1), Cm(5), Cm(2)).text = "Hello"
+    deck.save(source)
+    spec = workspace / "update.json"
+    spec.write_text(json.dumps({
+        "operations": [{"type": "update_element", "slide": 1, "element_id": "slide-1-shape-1", "text": "Changed"}],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-stale",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "source-deck",
+            "name": "source.pptx",
+            "kind": "document",
+            "local_path": str(source),
+            "annotation": {
+                "kind": "presentation",
+                "source_revision": "0" * 64,
+            },
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="update.json",
+            output_name="stale.pptx",
+            source_attachment_id="source-deck",
+        )
+
+    assert result["subtype"] == "stale_presentation_selection"
+    assert not (outputs / "stale.pptx").exists()

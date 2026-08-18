@@ -986,8 +986,11 @@ export function registerIpcHandlers(
           kind: "presentation";
           slide: number;
           elementId: string;
-          elementType: "text" | "shape" | "image" | "table";
+          elementType: "slide" | "text" | "shape" | "image" | "table";
           selectedText: string;
+          sourceRevision: string;
+          row?: number;
+          column?: number;
         });
       }>;
       invocation?: {
@@ -1040,6 +1043,9 @@ export function registerIpcHandlers(
                   element_id: reference.selection.elementId,
                   element_type: reference.selection.elementType,
                   selected_text: reference.selection.selectedText,
+                  source_revision: reference.selection.sourceRevision,
+                  row: reference.selection.row,
+                  column: reference.selection.column,
                 }
               : {
                 kind: reference.selection.kind,

@@ -368,7 +368,7 @@ def test_presentation_annotation_identifies_exact_slide_element(tmp_path, monkey
         'element_id="slide-2-shape-3" element_type="text">'
         in model_input
     )
-    assert "Use an update_element operation" in model_input
+    assert "Use update_element" in model_input
 
 
 def test_chat_schema_accepts_presentation_artifact_selection():
@@ -394,6 +394,34 @@ def test_chat_schema_accepts_presentation_artifact_selection():
     assert selection.kind == "presentation"
     assert selection.slide == 2
     assert selection.element_id == "slide-2-shape-3"
+
+
+def test_presentation_table_cell_annotation_includes_revision_and_coordinates(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            office_archive({"ppt/presentation.xml": "<presentation/>"}),
+        )],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "presentation",
+        "slide": 3,
+        "element_id": "slide-3-shape-id-12",
+        "element_type": "table",
+        "selected_text": "Old value",
+        "source_revision": "a" * 64,
+        "row": 2,
+        "column": 4,
+    }
+
+    model_input = append_text_attachments("Change the cell", prepared)
+
+    assert 'source_revision="' + "a" * 64 + '" row="2" column="4"' in model_input
+    assert "use update_table_cell" in model_input
 
 
 def test_html_artifact_annotation_identifies_exact_element(tmp_path, monkeypatch):

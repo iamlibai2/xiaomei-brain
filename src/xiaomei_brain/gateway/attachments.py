@@ -437,17 +437,48 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 element_type = html.escape(
                     str(annotation.get("element_type", "")), quote=True,
                 )
+                source_revision = html.escape(
+                    str(annotation.get("source_revision", "")), quote=True,
+                )
+                row = annotation.get("row")
+                column = annotation.get("column")
                 slide_attribute = (
                     f' slide="{int(slide)}"' if isinstance(slide, int) else ""
                 )
+                revision_attribute = (
+                    f' source_revision="{source_revision}"' if source_revision else ""
+                )
+                cell_attributes = (
+                    f' row="{int(row)}" column="{int(column)}"'
+                    if isinstance(row, int) and isinstance(column, int)
+                    else ""
+                )
+                operation_guidance = {
+                    "slide": (
+                        "Use update_slide for slide content/background, move_slide to reorder it, "
+                        "or delete_slide only when explicitly requested."
+                    ),
+                    "table": (
+                        "When row and column are present, use update_table_cell with the supplied "
+                        "1-based coordinates; otherwise use update_element for the whole table."
+                    ),
+                    "image": (
+                        "Use replace_image with the supplied slide and element_id when replacing "
+                        "the picture, or update_element for its size and position."
+                    ),
+                }.get(
+                    str(annotation.get("element_type", "")),
+                    "Use update_element with the supplied slide and element_id.",
+                )
                 annotation_context = (
                     f'\n<document_annotation kind="presentation"{slide_attribute} '
-                    f'element_id="{element_id}" element_type="{element_type}">\n'
+                    f'element_id="{element_id}" element_type="{element_type}"'
+                    f'{revision_attribute}{cell_attributes}>\n'
                     f"<selected_text>{selected_text}</selected_text>\n"
                     "Treat the user's message as an instruction for this exact presentation element. "
                     "Use write_document with this attached document as source_attachment_id. "
-                    "Use an update_element operation with the supplied slide and element_id; "
-                    "use delete_element only when the user explicitly asks to remove it. "
+                    f"{operation_guidance} "
+                    "Use delete_element only when the user explicitly asks to remove an element. "
                     "Preserve every unrelated slide and element, update the same Agent-owned artifact, "
                     "then present the same artifact again.\n"
                     "</document_annotation>"

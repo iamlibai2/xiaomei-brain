@@ -618,9 +618,18 @@ class PresentationWriter:
         slide_ids.insert(target, element)
 
     @staticmethod
-    def _shape_path(element_id: Any, slide_number: int) -> list[int]:
+    def _shape_path(element_id: Any, slide_number: int) -> tuple[str, list[int]]:
+        stable_prefix = f"slide-{slide_number}-shape-id-"
         prefix = f"slide-{slide_number}-shape-"
         value = str(element_id or "").strip()
+        if value.startswith(stable_prefix):
+            try:
+                path = [int(part) for part in value[len(stable_prefix):].split(".")]
+            except ValueError as exc:
+                raise ValueError(f"Invalid presentation element ID: {value}") from exc
+            if not path or any(shape_id < 1 for shape_id in path):
+                raise ValueError(f"Invalid presentation element ID: {value}")
+            return "shape_id", path
         if not value.startswith(prefix):
             raise ValueError(f"无效的演示元素 ID: {value}")
         encoded = value[len(prefix):]
@@ -641,19 +650,29 @@ class PresentationWriter:
             path.insert(0, number)
         if not path or any(index < 1 for index in path):
             raise ValueError(f"无效的演示元素 ID: {value}")
-        return path
+        return "position", path
 
     @classmethod
     def _resolve_shape(cls, presentation: Any, operation: dict[str, Any]) -> Any:
         slide_index = cls._slide_index(presentation, operation.get("slide"))
         slide_number = slide_index + 1
-        path = cls._shape_path(operation.get("element_id"), slide_number)
+        path_kind, path = cls._shape_path(operation.get("element_id"), slide_number)
         shapes = presentation.slides[slide_index].shapes
         shape = None
-        for depth, index in enumerate(path):
-            if index > len(shapes):
+        for depth, identifier in enumerate(path):
+            if path_kind == "position" and identifier > len(shapes):
                 raise ValueError(f"演示元素不存在: {operation.get('element_id')}")
-            shape = shapes[index - 1]
+            if path_kind == "shape_id":
+                shape = next(
+                    (candidate for candidate in shapes if int(candidate.shape_id) == identifier),
+                    None,
+                )
+                if shape is None:
+                    raise ValueError(
+                        f"Presentation element does not exist: {operation.get('element_id')}"
+                    )
+            else:
+                shape = shapes[identifier - 1]
             if depth < len(path) - 1:
                 nested = getattr(shape, "shapes", None)
                 if nested is None:
@@ -736,6 +755,83 @@ class PresentationWriter:
         parent.remove(element)
 
     @classmethod
+    def _update_table_cell(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        from pptx.util import Pt
+
+        shape = cls._resolve_shape(presentation, operation)
+        if not getattr(shape, "has_table", False):
+            raise ValueError("The selected presentation element is not a table")
+        try:
+            row = int(operation.get("row"))
+            column = int(operation.get("column"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "update_table_cell requires 1-based row and column values"
+            ) from exc
+        table = shape.table
+        if not 1 <= row <= len(table.rows) or not 1 <= column <= len(table.columns):
+            raise ValueError(f"Table cell is outside the valid range: {row},{column}")
+        cell = table.cell(row - 1, column - 1)
+        changed = 0
+        if "text" in operation:
+            cell.text = cls._text(operation["text"])
+            changed += 1
+        if "fill_color" in operation:
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = cls._color(operation["fill_color"], "fill_color")
+            changed += 1
+        style_fields = {"text_color", "font_size_pt", "bold"}
+        if style_fields.intersection(operation):
+            if "font_size_pt" in operation:
+                size = float(operation["font_size_pt"])
+                if not 6 <= size <= 144:
+                    raise ValueError("font_size_pt must be between 6 and 144")
+            runs = [run for paragraph in cell.text_frame.paragraphs for run in paragraph.runs]
+            if not runs:
+                runs = [cell.text_frame.paragraphs[0].add_run()]
+            for run in runs:
+                if "text_color" in operation:
+                    run.font.color.rgb = cls._color(operation["text_color"], "text_color")
+                if "font_size_pt" in operation:
+                    run.font.size = Pt(float(operation["font_size_pt"]))
+                if "bold" in operation:
+                    run.font.bold = bool(operation["bold"])
+            changed += len(style_fields.intersection(operation))
+        if changed == 0:
+            raise ValueError("update_table_cell did not include any editable fields")
+        return changed
+
+    @classmethod
+    def _replace_image(
+        cls,
+        presentation: Any,
+        operation: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> int:
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        shape = cls._resolve_shape(presentation, operation)
+        if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+            raise ValueError("The selected presentation element is not an image")
+        attachment_id = str(operation.get("attachment_id") or "").strip()
+        workspace_path = str(operation.get("workspace_path") or "").strip()
+        if bool(attachment_id) == bool(workspace_path):
+            raise ValueError(
+                "replace_image requires exactly one of attachment_id or workspace_path"
+            )
+        key = attachment_id or f"workspace:{workspace_path}"
+        image_path = (asset_paths or {}).get(key)
+        if image_path is None or not image_path.is_file():
+            raise ValueError(
+                f"The replacement image is unavailable: {attachment_id or workspace_path}"
+            )
+        _image_part, relationship_id = shape.part.get_or_add_image_part(str(image_path))
+        shape._element.blipFill.blip.rEmbed = relationship_id
+        for field in ("crop_left", "crop_right", "crop_top", "crop_bottom"):
+            setattr(shape, field, 0)
+        return 1
+
+    @classmethod
     def _apply_operations(
         cls,
         presentation: Any,
@@ -798,6 +894,10 @@ class PresentationWriter:
                 changed += cls._update_slide(presentation, operation, asset_paths)
             elif kind == "update_element":
                 changed += cls._update_element(presentation, operation)
+            elif kind == "update_table_cell":
+                changed += cls._update_table_cell(presentation, operation)
+            elif kind == "replace_image":
+                changed += cls._replace_image(presentation, operation, asset_paths)
             elif kind == "delete_element":
                 cls._delete_element(presentation, operation)
                 changed += 1

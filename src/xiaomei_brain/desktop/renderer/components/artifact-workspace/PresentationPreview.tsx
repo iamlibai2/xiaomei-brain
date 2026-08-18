@@ -36,6 +36,7 @@ export type PresentationProject = {
   schema: string;
   title: string;
   size: [number, number];
+  sourceRevision?: string;
   slides: PresentationSlide[];
   media?: Record<string, PresentationMedia>;
 };
@@ -50,28 +51,39 @@ function elementStyle(element: PresentationElement, project: PresentationProject
   };
 }
 
-function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, onSelectElement }: {
+function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, selectedCell, onSelectElement, onSelectSlide }: {
   project: PresentationProject;
   slide: PresentationSlide;
   thumbnail?: boolean;
   selectedElementId?: string;
-  onSelectElement?: (element: PresentationElement, anchor: HTMLElement) => void;
+  selectedCell?: string;
+  onSelectElement?: (
+    element: PresentationElement,
+    anchor: HTMLElement,
+    cell?: { row: number; column: number; text: string },
+  ) => void;
+  onSelectSlide?: (anchor: HTMLElement) => void;
 }) {
   const media = project.media || {};
   const aspect = project.size[0] / project.size[1];
   return (
     <div
-      className={`presentation-slide-canvas${thumbnail ? " thumbnail" : ""}`}
+      className={`presentation-slide-canvas${thumbnail ? " thumbnail" : ""}${selectedElementId === `slide-${slide.index}` ? " selected" : ""}`}
       style={{
         aspectRatio: `${project.size[0]} / ${project.size[1]}`,
         width: thumbnail ? "100%" : `min(100%, calc((100vh - 130px) * ${aspect}))`,
         background: slide.background?.color || "#ffffff",
       }}
+      onClick={(event) => {
+        if (!onSelectSlide || event.target !== event.currentTarget) return;
+        event.stopPropagation();
+        onSelectSlide(event.currentTarget);
+      }}
     >
       {slide.elements.map((element) => {
         const style = elementStyle(element, project);
         const selectableClass = onSelectElement ? " selectable" : "";
-        const selectedClass = selectedElementId === element.elementId ? " selected" : "";
+        const selectedClass = selectedElementId === element.elementId && !selectedCell ? " selected" : "";
         const select = (event: React.MouseEvent<HTMLElement>) => {
           if (!onSelectElement) return;
           event.stopPropagation();
@@ -107,7 +119,25 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, onS
               {Array.from({ length: rows * columns }, (_, index) => {
                 const row = Math.floor(index / columns);
                 const column = index % columns;
-                return <div key={`${row}:${column}`}>{cells.get(`${row}:${column}`) || ""}</div>;
+                const text = cells.get(`${row}:${column}`) || "";
+                const cellKey = `${row + 1}:${column + 1}`;
+                return (
+                  <div
+                    key={`${row}:${column}`}
+                    className={selectedCell === cellKey ? "selected" : ""}
+                    onClick={(event) => {
+                      if (!onSelectElement) return;
+                      event.stopPropagation();
+                      onSelectElement(
+                        element,
+                        event.currentTarget,
+                        { row: row + 1, column: column + 1, text },
+                      );
+                    }}
+                  >
+                    {text}
+                  </div>
+                );
               })}
             </div>
           );
@@ -192,8 +222,12 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
 
   if (!slides.length) return <div className="artifact-preview-state">{t("preview.presentationEmpty")}</div>;
   const active = slides[Math.min(activeIndex, slides.length - 1)];
-  const selectElement = onAnnotate ? (element: PresentationElement, anchor: HTMLElement) => {
-    const selectedText = element.elementType === "text"
+  const selectElement = onAnnotate ? (
+    element: PresentationElement,
+    anchor: HTMLElement,
+    cell?: { row: number; column: number; text: string },
+  ) => {
+    const selectedText = cell ? cell.text : element.elementType === "text"
       ? element.content?.text || ""
       : element.elementType === "shape"
         ? element.text || ""
@@ -207,6 +241,19 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
       elementId: element.elementId,
       elementType: element.elementType,
       selectedText,
+      sourceRevision: project.sourceRevision || "",
+      ...(cell ? { row: cell.row, column: cell.column } : {}),
+    });
+  } : undefined;
+  const selectSlide = onAnnotate ? (anchor: HTMLElement) => {
+    selectionAnchorRef.current = anchor;
+    setSelection({
+      kind: "presentation",
+      slide: activeIndex + 1,
+      elementId: `slide-${activeIndex + 1}`,
+      elementType: "slide",
+      selectedText: "",
+      sourceRevision: project.sourceRevision || "",
     });
   } : undefined;
   const selectionLabel = selection
@@ -244,7 +291,9 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
           project={project}
           slide={active}
           selectedElementId={selection?.elementId}
+          selectedCell={selection?.row && selection?.column ? `${selection.row}:${selection.column}` : undefined}
           onSelectElement={selectElement}
+          onSelectSlide={selectSlide}
         />
         {slides.length > 1 && (
           <div className="presentation-preview-navigation">
@@ -274,6 +323,7 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
           location={t("preview.presentationSelectionLocation", {
             page: selection.slide,
             type: t(`preview.presentationElement.${selection.elementType}`),
+            cell: selection.row && selection.column ? ` · R${selection.row}C${selection.column}` : "",
           })}
           placeholder={t("preview.editPresentationExample")}
           getAnchorRect={() => selectionAnchorRef.current?.getBoundingClientRect() || null}
