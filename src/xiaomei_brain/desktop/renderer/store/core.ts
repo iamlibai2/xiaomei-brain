@@ -3,7 +3,7 @@ import { produce } from "immer";
 import i18n from "../i18n";
 import type { AgentCreationResult, AgentEntry, AgentLifecycleAction, ChatArtifactReference, ChatAttachment, ChatInvocationSelection, LocalAgentInfo, SessionEntry } from "../types";
 import { playMessageSound } from "../message-sound";
-import { executeEmbodimentCommand } from "../embodiment/command-registry";
+import { cancelEmbodimentCommand, executeEmbodimentCommand } from "../embodiment/command-registry";
 
 // ── Persistence (manual, avoid zustand/persist rehydration during render) ──
 
@@ -3590,6 +3590,12 @@ export function initGatewayEvents(): () => void {
       })).catch((error) => {
         console.error("[embodiment] command response failed", error);
       });
+      return;
+    }
+
+    if (event === "embodiment.command.cancelled") {
+      const commandId = typeof d.command_id === "string" ? d.command_id : "";
+      if (commandId) cancelEmbodimentCommand(commandId);
       return;
     }
 

@@ -165,9 +165,15 @@ class ContextGuard:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         log_level: int | None = None,
+        cancel_check=None,
     ):
         trimmed = _trim_messages(messages, self.max_tokens)
-        return self._llm.chat(trimmed, tools=tools, log_level=log_level)
+        return self._llm.chat(
+            trimmed,
+            tools=tools,
+            log_level=log_level,
+            cancel_check=cancel_check,
+        )
 
     def set_model(self, model: str, base_url: str | None = None, api_key: str | None = None) -> None:
         self._llm.set_model(model, base_url=base_url, api_key=api_key)

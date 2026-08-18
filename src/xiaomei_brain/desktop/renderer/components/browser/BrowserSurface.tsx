@@ -100,6 +100,17 @@ export function BrowserSurface({
       </header>
       <div className="desktop-browser-meta">
         <span>{state.title || t("browserUi.title")}</span>
+        {state.transfer && (
+          <span className={`desktop-browser-transfer is-${state.transfer.status}`}>
+            <span className="desktop-browser-transfer-label">
+              {t(`browserUi.${state.transfer.direction}`)} · {state.transfer.name || t("browserUi.preparingTransfer")}
+            </span>
+            <span className="desktop-browser-transfer-track" aria-hidden="true">
+              <span style={{ width: `${state.transfer.percent}%` }} />
+            </span>
+            <span>{state.transfer.percent}%</span>
+          </span>
+        )}
         {state.error && <span className="desktop-browser-error">{state.error}</span>}
       </div>
       <div ref={viewportRef} className="desktop-browser-viewport" />

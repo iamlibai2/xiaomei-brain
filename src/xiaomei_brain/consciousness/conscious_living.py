@@ -362,6 +362,7 @@ class ConsciousLiving(Living):
                     response=payload.get("response"),
                     error=str(payload.get("error") or ""),
                     latency_ms=float(payload.get("latency_ms") or 0.0),
+                    status=str(payload.get("status") or ""),
                 )
             return None
 

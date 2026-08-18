@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Browser acceptance</title></head>
+<body>
+  <h1>通用浏览器验收页</h1>
+  <label>普通输入 <input aria-label="普通输入" id="plain-input"></label>
+  <label>受控输入 <input aria-label="受控输入" id="controlled-input"></label>
+  <div aria-label="富文本输入" id="editor" contenteditable="true"></div>
+  <button id="spa-button">切换页面状态</button>
+  <p id="spa-state">初始状态</p>
+  <button id="delay-button">加载延迟内容</button>
+  <div id="delay-target"></div>
+  <iframe title="内嵌表单" src="/browser-acceptance-frame.html"></iframe>
+  <div id="shadow-host"></div>
+  <button id="upload-button">选择文件</button>
+  <input id="file-input" type="file" hidden>
+  <p id="file-name">尚未选择文件</p>
+  <a id="download-link" href="/browser-acceptance-download.txt" download="browser-acceptance-download.txt">下载验收文件</a>
+  <script>
+    const controlled = document.querySelector('#controlled-input');
+    controlled.addEventListener('input', () => {
+      controlled.dataset.value = controlled.value;
+      requestAnimationFrame(() => { controlled.value = controlled.dataset.value || ''; });
+    });
+    document.querySelector('#spa-button').addEventListener('click', () => {
+      history.pushState({}, '', '#changed');
+      document.querySelector('#spa-state').textContent = '页面状态已切换';
+    });
+    document.querySelector('#delay-button').addEventListener('click', () => {
+      setTimeout(() => {
+        const button = document.createElement('button');
+        button.textContent = '延迟按钮已出现';
+        document.querySelector('#delay-target').append(button);
+      }, 250);
+    });
+    const shadow = document.querySelector('#shadow-host').attachShadow({mode: 'open'});
+    shadow.innerHTML = '<button aria-label="影子按钮">影子按钮</button>';
+    document.querySelector('#upload-button').addEventListener('click', () => document.querySelector('#file-input').click());
+    document.querySelector('#file-input').addEventListener('change', (event) => {
+      document.querySelector('#file-name').textContent = event.target.files?.[0]?.name || '尚未选择文件';
+    });
+  </script>
+</body>
+</html>

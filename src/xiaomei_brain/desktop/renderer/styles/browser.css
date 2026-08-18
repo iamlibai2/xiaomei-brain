@@ -93,6 +93,34 @@
   white-space: nowrap;
 }
 .desktop-browser-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.desktop-browser-transfer {
+  display: flex;
+  align-items: center;
+  flex: 0 1 420px;
+  gap: 8px;
+  color: var(--ui-color-text-secondary);
+}
+.desktop-browser-transfer-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desktop-browser-transfer-track {
+  width: 84px;
+  height: 4px;
+  flex: 0 0 84px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ui-border-default);
+}
+.desktop-browser-transfer-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ui-brand-primary);
+  transition: width 180ms ease;
+}
+.desktop-browser-transfer.is-failed { color: var(--ui-color-danger, #c64b4b); }
 .desktop-browser-error { color: var(--ui-color-danger, #c64b4b); }
 .desktop-browser-viewport { min-width: 0; min-height: 0; background: #fff; }
 

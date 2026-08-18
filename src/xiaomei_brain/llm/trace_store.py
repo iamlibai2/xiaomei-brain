@@ -123,14 +123,18 @@ class ModelTraceStore:
         response: dict[str, Any] | None = None,
         error: str = "",
         latency_ms: float = 0.0,
+        status: str = "",
     ) -> None:
         with self._lock:
             record = self.get(trace_id)
             if record is None:
                 return
+            final_status = status if status in {"completed", "failed", "cancelled"} else (
+                "failed" if error else "completed"
+            )
             record.update({
                 "updated_at": time.time(),
-                "status": "failed" if error else "completed",
+                "status": final_status,
                 "latency_ms": max(0.0, float(latency_ms or 0.0)),
                 "response": sanitize_model_payload(response) if response is not None else None,
                 "error": str(error or ""),

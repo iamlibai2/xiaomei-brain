@@ -122,6 +122,7 @@ def embodiment_control(
         session_id=context.session_id,
         command=command,
         arguments=arguments,
+        cancel_check=context.cancel_check,
     )
     if response.get("status") != "completed":
         return f"Error: {response.get('error') or 'Desktop 未能执行命令'}"

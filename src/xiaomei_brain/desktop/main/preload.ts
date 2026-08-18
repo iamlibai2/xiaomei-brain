@@ -213,6 +213,7 @@ const CHANNEL_MAP = {
   },
   desktopBrowser: {
     command:    { invoke: "desktop-browser:command" },
+    cancel:     { invoke: "desktop-browser:cancel" },
     setBounds:  { invoke: "desktop-browser:setBounds" },
     setVisible: { invoke: "desktop-browser:setVisible" },
     getState:   { invoke: "desktop-browser:getState" },

@@ -17,6 +17,22 @@ import { VideoPlayer } from "./media-player/VideoPlayer";
 import { controlMediaPlayback } from "../media-playback";
 import { BrowserSurface } from "./browser/BrowserSurface";
 
+function commandText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function commandBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
 export function MainShell() {
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [surface, setSurface] = useState<"chat" | "workspaces">("chat");
@@ -77,11 +93,11 @@ export function MainShell() {
   useEffect(() => {
     const commands = [
       "open", "navigate", "snapshot", "click", "type", "select", "press", "scroll",
-      "back", "forward", "reload", "get_state", "close",
+      "download", "upload", "wait_for", "back", "forward", "reload", "get_state", "close",
     ] as const;
     const disposers = commands.map((action) => registerEmbodimentCommand(
       `browser.${action === "get_state" ? "state.get" : action}`,
-      async ({ arguments: args, agentId }) => {
+      async ({ arguments: args, agentId, commandId, signal }) => {
         if (action === "open" || action === "navigate") {
           setRequestedBrowserUrl("");
           setAnalysisPanel(null);
@@ -94,20 +110,35 @@ export function MainShell() {
         } else if (action === "close") {
           setBrowserOpen(false);
         }
-        const response = await window.desktopBrowser.command({
+        let resolveCancelled: ((value: Record<string, unknown>) => void) | undefined;
+        const cancelled = new Promise<Record<string, unknown>>((resolve) => {
+          resolveCancelled = resolve;
+        });
+        const cancel = () => {
+          void window.desktopBrowser.cancel({ commandId });
+          resolveCancelled?.({ status: "rejected", error: "Desktop command cancelled" });
+        };
+        signal.addEventListener("abort", cancel, { once: true });
+        const response = await Promise.race([window.desktopBrowser.command({
           action,
           agentId,
+          commandId,
           url: typeof args.url === "string" ? args.url : undefined,
           ref: typeof args.ref === "string" ? args.ref : undefined,
-          text: typeof args.text === "string" ? args.text : undefined,
-          value: typeof args.value === "string" ? args.value : undefined,
-          clear: typeof args.clear === "boolean" ? args.clear : undefined,
+          text: commandText(args.text),
+          value: commandText(args.value),
+          clear: commandBoolean(args.clear),
           direction: args.direction === "up" ? "up" : args.direction === "down" ? "down" : undefined,
           amount: typeof args.amount === "number" ? args.amount : undefined,
-          interactiveOnly: typeof args.interactive_only === "boolean" ? args.interactive_only : undefined,
+          interactiveOnly: commandBoolean(args.interactive_only),
           maxElements: typeof args.max_elements === "number" ? args.max_elements : undefined,
           key: args.key === "Tab" ? "Tab" : args.key === "Escape" ? "Escape" : args.key === "Enter" ? "Enter" : undefined,
-        });
+          name: typeof args.name === "string" ? args.name : undefined,
+          mimeType: typeof args.mime_type === "string" ? args.mime_type : undefined,
+          dataBase64: typeof args.data_base64 === "string" ? args.data_base64 : undefined,
+          condition: typeof args.condition === "string" ? args.condition : undefined,
+          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+        }), cancelled]).finally(() => signal.removeEventListener("abort", cancel));
         return {
           status: response.status === "completed" ? "completed" : "failed",
           result: response.result && typeof response.result === "object"

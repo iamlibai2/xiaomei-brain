@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import threading
+import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 
 _default_command_broker: Any = None
@@ -44,6 +45,7 @@ class EmbodimentCommandBroker:
         command: str,
         arguments: dict[str, Any] | None = None,
         timeout: float = 8.0,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         route = self._router.route_for_turn(turn_id, session_id)
         if route is None or route.type != "ws":
@@ -75,8 +77,25 @@ class EmbodimentCommandBroker:
             )
             if not delivered:
                 return {"status": "failed", "error": "Desktop 命令发送失败"}
-            if not pending.event.wait(max(0.1, timeout)):
-                return {"status": "failed", "error": "Desktop 命令执行超时"}
+            deadline = time.monotonic() + max(0.1, timeout)
+            while not pending.event.is_set():
+                if cancel_check is not None and cancel_check():
+                    self._router.deliver_event(
+                        "embodiment.command.cancelled",
+                        {
+                            "command_id": command_id,
+                            "embodiment_id": embodiment_id,
+                            "command": command,
+                        },
+                        route,
+                        session_id=route.target,
+                        turn_id=turn_id,
+                    )
+                    return {"status": "cancelled", "error": "Desktop 命令已取消"}
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return {"status": "failed", "error": "Desktop 命令执行超时"}
+                pending.event.wait(min(0.05, remaining))
             return pending.response or {"status": "failed", "error": "Desktop 未返回执行结果"}
         finally:
             with self._lock:

@@ -14,8 +14,10 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
-from typing import Any, Generator
+from contextlib import contextmanager
+from typing import Any, Callable, Generator
 
 import requests
 
@@ -86,6 +88,13 @@ class LLMError(Exception):
         super().__init__(message)
         self.retryable = retryable
         self.status_code = status_code
+
+
+class LLMCancelled(LLMError):
+    """The caller intentionally cancelled an in-flight model request."""
+
+    def __init__(self) -> None:
+        super().__init__("LLM request cancelled", retryable=False)
 
 
 class FatalLLMError(BaseException):
@@ -254,6 +263,7 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         log_level: int | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> NormalizedResponse:
         """非流式对话。"""
         api_messages = self._transport.convert_messages(
@@ -277,8 +287,32 @@ class LLMClient:
         headers["Content-Type"] = "application/json"
 
         trace_id = self._begin_model_trace(payload, stream=False)
+        t0 = time.time()
         try:
-            resp = self._request_with_retry(payload, headers, log_level)
+            if cancel_check is None:
+                resp = self._request_with_retry(payload, headers, log_level)
+            else:
+                response = self._request_with_retry(
+                    payload, headers, log_level, stream=True,
+                )
+                with self._cancel_response_on_signal(response, cancel_check):
+                    try:
+                        data = response.json()
+                    except BaseException:
+                        if cancel_check():
+                            raise LLMCancelled()
+                        raise
+                if cancel_check():
+                    raise LLMCancelled()
+                self._transport.validate_raw_response(data)
+                resp = self._transport.normalize_response(
+                    data, self._model_def, self._profile,
+                )
+                self._last_call_latency_ms = (time.time() - t0) * 1000
+        except LLMCancelled:
+            self._last_call_latency_ms = (time.time() - t0) * 1000
+            self._finish_model_trace(trace_id, status="cancelled")
+            raise
         except BaseException as exc:
             self._finish_model_trace(trace_id, error=str(exc))
             raise
@@ -300,6 +334,7 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> Generator[str, None, None]:
         """流式对话 — 逐个 yield chunk。生成器结束后 _last_stream_response 可用。"""
         from xiaomei_brain.llm.transport.chat_completions import ChatCompletionsTransport
@@ -341,23 +376,36 @@ class LLMClient:
 
         try:
             content_raw = ""
-            for text, extra in self._transport.stream_iter(response, self._model_def, self._profile):
-                if text:
-                    if not (extra and extra.get("is_reasoning")):
-                        content_parts.append(text)
-                    yield text
-                if extra:
-                    if extra.get("finish_reason"):
-                        finish_reason = extra["finish_reason"]
-                    if extra.get("tool_calls"):
-                        tool_calls_raw = extra["tool_calls"]
-                    if extra.get("reasoning"):
-                        reasoning_text = extra["reasoning"]
-                    if extra.get("content_raw"):
-                        content_raw = extra["content_raw"]
-                    if extra.get("usage"):
-                        provider_usage = dict(extra["usage"])
+            with self._cancel_response_on_signal(response, cancel_check):
+                for text, extra in self._transport.stream_iter(response, self._model_def, self._profile):
+                    if cancel_check is not None and cancel_check():
+                        raise LLMCancelled()
+                    if text:
+                        if not (extra and extra.get("is_reasoning")):
+                            content_parts.append(text)
+                        yield text
+                    if extra:
+                        if extra.get("finish_reason"):
+                            finish_reason = extra["finish_reason"]
+                        if extra.get("tool_calls"):
+                            tool_calls_raw = extra["tool_calls"]
+                        if extra.get("reasoning"):
+                            reasoning_text = extra["reasoning"]
+                        if extra.get("content_raw"):
+                            content_raw = extra["content_raw"]
+                        if extra.get("usage"):
+                            provider_usage = dict(extra["usage"])
+            if cancel_check is not None and cancel_check():
+                raise LLMCancelled()
+        except LLMCancelled:
+            self._last_call_latency_ms = (time.time() - t0) * 1000
+            self._finish_model_trace(trace_id, status="cancelled")
+            raise
         except BaseException as e:
+            if cancel_check is not None and cancel_check():
+                self._last_call_latency_ms = (time.time() - t0) * 1000
+                self._finish_model_trace(trace_id, status="cancelled")
+                raise LLMCancelled() from e
             logger.warning("[LLM] Streaming failed: %s", e)
             self._finish_model_trace(trace_id, error=str(e))
             raise
@@ -405,6 +453,43 @@ class LLMClient:
                        "", success=True, stream=True)
         self._save_llm_log(payload, self._last_stream_response)
         self._finish_model_trace(trace_id, response=self._last_stream_response)
+
+    @staticmethod
+    @contextmanager
+    def _cancel_response_on_signal(
+        response: requests.Response,
+        cancel_check: Callable[[], bool] | None,
+    ):
+        """Close an established response as soon as its execution is cancelled."""
+        if cancel_check is None:
+            try:
+                yield
+            finally:
+                response.close()
+            return
+
+        stopped = threading.Event()
+
+        def watch() -> None:
+            while not stopped.wait(0.05):
+                if cancel_check():
+                    response.close()
+                    return
+
+        watcher = threading.Thread(
+            target=watch,
+            name="llm-response-cancel",
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            if cancel_check():
+                response.close()
+                raise LLMCancelled()
+            yield
+        finally:
+            stopped.set()
+            response.close()
 
     # ── Retry logic ────────────────────────────────────────
 
@@ -722,6 +807,7 @@ class LLMClient:
         *,
         response: NormalizedResponse | None = None,
         error: str = "",
+        status: str = "",
     ) -> None:
         callback = self._trace_callback or _model_trace_callback
         if not trace_id or not callable(callback):
@@ -743,6 +829,7 @@ class LLMClient:
                 "id": trace_id,
                 "response": response_data,
                 "error": error,
+                "status": status,
                 "latency_ms": self._last_call_latency_ms,
             })
         except Exception:

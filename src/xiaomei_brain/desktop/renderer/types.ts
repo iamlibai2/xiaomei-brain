@@ -1450,12 +1450,21 @@ export interface DesktopBrowserState {
   title: string;
   canGoBack: boolean;
   canGoForward: boolean;
+  transfer?: {
+    direction: "download" | "upload";
+    status: "starting" | "transferring" | "completed" | "failed";
+    name: string;
+    receivedBytes: number;
+    totalBytes: number;
+    percent: number;
+  };
   error?: string;
 }
 
 export interface DesktopBrowserCommand {
-  action: "open" | "navigate" | "snapshot" | "click" | "type" | "select" | "press" | "scroll" | "back" | "forward" | "reload" | "get_state" | "close";
+  action: "open" | "navigate" | "snapshot" | "click" | "type" | "select" | "press" | "scroll" | "download" | "upload" | "wait_for" | "back" | "forward" | "reload" | "get_state" | "close";
   agentId?: string;
+  commandId?: string;
   url?: string;
   ref?: string;
   text?: string;
@@ -1466,10 +1475,16 @@ export interface DesktopBrowserCommand {
   interactiveOnly?: boolean;
   maxElements?: number;
   key?: "Enter" | "Tab" | "Escape";
+  name?: string;
+  mimeType?: string;
+  dataBase64?: string;
+  condition?: string;
+  timeoutMs?: number;
 }
 
 export interface DesktopBrowserBridge {
   command(command: DesktopBrowserCommand): Promise<Record<string, unknown>>;
+  cancel(args: { commandId: string }): Promise<{ cancelled: boolean }>;
   setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<DesktopBrowserState>;
   setVisible(args: { visible: boolean }): Promise<DesktopBrowserState>;
   getState(): Promise<DesktopBrowserState>;

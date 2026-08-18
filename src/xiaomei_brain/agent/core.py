@@ -535,6 +535,7 @@ class Agent:
         _completion_guard_retries: dict[str, int] = {}
         _pending_artifact_outputs: dict[str, str] = {}
         _presented_outputs: set[str] = set()
+        _cancelled = False
 
         # 记录此时的 messages 长度，后续只拼接 ReAct 循环中新增的消息
         _pre_count = len(self.messages)
@@ -626,7 +627,11 @@ class Agent:
                 # 真流式：逐个 yield chunk，生成器结束后从 _last_stream_response 取结果
                 from xiaomei_brain.llm.usage import execution_trace_context
                 with execution_trace_context(current_execution_selection(self, step, tool_selection)):
-                    gen = self._call_llm(all_messages, openai_tools)
+                    gen = self._call_llm(
+                        all_messages,
+                        openai_tools,
+                        cancel_check=cancel_check,
+                    )
                     stream_chunks: list[str] = []
                     for chunk in gen:
                         stream_chunks.append(chunk)
@@ -683,6 +688,13 @@ class Agent:
                         msg["id"] = tool_msg_id
 
                     for tc in response.tool_calls:
+                        if cancel_check and cancel_check():
+                            logger.info(
+                                "[Agent] ReAct cancelled before tool execution: %s",
+                                tc.name,
+                            )
+                            _cancelled = True
+                            break
                         # Parse JSON arguments string → dict
                         try:
                             args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
@@ -866,9 +878,20 @@ class Agent:
                             tool_message["turn_id"] = self.turn_id
                         self.messages.append(tool_message)
 
+                        if cancel_check and cancel_check():
+                            logger.info(
+                                "[Agent] ReAct cancelled after tool execution: %s",
+                                tc.name,
+                            )
+                            _cancelled = True
+                            break
+
                         if tool_control.get("type") == "handoff":
                             handoff_message = str(tool_control.get("message", "")).strip()
                             break
+
+                    if _cancelled:
+                        break
 
                     if _repeated_failure_stop:
                         logger.error(
@@ -1292,6 +1315,8 @@ class Agent:
         cancel_check: Callable[[], bool] | None = None,
     ) -> str:
         """Apply the Agent approval boundary, then execute the sealed tool call."""
+        if cancel_check is not None and cancel_check():
+            return "Cancelled: tool execution was not started"
         approval: dict | None = None
         if self.on_tool_approval is not None:
             try:
@@ -1305,6 +1330,8 @@ class Agent:
             result = str(approval.get("result") or "Blocked: action was not approved")
         else:
             try:
+                if cancel_check is not None and cancel_check():
+                    return "Cancelled: tool execution was not started"
                 from xiaomei_brain.tools.execution_context import bind_tool_execution
 
                 # ToolRegistry normally returns text.  Keep this normalization
@@ -1452,7 +1479,27 @@ class Agent:
             from xiaomei_brain.llm.usage import execution_trace_context
             with execution_trace_context(current_execution_selection(self, step, tool_selection)):
                 with self._llm_usage_scope(self._internal_usage_category(label)):
-                    response = self.llm.chat(messages=all_messages, tools=openai_tools)
+                    try:
+                        response = self.llm.chat(
+                            messages=all_messages,
+                            tools=openai_tools,
+                            cancel_check=cancel_check,
+                        )
+                    except TypeError as exc:
+                        # Lightweight test doubles and third-party wrappers may
+                        # not yet expose the optional cancellation keyword.
+                        if "cancel_check" not in str(exc):
+                            raise
+                        response = self.llm.chat(
+                            messages=all_messages,
+                            tools=openai_tools,
+                        )
+                    except Exception as exc:
+                        from xiaomei_brain.llm.client import LLMCancelled
+                        if isinstance(exc, LLMCancelled):
+                            logger.info("[Agent] react_nodb LLM request cancelled (step=%d)", step)
+                            return ""
+                        raise
 
             if response.reasoning and reasoning_collector is not None:
                 reasoning_collector.append(response.reasoning)
@@ -1489,6 +1536,12 @@ class Agent:
                 })
 
                 for tc in response.tool_calls:
+                    if cancel_check and cancel_check():
+                        logger.info(
+                            "[Agent] react_nodb cancelled before tool execution: %s",
+                            tc.name,
+                        )
+                        return ""
                     # Parse JSON arguments string → dict
                     try:
                         args_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
@@ -1705,6 +1758,7 @@ class Agent:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        cancel_check: Callable[[], bool] | None = None,
     ):
         """返回真流式生成器，逐个 yield chunk。非流式 fallback 时包装为单元素生成器。
 
@@ -1716,14 +1770,30 @@ class Agent:
             with self._llm_usage_scope("conversation"):
                 try:
                     self.llm._reasoning_end_yielded = False
-                    yield from self.llm.chat_stream(messages, tools)
+                    yield from self.llm.chat_stream(
+                        messages,
+                        tools,
+                        cancel_check=cancel_check,
+                    )
                 except Exception as e:
+                    from xiaomei_brain.llm.client import LLMCancelled
+                    if isinstance(e, LLMCancelled):
+                        logger.info("[LLM] Streaming request cancelled")
+                        return
                     logger.warning(
                         "[LLM] Streaming failed, falling back: %s\n%s",
                         e,
                         traceback.format_exc(),
                     )
-                    response = self.llm.chat(messages=messages, tools=tools)
+                    try:
+                        response = self.llm.chat(
+                            messages=messages,
+                            tools=tools,
+                            cancel_check=cancel_check,
+                        )
+                    except LLMCancelled:
+                        logger.info("[LLM] Fallback request cancelled")
+                        return
                     self.llm._last_stream_response = response
                     if response.content:
                         yield response.content

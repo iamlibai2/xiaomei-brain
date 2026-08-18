@@ -1,6 +1,6 @@
 {
   "translation": {
-    "browserUi": { "title": "网页操作", "address": "网页地址", "addressPlaceholder": "输入网址", "back": "后退", "forward": "前进", "reload": "重新加载", "close": "关闭网页" },
+    "browserUi": { "title": "网页操作", "address": "网页地址", "addressPlaceholder": "输入网址", "back": "后退", "forward": "前进", "reload": "重新加载", "close": "关闭网页", "download": "下载", "upload": "上传", "preparingTransfer": "正在准备" },
     "bootstrap": {
       "title": "准备开始",
       "description": "完成一次准备，之后小美会直接恢复到上次的工作现场。",

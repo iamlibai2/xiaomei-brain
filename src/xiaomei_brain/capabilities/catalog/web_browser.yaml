@@ -12,6 +12,8 @@ examples:
   - 搜索一个主题并整理网页内容
   - 在已经登录的网站中填写表单
   - 打开网页并点击指定按钮
+  - 从网页下载文件并进行分析
+  - 把生成的文档上传到网页
 
 aliases:
   - browser
@@ -25,6 +27,7 @@ boundaries:
   - 只控制当前对话来源的 Desktop 内嵌浏览器
   - 网页登录状态按当前登录账户和 Agent 隔离
   - 不执行任意 JavaScript，不控制其他桌面软件
+  - 上传和下载仅限当前 Agent 的受控文件，单个文件不超过 10 MB
 
 components:
   - id: tool_browser_control
@@ -41,4 +44,8 @@ outcomes:
   - id: interact
     name: 操作网页
     description: 点击、输入、选择和滚动当前网页
+    components: [tool_browser_control]
+  - id: transfer
+    name: 上传和下载文件
+    description: 下载网页文件到当前 Agent Workspace，或把受控文件上传到网页
     components: [tool_browser_control]

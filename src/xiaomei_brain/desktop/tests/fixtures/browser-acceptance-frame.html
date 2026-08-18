@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Frame acceptance</title></head>
+<body>
+  <label>内嵌输入 <input aria-label="内嵌输入"></label>
+  <button id="frame-button">内嵌按钮</button>
+  <p id="frame-state">等待操作</p>
+  <script>
+    document.querySelector('#frame-button').addEventListener('click', () => {
+      document.querySelector('#frame-state').textContent = '内嵌按钮已点击';
+    });
+  </script>
+</body>
+</html>
