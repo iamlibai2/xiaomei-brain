@@ -396,6 +396,46 @@ def test_chat_schema_accepts_presentation_artifact_selection():
     assert selection.element_id == "slide-2-shape-3"
 
 
+def test_chat_schema_accepts_presentation_line_selection(tmp_path, monkeypatch):
+    parsed = ChatSendParams.model_validate({
+        "content": "改成绿色虚线，末端加箭头",
+        "client_request_id": "request-presentation-line",
+        "session_id": "session-1",
+        "artifact_references": [{
+            "artifact_id": "d" * 32,
+            "session_id": "source-session",
+            "selection": {
+                "kind": "presentation",
+                "slide": 2,
+                "element_id": "slide-2-shape-id-8",
+                "element_type": "line",
+                "selected_text": "",
+            },
+        }],
+    })
+
+    selection = parsed.artifact_references[0].selection
+    assert selection is not None
+    assert selection.kind == "presentation"
+    assert selection.element_type == "line"
+
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            office_archive({"ppt/presentation.xml": "<presentation/>"}),
+        )],
+    )
+    prepared[0]["annotation"] = selection.model_dump()
+    model_input = append_text_attachments("改成绿色虚线，末端加箭头", prepared)
+
+    assert 'element_type="line"' in model_input
+    assert "connector color, width, dash style, arrows" in model_input
+
+
 def test_presentation_table_cell_annotation_includes_revision_and_coordinates(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     prepared, _, _ = prepare_attachments(

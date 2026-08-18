@@ -470,6 +470,10 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                         "Use update_chart with the supplied slide and element_id to change its "
                         "title, categories, series, legend, or series colors. Keep it as a native chart."
                     ),
+                    "line": (
+                        "Use update_element with the supplied slide and element_id to change the "
+                        "connector color, width, dash style, arrows, transparency, or position."
+                    ),
                 }.get(
                     str(annotation.get("element_type", "")),
                     "Use update_element with the supplied slide and element_id.",

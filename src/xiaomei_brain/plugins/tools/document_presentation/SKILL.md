@@ -16,6 +16,7 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
 - `element_type="table"` 且提供 `row`、`column`：使用 `update_table_cell`，行列号从 1 开始，可修改 `text`、`fill_color`、`text_color`、`font_size_pt`、`bold`。
 - `element_type="image"`：替换图片时使用 `replace_image`，并提供当前消息中的 `attachment_id` 或受控工作区 `workspace_path`；只改大小和位置时使用 `update_element`。
 - `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致。
+- `element_type="line"`：使用 `update_element` 修改连接线。可修改 `line_color`、`line_width_pt`、`line_dash`、`start_arrow`、`end_arrow`、`line_transparency` 和位置；不要把连接线转换成图片或普通矩形。
 
 始终把当前 PPT 附件的真实 ID 作为 `source_attachment_id` 传给 `write_document`。如果工具返回
 `stale_presentation_selection`，说明预览所依据的版本已变化：停止修改，要求刷新预览后重新选择；不要绕过校验。
@@ -168,6 +169,11 @@ write_document(
 `source_attachment_id` 修改文稿。用户上传的附件会生成副本，不覆盖上传源文件；
 Agent 自己生成并交付的产物会原位更新，继续使用同一个产物 ID：
 
+`read_document` 的每页内容包含简洁的 `[元素索引]`，其中提供稳定的 `element_id`、
+元素类型、名称、文字摘要和厘米坐标。用户没有在 Desktop 选中元素时，根据页码、
+文字语义、元素类型和相对位置读取对应页面并自行判断目标；不要猜测元素序号。
+若仍有多个同样合理的候选，再向用户确认，不要新增固定关键词匹配流程。
+
 如果人物要求继续修改当前 Workspace 中以前生成的演示文稿，先用
 `list_workspace_assets` 找到 working Asset，并把其 `asset_id` 作为
 `source_asset_id` 传给 `write_document`。先用 `read_workspace_asset` 读取现有文稿，
@@ -195,6 +201,13 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
       "text": "更新后的文字",
       "text_color": "172033",
       "fill_color": "F7F9FC",
+      "line_color": "2F6B4F",
+      "line_width_pt": 2,
+      "line_dash": "dash",
+      "start_arrow": "none",
+      "end_arrow": {"type": "triangle", "width": "med", "length": "lg"},
+      "fill_transparency": 10,
+      "line_transparency": 0,
       "font_size_pt": 20,
       "bold": true
     },
@@ -216,7 +229,11 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
 当 Desktop 提供 `document_annotation kind="presentation"` 时，必须原样使用其中的
 `slide` 和 `element_id`，通过 `update_element` 精确修改该元素。支持修改 `text`、
 `text_color`、`fill_color`、`line_color`、`font_size_pt`、`bold`、`x_cm`、`y_cm`、
-`width_cm` 和 `height_cm`。只有人物明确要求删除选中元素时才使用 `delete_element`。
+`width_cm`、`height_cm`、`line_width_pt`、`line_dash`、`start_arrow`、`end_arrow`、
+`fill_transparency` 和 `line_transparency`。`line_dash` 支持 `solid`、`dash`、`dot`、
+`dash_dot`、`long_dash` 和 `long_dash_dot`；箭头支持 `none`、`triangle`、`stealth`、
+`diamond`、`oval` 和 `open`。透明度范围为 0 到 100。只有人物明确要求删除选中元素时
+才使用 `delete_element`。
 
 ## 完成标准
 

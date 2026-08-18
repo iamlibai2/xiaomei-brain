@@ -1181,7 +1181,8 @@
         "shape": "Shape",
         "image": "Image",
         "table": "Table",
-        "chart": "Chart"
+        "chart": "Chart",
+        "line": "Connector"
       },
       "document": "Document preview",
       "documentHint": "Select text and tell the Agent how to change it; the original file is not overwritten.",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -681,6 +682,137 @@ class PresentationWriter:
                 shapes = nested
         return shape
 
+    @staticmethod
+    def _line_element(shape: Any) -> Any:
+        try:
+            return shape._element.spPr.get_or_add_ln()
+        except (AttributeError, TypeError) as exc:
+            raise ValueError("选中的演示元素不支持线条样式") from exc
+
+    @staticmethod
+    def _replace_xml_child(parent: Any, tag: str, child: Any) -> None:
+        from pptx.oxml.ns import qn
+
+        existing = parent.find(qn(tag))
+        if existing is not None:
+            parent.remove(existing)
+        if child is not None:
+            parent.append(child)
+        order = {
+            "noFill": 10, "solidFill": 10, "gradFill": 10, "pattFill": 10,
+            "prstDash": 20, "custDash": 20,
+            "round": 30, "bevel": 30, "miter": 30,
+            "headEnd": 40, "tailEnd": 50, "extLst": 60,
+        }
+        children = list(parent)
+        children.sort(key=lambda item: order.get(str(item.tag).rsplit("}", 1)[-1], 35))
+        for item in children:
+            parent.remove(item)
+            parent.append(item)
+
+    @classmethod
+    def _set_line_dash(cls, shape: Any, value: Any) -> None:
+        from pptx.oxml.xmlchemy import OxmlElement
+
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        aliases = {
+            "solid": "solid",
+            "dash": "dash",
+            "dashed": "dash",
+            "dot": "dot",
+            "dotted": "dot",
+            "dash_dot": "dashDot",
+            "long_dash": "lgDash",
+            "long_dash_dot": "lgDashDot",
+        }
+        preset = aliases.get(normalized)
+        if preset is None:
+            raise ValueError(
+                "line_dash 仅支持 solid、dash、dot、dash_dot、long_dash、long_dash_dot"
+            )
+        node = OxmlElement("a:prstDash")
+        node.set("val", preset)
+        cls._replace_xml_child(cls._line_element(shape), "a:prstDash", node)
+
+    @classmethod
+    def _set_line_arrow(cls, shape: Any, tag: str, value: Any) -> None:
+        from pptx.oxml.xmlchemy import OxmlElement
+
+        values = value if isinstance(value, dict) else {"type": value}
+        arrow_type = str(values.get("type") or "none").strip().lower()
+        aliases = {"arrow": "triangle", "circle": "oval"}
+        arrow_type = aliases.get(arrow_type, arrow_type)
+        if arrow_type not in {"none", "triangle", "stealth", "diamond", "oval", "open"}:
+            raise ValueError(
+                f"{tag} 仅支持 none、triangle、stealth、diamond、oval、open"
+            )
+        width = str(values.get("width") or "med").strip().lower()
+        length = str(values.get("length") or "med").strip().lower()
+        if width not in {"sm", "med", "lg"} or length not in {"sm", "med", "lg"}:
+            raise ValueError(f"{tag} 的 width 和 length 仅支持 sm、med、lg")
+        node = OxmlElement("a:headEnd" if tag == "start_arrow" else "a:tailEnd")
+        node.set("type", arrow_type)
+        node.set("w", width)
+        node.set("len", length)
+        cls._replace_xml_child(
+            cls._line_element(shape),
+            "a:headEnd" if tag == "start_arrow" else "a:tailEnd",
+            node,
+        )
+
+    @staticmethod
+    def _transparency(value: Any, field: str) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} 必须是 0 到 100 之间的数字") from exc
+        if not 0 <= number <= 100:
+            raise ValueError(f"{field} 必须在 0 到 100 之间")
+        return number
+
+    @classmethod
+    def _set_solid_fill_transparency(
+        cls,
+        shape: Any,
+        value: Any,
+        *,
+        line: bool,
+    ) -> None:
+        from pptx.oxml.ns import qn
+        from pptx.oxml.xmlchemy import OxmlElement
+
+        transparency = cls._transparency(
+            value,
+            "line_transparency" if line else "fill_transparency",
+        )
+        properties = shape._element.spPr
+        container = cls._line_element(shape) if line else properties
+        solid = container.find(qn("a:solidFill"))
+        if solid is None and line:
+            style = shape._element.find(qn("p:style"))
+            reference = style.find(qn("a:lnRef")) if style is not None else None
+            color = next(iter(reference), None) if reference is not None else None
+            solid = OxmlElement("a:solidFill")
+            if color is not None:
+                solid.append(deepcopy(color))
+            else:
+                fallback = OxmlElement("a:schemeClr")
+                fallback.set("val", "accent1")
+                solid.append(fallback)
+            container.insert(0, solid)
+        if solid is None:
+            raise ValueError(
+                "fill_transparency 仅支持纯色填充；可在同一操作中同时提供 fill_color"
+            )
+        color = next(iter(solid), None)
+        if color is None:
+            raise ValueError("无法修改当前颜色的透明度")
+        alpha = color.find(qn("a:alpha"))
+        if alpha is None:
+            alpha = OxmlElement("a:alpha")
+            color.append(alpha)
+        alpha.set("val", str(round((100 - transparency) * 1000)))
+
     @classmethod
     def _update_element(cls, presentation: Any, operation: dict[str, Any]) -> int:
         from pptx.util import Cm, Pt
@@ -709,6 +841,29 @@ class PresentationWriter:
             changed += 1
         if "line_color" in operation:
             shape.line.color.rgb = cls._color(operation["line_color"], "line_color")
+            changed += 1
+        if "line_width_pt" in operation:
+            width = float(operation["line_width_pt"])
+            if not 0.1 <= width <= 50:
+                raise ValueError("line_width_pt 必须在 0.1 到 50 之间")
+            shape.line.width = Pt(width)
+            changed += 1
+        if "line_dash" in operation:
+            cls._set_line_dash(shape, operation["line_dash"])
+            changed += 1
+        for arrow_field in ("start_arrow", "end_arrow"):
+            if arrow_field in operation:
+                cls._set_line_arrow(shape, arrow_field, operation[arrow_field])
+                changed += 1
+        if "fill_transparency" in operation:
+            cls._set_solid_fill_transparency(
+                shape, operation["fill_transparency"], line=False,
+            )
+            changed += 1
+        if "line_transparency" in operation:
+            cls._set_solid_fill_transparency(
+                shape, operation["line_transparency"], line=True,
+            )
             changed += 1
         text_style_fields = {"text_color", "font_size_pt", "bold"}
         if text_style_fields.intersection(operation):

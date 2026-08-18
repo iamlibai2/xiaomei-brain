@@ -886,6 +886,110 @@ def test_presentation_preview_extracts_connectors_arrows_and_theme_lines(tmp_pat
     assert lines[1]["line"]["color"] != "transparent"
     assert lines[1]["line"]["width"] > 0
 
+    extracted = PresentationExtractor().extract(source)
+    index_text = extracted.sections[0].content
+    assert "[元素索引]" in index_text
+    assert f'element_id="slide-1-shape-id-{straight.shape_id}" type=line' in index_text
+    assert "position_cm=" in index_text
+    assert extracted.sections[0].metadata["element_count"] == 3
+
+
+def test_write_document_updates_connector_and_freeform_styles(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_CONNECTOR
+    from pptx.oxml.ns import qn
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "editable-shapes.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.shapes.add_textbox(Cm(1), Cm(1), Cm(8), Cm(1)).text = "Process"
+    connector = slide.shapes.add_connector(
+        MSO_CONNECTOR.ELBOW, Cm(2), Cm(4), Cm(14), Cm(8),
+    )
+    builder = slide.shapes.build_freeform(0, 0, scale=(10000, 10000))
+    builder.add_line_segments([(80, 0), (100, 80), (50, 50), (0, 80)], close=True)
+    freeform = builder.convert_to_shape(Cm(17), Cm(4))
+    freeform.fill.solid()
+    freeform.fill.fore_color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
+    deck.save(source)
+
+    preview_dir = tmp_path / ".presentation" / "editable-shapes"
+    build_presentation_project(source, preview_dir)
+    project = json.loads((preview_dir / "project.json").read_text(encoding="utf-8"))
+    elements = project["slides"][0]["elements"]
+    connector_id = next(item["elementId"] for item in elements if item["elementType"] == "line")
+    freeform_id = next(
+        item["elementId"] for item in elements
+        if item["elementType"] == "shape" and item.get("customGeometry")
+    )
+    spec = workspace / "shape-update.json"
+    spec.write_text(json.dumps({
+        "operations": [
+            {
+                "type": "update_element",
+                "slide": 1,
+                "element_id": connector_id,
+                "line_color": "2F6B4F",
+                "line_width_pt": 3,
+                "line_dash": "dash_dot",
+                "start_arrow": "diamond",
+                "end_arrow": {"type": "triangle", "width": "lg", "length": "lg"},
+                "line_transparency": 25,
+            },
+            {
+                "type": "update_element",
+                "slide": 1,
+                "element_id": freeform_id,
+                "fill_color": "C6F24E",
+                "fill_transparency": 40,
+                "line_color": "141414",
+            },
+        ],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-shape-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "source-deck",
+            "name": source.name,
+            "kind": "document",
+            "local_path": str(source),
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="shape-update.json",
+            output_name="updated-shapes.pptx",
+            source_attachment_id="source-deck",
+        )
+
+    assert result.get("success") is True, result
+    updated = Presentation(outputs / "updated-shapes.pptx")
+    updated_connector = next(
+        shape for shape in updated.slides[0].shapes if shape.shape_id == connector.shape_id
+    )
+    line = updated_connector._element.spPr.find(qn("a:ln"))
+    assert line.find(qn("a:prstDash")).get("val") == "dashDot"
+    assert line.find(qn("a:headEnd")).get("type") == "diamond"
+    assert line.find(qn("a:tailEnd")).get("type") == "triangle"
+    assert line.find(qn("a:solidFill"))[0].find(qn("a:alpha")).get("val") == "75000"
+    updated_freeform = next(
+        shape for shape in updated.slides[0].shapes if shape.shape_id == freeform.shape_id
+    )
+    fill = updated_freeform._element.spPr.find(qn("a:solidFill"))
+    assert fill[0].find(qn("a:alpha")).get("val") == "60000"
+
 
 def test_presentation_preview_extracts_freeform_geometry(tmp_path):
     from pptx.dml.color import RGBColor

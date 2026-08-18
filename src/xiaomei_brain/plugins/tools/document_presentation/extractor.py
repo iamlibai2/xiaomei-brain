@@ -6,6 +6,7 @@ import re
 from posixpath import dirname, join, normpath
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
+from typing import Any
 
 from xiaomei_brain.documents.models import DocumentExtraction, DocumentSection
 from xiaomei_brain.documents.office_xml import bounded_text, read_xml
@@ -75,15 +76,119 @@ def _notes_member(archive: ZipFile, slide_member: str) -> str | None:
     return None
 
 
+def _element_type(shape: Any) -> str:
+    try:
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        if shape.shape_type == MSO_SHAPE_TYPE.LINE:
+            return "line"
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            return "image"
+        if getattr(shape, "has_table", False):
+            return "table"
+        if getattr(shape, "has_chart", False):
+            return "chart"
+        if shape.shape_type in {MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.FREEFORM}:
+            return "shape"
+        if getattr(shape, "has_text_frame", False):
+            return "text"
+    except Exception:
+        pass
+    return "object"
+
+
+def _shape_summary(shape: Any) -> str:
+    text = ""
+    try:
+        if getattr(shape, "has_text_frame", False):
+            text = str(shape.text or "").strip()
+        elif getattr(shape, "has_table", False):
+            text = " / ".join(
+                str(cell.text or "").strip()
+                for row in shape.table.rows
+                for cell in row.cells
+                if str(cell.text or "").strip()
+            )
+        elif getattr(shape, "has_chart", False) and shape.chart.has_title:
+            text = str(shape.chart.chart_title.text_frame.text or "").strip()
+    except Exception:
+        text = ""
+    return re.sub(r"\s+", " ", text)[:240]
+
+
+def _shape_index_lines(
+    shapes: Any,
+    *,
+    slide_number: int,
+    parent_ids: tuple[int, ...] = (),
+    remaining: list[int],
+) -> list[str]:
+    try:
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+    except ImportError:
+        return []
+    lines: list[str] = []
+    for shape in shapes:
+        if remaining[0] <= 0:
+            break
+        shape_ids = (*parent_ids, int(shape.shape_id))
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            lines.extend(_shape_index_lines(
+                shape.shapes,
+                slide_number=slide_number,
+                parent_ids=shape_ids,
+                remaining=remaining,
+            ))
+            continue
+        remaining[0] -= 1
+        element_id = (
+            f"slide-{slide_number}-shape-id-"
+            + ".".join(str(value) for value in shape_ids)
+        )
+        position = tuple(
+            round(float(getattr(shape, field, 0) or 0) / 360000, 2)
+            for field in ("left", "top", "width", "height")
+        )
+        name = re.sub(r"\s+", " ", str(getattr(shape, "name", "") or "")).strip()[:120]
+        summary = _shape_summary(shape)
+        line = (
+            f'- element_id="{element_id}" type={_element_type(shape)} '
+            f'name="{name}" position_cm={position}'
+        )
+        if summary:
+            line += f' text="{summary}"'
+        lines.append(line)
+    return lines
+
+
+def _presentation_element_index(path: Path) -> dict[int, list[str]]:
+    """Return a compact, best-effort index the Agent can use for precise edits."""
+    try:
+        from pptx import Presentation
+
+        presentation = Presentation(str(path))
+    except Exception:
+        return {}
+    result: dict[int, list[str]] = {}
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        result[slide_number] = _shape_index_lines(
+            slide.shapes,
+            slide_number=slide_number,
+            remaining=[200],
+        )
+    return result
+
+
 class PresentationExtractor:
     extractor_id = "document_presentation"
-    extractor_version = "1.1.0"
+    extractor_version = "1.2.0"
     suffixes = (".pptx",)
     mime_types = (
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
 
     def extract(self, path: Path) -> DocumentExtraction:
+        element_index = _presentation_element_index(path)
         try:
             with ZipFile(path) as archive:
                 members = archive.namelist()
@@ -105,11 +210,18 @@ class PresentationExtractor:
                         note_lines = _lines(read_xml(archive, note_member))
                         if note_lines:
                             content.extend(["", "[备注]", *note_lines])
+                    indexed = element_index.get(index, [])
+                    if indexed:
+                        content.extend(["", "[元素索引]", *indexed])
                     sections.append(DocumentSection(
                         key=f"slide:{index}",
                         title=f"第 {index} 页",
                         content=bounded_text("\n".join(content) or "[没有可提取的文字]"),
-                        metadata={"slide": index},
+                        metadata={
+                            "slide": index,
+                            "element_count": len(indexed),
+                            "element_index_truncated": len(indexed) >= 200,
+                        },
                     ))
         except (BadZipFile, KeyError, ValueError) as exc:
             raise ValueError(f"无法解析演示文稿: {path.name}") from exc
@@ -117,5 +229,9 @@ class PresentationExtractor:
             extractor_id=self.extractor_id,
             extractor_version=self.extractor_version,
             sections=tuple(sections),
-            metadata={"format": "pptx", "slide_count": len(sections)},
+            metadata={
+                "format": "pptx",
+                "slide_count": len(sections),
+                "element_index": bool(element_index),
+            },
         )
