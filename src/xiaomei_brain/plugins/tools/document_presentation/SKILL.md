@@ -321,6 +321,10 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
 
 ## 完成标准
 
+- 每次调用 `write_document` 后都读取 `validation`。`issues` 中每项都提供 `page`、`element_id`、`severity`、`reason` 和 `suggestion`。
+- `delivery_ready=false` 表示存在阻断交付的确定性错误。根据问题定位修改 JSON specification，再次调用 `write_document`；不要交付未通过验收的 PPTX。
+- `severity=warning` 是重叠、字号、文字溢出、对比度或内容密度的保守提示。结合页面意图判断并尽量修正；刻意叠放等合理设计不需要机械修改。
+- 只有 `validation.delivery_ready=true` 后才调用 `present_artifacts`。系统自动产物交付也会遵守这一门禁。
 - 检查 `validation.valid`、页数、文字框数、图片数、备注页数和内容预览。
 - 每页只保留一个清晰主题，避免把长文直接堆进幻灯片。
 - JSON specification 不是最终产物。

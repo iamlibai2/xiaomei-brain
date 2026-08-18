@@ -105,6 +105,8 @@ def test_write_document_creates_themed_presentation_with_image_and_notes(tmp_pat
 
     assert result.get("success") is True, result
     assert result["validation"]["valid"] is True
+    assert result["validation"]["delivery_ready"] is True
+    assert isinstance(result["validation"]["issues"], list)
     assert result["validation"]["slide_count"] == 3
     assert result["validation"]["picture_count"] == 1
     assert result["validation"]["note_slide_count"] == 1
@@ -126,6 +128,71 @@ def test_write_document_creates_themed_presentation_with_image_and_notes(tmp_pat
     assert "• 理解真实意图" in "\n".join(
         shape.text for shape in deck.slides[1].shapes if shape.has_text_frame
     )
+
+
+def test_presentation_validation_returns_structured_quality_issues(tmp_path):
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+    from xiaomei_brain.plugins.tools.document_presentation.validator import (
+        validate_presentation_project,
+    )
+
+    source = tmp_path / "quality-issues.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    small = slide.shapes.add_textbox(Cm(1), Cm(1), Cm(6), Cm(1))
+    small.text = "难以阅读的小字"
+    small.text_frame.paragraphs[0].runs[0].font.size = Cm(0.2)
+    outside = slide.shapes.add_textbox(Cm(30), Cm(3), Cm(8), Cm(2))
+    outside.text = "超出页面"
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "quality-issues"
+    build_presentation_project(source, project_dir)
+    validation = validate_presentation_project(project_dir)
+
+    assert validation["valid"] is False
+    assert validation["delivery_ready"] is False
+    assert validation["error_count"] >= 1
+    assert validation["warning_count"] >= 1
+    codes = {issue["code"] for issue in validation["issues"]}
+    assert "out_of_bounds" in codes
+    assert "font_too_small" in codes
+    for issue in validation["issues"]:
+        assert set(("page", "element_id", "severity", "reason", "suggestion")) <= issue.keys()
+
+
+def test_presentation_validation_rejects_chart_data_length_mismatch(tmp_path):
+    from xiaomei_brain.plugins.tools.document_presentation.validator import (
+        validate_presentation_project,
+    )
+
+    project_dir = tmp_path / ".presentation" / "bad-chart"
+    project_dir.mkdir(parents=True)
+    (project_dir / "project.json").write_text(json.dumps({
+        "schema": "xiaomei.presentation.v1",
+        "size": [960, 540],
+        "slides": [{
+            "index": 2,
+            "background": {"type": "solid", "color": "#FFFFFF"},
+            "elements": [{
+                "elementId": "slide-2-shape-id-7",
+                "elementType": "chart",
+                "bounds": [80, 80, 600, 320],
+                "categories": ["Q1", "Q2", "Q3"],
+                "series": [{"name": "Sales", "values": [10, 20]}],
+            }],
+        }],
+    }), encoding="utf-8")
+
+    validation = validate_presentation_project(project_dir)
+
+    issue = next(
+        item for item in validation["issues"]
+        if item["code"] == "chart_data_length_mismatch"
+    )
+    assert issue["page"] == 2
+    assert issue["element_id"] == "slide-2-shape-id-7"
+    assert issue["severity"] == "error"
 
 
 def test_write_document_creates_native_shape_line_table_and_chart(tmp_path):
@@ -1161,3 +1228,81 @@ def test_presentation_preview_extracts_freeform_geometry(tmp_path):
     assert paths[0]["d"].startswith("M ")
     assert " L " in paths[0]["d"]
     assert paths[0]["d"].endswith("Z")
+
+
+def test_presentation_preview_extracts_native_formula_and_embedded_video(tmp_path):
+    from lxml import etree
+    from pptx.oxml.ns import qn
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "formula-and-video.pptx"
+    video_path = tmp_path / "sample.mp4"
+    audio_path = tmp_path / "sample.wav"
+    poster_path = tmp_path / "poster.png"
+    video_path.write_bytes(b"fake-mp4-for-package-test")
+    audio_path.write_bytes(b"fake-wav-for-package-test")
+    poster_path.write_bytes(PNG_1PX)
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    formula_shape = slide.shapes.add_textbox(Cm(2), Cm(1), Cm(12), Cm(3))
+    paragraph = formula_shape._element.find(".//" + qn("a:p"))
+    assert paragraph is not None
+    for child in list(paragraph):
+        paragraph.remove(child)
+    formula = etree.fromstring("""
+      <a14:m xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"
+             xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+        <m:oMath>
+          <m:f>
+            <m:num><m:r><m:t>x</m:t></m:r></m:num>
+            <m:den>
+              <m:sSup>
+                <m:e><m:r><m:t>y</m:t></m:r></m:e>
+                <m:sup><m:r><m:t>2</m:t></m:r></m:sup>
+              </m:sSup>
+            </m:den>
+          </m:f>
+        </m:oMath>
+      </a14:m>
+    """.strip().encode("utf-8"))
+    paragraph.append(formula)
+    slide.shapes.add_movie(
+        str(video_path),
+        Cm(3), Cm(6), Cm(16), Cm(9),
+        poster_frame_image=str(poster_path),
+        mime_type="video/mp4",
+    )
+    audio_shape = slide.shapes.add_movie(
+        str(audio_path),
+        Cm(21), Cm(6), Cm(10), Cm(3),
+        poster_frame_image=str(poster_path),
+        mime_type="audio/wav",
+    )
+    audio_node = audio_shape._element.find(".//" + qn("a:videoFile"))
+    assert audio_node is not None
+    audio_node.tag = qn("a:audioFile")
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "formula-and-video"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    elements = project["slides"][0]["elements"]
+    formula_element = next(item for item in elements if item["elementType"] == "formula")
+    assert "<mfrac>" in formula_element["mathMl"]
+    assert "<msup>" in formula_element["mathMl"]
+    assert formula_element["fallbackText"] == "xy2"
+    media_element = next(
+        item for item in elements
+        if item["elementType"] == "media" and item["mediaKind"] == "video"
+    )
+    assert media_element["mediaKind"] == "video"
+    assert media_element["mimeType"] == "video/mp4"
+    assert (project_dir / media_element["src"]).read_bytes() == video_path.read_bytes()
+    assert (project_dir / media_element["posterSrc"]).is_file()
+    audio_element = next(
+        item for item in elements
+        if item["elementType"] == "media" and item["mediaKind"] == "audio"
+    )
+    assert audio_element["mimeType"].startswith("audio/")
+    assert (project_dir / audio_element["src"]).read_bytes() == audio_path.read_bytes()

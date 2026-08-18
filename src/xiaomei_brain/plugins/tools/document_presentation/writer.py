@@ -12,6 +12,7 @@ from xiaomei_brain.documents.presentation_project import (
     build_presentation_project,
     presentation_project_directory,
 )
+from .validator import validate_presentation_project
 
 
 MAX_SLIDES = 200
@@ -89,6 +90,9 @@ class PresentationWriter:
             output_path,
             presentation_project_directory(output_path),
         )
+        quality = validate_presentation_project(
+            presentation_project_directory(output_path),
+        )
 
         verified = Presentation(str(output_path))
         text_count, picture_count, chart_count, note_count, characters = self._summary(verified)
@@ -100,7 +104,12 @@ class PresentationWriter:
             "writer": self.format_id,
             "writer_version": self.writer_version,
             "validation": {
-                "valid": True,
+                "valid": quality["valid"],
+                "delivery_ready": quality["delivery_ready"],
+                "issue_count": quality["issue_count"],
+                "error_count": quality["error_count"],
+                "warning_count": quality["warning_count"],
+                "issues": quality["issues"],
                 "slide_count": len(verified.slides),
                 "text_shape_count": text_count,
                 "picture_count": picture_count,

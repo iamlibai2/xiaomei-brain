@@ -130,7 +130,7 @@ export interface ArtifactPresentationSelection {
   kind: "presentation";
   slide: number;
   elementId: string;
-  elementType: "slide" | "text" | "shape" | "image" | "table" | "chart" | "line";
+  elementType: "slide" | "text" | "shape" | "image" | "table" | "chart" | "line" | "formula" | "media";
   selectedText: string;
   sourceRevision: string;
   row?: number;

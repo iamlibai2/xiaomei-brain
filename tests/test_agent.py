@@ -654,6 +654,35 @@ def test_explicit_document_presentation_prevents_auto_duplicate(
     agent.on_artifact.assert_not_called()
 
 
+def test_document_that_is_not_delivery_ready_is_not_auto_presented(
+    mock_llm,
+    registry,
+    tmp_path,
+):
+    output_path = str(tmp_path / "invalid-deck.pptx")
+    agent = Agent(llm=mock_llm, tools=registry)
+    pending = {}
+    presented = set()
+
+    agent._track_artifact_delivery(
+        "write_document",
+        json.dumps({
+            "success": True,
+            "output_path": output_path,
+            "validation": {
+                "valid": False,
+                "delivery_ready": False,
+                "issues": [{"code": "out_of_bounds"}],
+            },
+        }),
+        pending,
+        presented,
+    )
+
+    assert pending == {}
+    assert presented == set()
+
+
 def test_generated_images_are_auto_presented_when_model_omits_delivery(
     mock_llm,
     registry,

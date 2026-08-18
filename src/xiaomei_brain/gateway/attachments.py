@@ -474,6 +474,14 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                         "Use update_element with the supplied slide and element_id to change the "
                         "connector color, width, dash style, arrows, transparency, or position."
                     ),
+                    "formula": (
+                        "The selected element is a native PowerPoint formula. Preserve it as a native "
+                        "formula; do not replace it with a screenshot or flatten it into ordinary text."
+                    ),
+                    "media": (
+                        "The selected element is embedded PowerPoint media. Preserve its embedded "
+                        "audio/video relationship; update only supported placement fields."
+                    ),
                 }.get(
                     str(annotation.get("element_type", "")),
                     "Use update_element with the supplied slide and element_id.",

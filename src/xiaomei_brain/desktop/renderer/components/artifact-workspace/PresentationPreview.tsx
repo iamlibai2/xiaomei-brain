@@ -121,7 +121,7 @@ type PresentationCustomGeometry = {
 
 type PresentationElement = {
   elementId: string;
-  elementType: "text" | "shape" | "image" | "table" | "chart" | "line";
+  elementType: "text" | "shape" | "image" | "table" | "chart" | "line" | "formula" | "media";
   bounds: [number, number, number, number];
   rotation?: number;
   content?: PresentationTextStyle & { text?: string };
@@ -172,6 +172,11 @@ type PresentationElement = {
   roundedCorners?: boolean;
   categoryAxis?: PresentationChartAxis;
   valueAxis?: PresentationChartAxis;
+  mathMl?: string;
+  fallbackText?: string;
+  mediaKind?: "audio" | "video";
+  posterSrc?: string;
+  mimeType?: string;
 };
 
 type PresentationSlide = {
@@ -880,6 +885,55 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
             </div>
           );
         }
+        if (element.elementType === "formula") {
+          const formulaStyle = element.textStyle;
+          return (
+            <div
+              key={element.elementId}
+              className={`presentation-slide-element formula${selectableClass}${selectedClass}`}
+              data-element-id={element.elementId}
+              style={{
+                ...style,
+                color: formulaStyle?.color || "#253047",
+                fontFamily: formulaStyle?.fontFamily,
+                fontSize: `${(formulaStyle?.fontSize || 24) / project.size[0] * 100}cqw`,
+              }}
+              onClick={select}
+              title={element.fallbackText || undefined}
+            >
+              {element.mathMl
+                ? <div className="presentation-formula-math" dangerouslySetInnerHTML={{ __html: element.mathMl }} />
+                : <span>{element.fallbackText}</span>}
+            </div>
+          );
+        }
+        if (element.elementType === "media") {
+          const source = mediaUrl(element.src, media);
+          const poster = mediaUrl(element.posterSrc, media);
+          return (
+            <div
+              key={element.elementId}
+              className={`presentation-slide-element media ${element.mediaKind || "video"}${selectableClass}${selectedClass}`}
+              data-element-id={element.elementId}
+              style={style}
+              onClick={select}
+            >
+              {element.mediaKind === "audio" ? <>
+                {poster && <img className="presentation-media-poster" src={poster} alt="" />}
+                <audio src={source} controls={!thumbnail} preload="metadata" />
+              </> : (
+                <video
+                  src={source}
+                  poster={poster}
+                  controls={!thumbnail}
+                  preload="metadata"
+                  playsInline
+                />
+              )}
+              {!source && <span className="presentation-media-unavailable">{element.mediaKind === "audio" ? "Audio" : "Video"}</span>}
+            </div>
+          );
+        }
         if (element.elementType === "chart") {
           return (
             <div
@@ -1056,6 +1110,8 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
         ? element.text || ""
         : element.elementType === "table"
           ? (element.cells || []).map((cell) => cell.text).filter(Boolean).join(" / ")
+          : element.elementType === "formula"
+            ? element.fallbackText || ""
           : element.elementType === "chart"
             ? [
               element.title || "",

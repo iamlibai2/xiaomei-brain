@@ -1182,7 +1182,9 @@
         "image": "Image",
         "table": "Table",
         "chart": "Chart",
-        "line": "Connector"
+        "line": "Connector",
+        "formula": "Formula",
+        "media": "Media"
       },
       "document": "Document preview",
       "documentHint": "Select text and tell the Agent how to change it; the original file is not overwritten.",

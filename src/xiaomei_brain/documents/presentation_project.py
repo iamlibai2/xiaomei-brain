@@ -9,6 +9,7 @@ remain easy for agents and implementation staff to inspect and revise.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import math
 import mimetypes
@@ -18,10 +19,12 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 7
+PROJECT_GENERATOR_VERSION = 8
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
 
 def presentation_project_directory(output_path: Path) -> Path:
@@ -195,6 +198,15 @@ def _shape_elements(
         + ".".join(str(shape_id) for shape_id in shape_id_path)
     )
 
+    formula = _formula_element(
+        shape,
+        element_id,
+        bounds,
+        rotation=inherited_rotation + _shape_rotation(shape),
+    )
+    if formula is not None:
+        return [formula]
+
     if shape_type == MSO_SHAPE_TYPE.LINE:
         return [{
             "elementId": element_id,
@@ -208,6 +220,23 @@ def _shape_elements(
             "startArrow": _line_arrow(shape, "headEnd"),
             "endArrow": _line_arrow(shape, "tailEnd"),
         }]
+
+    if (
+        shape_type in {MSO_SHAPE_TYPE.MEDIA, MSO_SHAPE_TYPE.WEB_VIDEO}
+        or shape._element.find(f".//{{{A_NS}}}videoFile") is not None
+        or shape._element.find(f".//{{{A_NS}}}audioFile") is not None
+        or shape._element.find(f".//{{{P14_NS}}}media") is not None
+    ):
+        media = _media_element(
+            shape,
+            element_id,
+            bounds,
+            rotation=inherited_rotation + _shape_rotation(shape),
+            slide_index=slide_index,
+            media_dir=media_dir,
+            media_counter=image_counter,
+        )
+        return [media] if media is not None else []
 
     if shape_type == MSO_SHAPE_TYPE.PICTURE:
         try:
@@ -283,6 +312,229 @@ def _shape_elements(
             "shadow": _shape_shadow(shape),
         }]
     return []
+
+
+def _formula_element(
+    shape: Any,
+    element_id: str,
+    bounds: list[float],
+    *,
+    rotation: float = 0.0,
+) -> dict[str, Any] | None:
+    """Convert a native Office Math object into browser-native MathML."""
+    try:
+        equations = shape._element.findall(f".//{{{M_NS}}}oMath")
+    except Exception:
+        return None
+    if not equations:
+        return None
+    rendered = [_omml_to_mathml(node) for node in equations]
+    body = "<mspace linebreak=\"newline\"/>".join(value for value in rendered if value)
+    if not body:
+        return None
+    fallback = " ".join(
+        text.strip()
+        for node in equations
+        for text in ["".join(node.itertext())]
+        if text.strip()
+    )
+    style = _text_style(shape)
+    return {
+        "elementId": element_id,
+        "elementType": "formula",
+        "bounds": bounds,
+        "rotation": rotation,
+        "mathMl": f'<math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow>{body}</mrow></math>',
+        "fallbackText": fallback,
+        "textStyle": style,
+    }
+
+
+def _omml_to_mathml(node: Any) -> str:
+    """Render the common OMML structures produced by PowerPoint as MathML."""
+    name = str(getattr(node, "tag", "")).rsplit("}", 1)[-1]
+    children = list(node)
+
+    def child(local_name: str) -> Any | None:
+        return next(
+            (item for item in children if str(item.tag).rsplit("}", 1)[-1] == local_name),
+            None,
+        )
+
+    def render(local_name: str) -> str:
+        item = child(local_name)
+        return _omml_children(item) if item is not None else "<mrow/>"
+
+    if name in {"oMath", "oMathPara", "e", "num", "den", "sub", "sup", "deg", "fName"}:
+        return _omml_children(node)
+    if name == "r":
+        text = "".join(
+            str(item.text or "") for item in node.findall(f".//{{{M_NS}}}t")
+        )
+        return _math_token(text)
+    if name == "f":
+        return f"<mfrac>{render('num')}{render('den')}</mfrac>"
+    if name == "sSup":
+        return f"<msup>{render('e')}{render('sup')}</msup>"
+    if name == "sSub":
+        return f"<msub>{render('e')}{render('sub')}</msub>"
+    if name == "sSubSup":
+        return f"<msubsup>{render('e')}{render('sub')}{render('sup')}</msubsup>"
+    if name == "rad":
+        degree = render("deg")
+        base = render("e")
+        return f"<mroot>{base}{degree}</mroot>" if _omml_has_content(child("deg")) else f"<msqrt>{base}</msqrt>"
+    if name == "nary":
+        properties = child("naryPr")
+        operator = _omml_property(properties, "chr", "∫")
+        base = f"<mo>{html.escape(operator)}</mo>"
+        lower = render("sub")
+        upper = render("sup")
+        if _omml_has_content(child("sub")) or _omml_has_content(child("sup")):
+            base = f"<munderover>{base}{lower}{upper}</munderover>"
+        return f"<mrow>{base}{render('e')}</mrow>"
+    if name == "d":
+        properties = child("dPr")
+        start = _omml_property(properties, "begChr", "(")
+        end = _omml_property(properties, "endChr", ")")
+        content = "".join(
+            _omml_children(item)
+            for item in children
+            if str(item.tag).rsplit("}", 1)[-1] == "e"
+        )
+        return (
+            f'<mfenced open="{html.escape(start, quote=True)}" '
+            f'close="{html.escape(end, quote=True)}">{content}</mfenced>'
+        )
+    if name == "m":
+        rows = []
+        for row in children:
+            if str(row.tag).rsplit("}", 1)[-1] != "mr":
+                continue
+            cells = "".join(
+                f"<mtd>{_omml_children(item)}</mtd>"
+                for item in row
+                if str(item.tag).rsplit("}", 1)[-1] == "e"
+            )
+            rows.append(f"<mtr>{cells}</mtr>")
+        return f"<mtable>{''.join(rows)}</mtable>"
+    if name == "eqArr":
+        rows = "".join(
+            f"<mtr><mtd>{_omml_children(item)}</mtd></mtr>"
+            for item in children
+            if str(item.tag).rsplit("}", 1)[-1] == "e"
+        )
+        return f"<mtable>{rows}</mtable>"
+    if name in {"limLow", "limUpp"}:
+        tag = "munder" if name == "limLow" else "mover"
+        limit_name = "lim"
+        return f"<{tag}>{render('e')}{render(limit_name)}</{tag}>"
+    if name == "acc":
+        accent = _omml_property(child("accPr"), "chr", "ˆ")
+        return f'<mover accent="true">{render("e")}<mo>{html.escape(accent)}</mo></mover>'
+    if name == "bar":
+        position = _omml_property(child("barPr"), "pos", "top")
+        tag = "munder" if position == "bot" else "mover"
+        return f"<{tag}>{render('e')}<mo>¯</mo></{tag}>"
+    if name == "func":
+        return f"<mrow>{render('fName')}<mo>⁡</mo>{render('e')}</mrow>"
+    return _omml_children(node)
+
+
+def _omml_children(node: Any | None) -> str:
+    if node is None:
+        return ""
+    return "".join(
+        _omml_to_mathml(item)
+        for item in node
+        if str(item.tag).rsplit("}", 1)[-1] not in {
+            "ctrlPr", "rPr", "fPr", "radPr", "sSupPr", "sSubPr", "sSubSupPr",
+            "naryPr", "dPr", "mPr", "eqArrPr", "limLowPr", "limUppPr", "accPr",
+            "barPr", "funcPr",
+        }
+    )
+
+
+def _math_token(value: str) -> str:
+    value = str(value or "")
+    if not value:
+        return ""
+    escaped = html.escape(value)
+    stripped = value.strip()
+    if stripped and all(character.isdigit() or character in ".," for character in stripped):
+        return f"<mn>{escaped}</mn>"
+    if len(stripped) == 1 and (stripped.isalpha() or "α" <= stripped <= "ω" or "Α" <= stripped <= "Ω"):
+        return f"<mi>{escaped}</mi>"
+    if stripped and all(character in "+−-×÷=*/≠≈<>≤≥±∓∝∞∂∆∇∈∉∪∩∧∨¬" for character in stripped):
+        return f"<mo>{escaped}</mo>"
+    return f"<mtext>{escaped}</mtext>"
+
+
+def _omml_property(parent: Any | None, name: str, default: str) -> str:
+    if parent is None:
+        return default
+    item = parent.find(f"{{{M_NS}}}{name}")
+    if item is None:
+        return default
+    return str(item.get(f"{{{M_NS}}}val") or item.get("val") or default)
+
+
+def _omml_has_content(node: Any | None) -> bool:
+    return node is not None and bool("".join(node.itertext()).strip() or len(node))
+
+
+def _media_element(
+    shape: Any,
+    element_id: str,
+    bounds: list[float],
+    *,
+    rotation: float,
+    slide_index: int,
+    media_dir: Path,
+    media_counter: list[int],
+) -> dict[str, Any] | None:
+    """Extract an embedded PowerPoint audio/video object and its poster frame."""
+    root = shape._element
+    video = root.find(f".//{{{A_NS}}}videoFile")
+    audio = root.find(f".//{{{A_NS}}}audioFile")
+    embedded = root.find(f".//{{{P14_NS}}}media")
+    if video is None and audio is None and embedded is None:
+        return None
+    media_kind = "video" if video is not None else "audio" if audio is not None else "video"
+    relationship_id = embedded.get(f"{{{R_NS}}}embed") if embedded is not None else None
+    if not relationship_id:
+        source_node = video if video is not None else audio
+        relationship_id = source_node.get(f"{{{R_NS}}}link") if source_node is not None else None
+    source = _write_related_media(
+        shape.part,
+        relationship_id,
+        slide_index=slide_index,
+        media_dir=media_dir,
+        image_counter=media_counter,
+    )
+    poster_node = root.find(f".//{{{A_NS}}}blip")
+    poster_id = poster_node.get(f"{{{R_NS}}}embed") if poster_node is not None else None
+    poster = _write_related_media(
+        shape.part,
+        poster_id,
+        slide_index=slide_index,
+        media_dir=media_dir,
+        image_counter=media_counter,
+    )
+    if not source and not poster:
+        return None
+    return {
+        "elementId": element_id,
+        "elementType": "media",
+        "bounds": bounds,
+        "rotation": rotation,
+        "mediaKind": media_kind,
+        "src": source,
+        "posterSrc": poster,
+        "mimeType": mimetypes.guess_type(source)[0] or (
+            "video/mp4" if media_kind == "video" else "audio/mpeg"
+        ),
+    }
 
 
 def _table_elements(

@@ -1178,6 +1178,16 @@ class Agent:
             return
 
         if tool_name == "write_document" and payload.get("success") is True:
+            validation = payload.get("validation")
+            if (
+                isinstance(validation, dict)
+                and validation.get("delivery_ready") is False
+            ):
+                logger.info(
+                    "[Artifact] write_document output is not delivery-ready; "
+                    "waiting for Agent revision",
+                )
+                return
             output_path = str(payload.get("output_path", "")).strip()
             if output_path:
                 pending[cls._normalized_delivery_path(output_path)] = output_path
