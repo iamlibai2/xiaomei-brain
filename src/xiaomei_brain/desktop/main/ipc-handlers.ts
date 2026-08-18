@@ -982,6 +982,12 @@ export function registerIpcHandlers(
           outerHtml: string;
           contextBefore?: string;
           contextAfter?: string;
+        } | {
+          kind: "presentation";
+          slide: number;
+          elementId: string;
+          elementType: "text" | "shape" | "image" | "table";
+          selectedText: string;
         });
       }>;
       invocation?: {
@@ -1026,6 +1032,14 @@ export function registerIpcHandlers(
                   outer_html: reference.selection.outerHtml,
                   context_before: reference.selection.contextBefore || "",
                   context_after: reference.selection.contextAfter || "",
+                }
+              : reference.selection.kind === "presentation"
+                ? {
+                  kind: reference.selection.kind,
+                  slide: reference.selection.slide,
+                  element_id: reference.selection.elementId,
+                  element_type: reference.selection.elementType,
+                  selected_text: reference.selection.selectedText,
                 }
               : {
                 kind: reference.selection.kind,
@@ -1299,6 +1313,18 @@ export function registerIpcHandlers(
     const result = await fetchArtifact(args.agentId, args.sessionId, args.artifactId);
     if (result.error) return { error: result.error };
     return { result: { artifact: result.artifact } };
+  });
+
+  ipcMain.handle("gateway:getArtifactPresentation", async (_event, args: {
+    agentId: string; sessionId: string; artifactId: string;
+  }) => {
+    const client = getClient(args.agentId);
+    if (!client) return { error: { code: -32099, message: `Agent ${args.agentId} not connected` } };
+    return client.rpc("artifact.get", {
+      session_id: args.sessionId,
+      artifact_id: args.artifactId,
+      representation: "presentation",
+    });
   });
 
   ipcMain.handle("gateway:authorizeArtifactMedia", async (_event, args: {

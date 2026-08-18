@@ -29,6 +29,7 @@ const CHANNEL_MAP = {
     getAttachment:   { invoke: "gateway:getAttachment" },
     openAttachment:  { invoke: "gateway:openAttachment" },
     getArtifact:     { invoke: "gateway:getArtifact" },
+    getArtifactPresentation: { invoke: "gateway:getArtifactPresentation" },
     authorizeArtifactMedia: { invoke: "gateway:authorizeArtifactMedia" },
     listMediaLibrary: { invoke: "gateway:listMediaLibrary" },
     authorizeMediaTrack: { invoke: "gateway:authorizeMediaTrack" },

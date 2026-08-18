@@ -7,6 +7,7 @@ import { HtmlArtifactPreview } from "../right-sidebar/HtmlArtifactPreview";
 import { TextArtifactPreview } from "../right-sidebar/TextArtifactPreview";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
 import { PresentationStage, type PresentationStageLayout } from "./PresentationStage";
+import { PresentationPreview, type PresentationProject } from "../artifact-workspace/PresentationPreview";
 
 const PdfPreview = lazy(() => import("../right-sidebar/PdfPreview").then((module) => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("../right-sidebar/SpreadsheetPreview").then((module) => ({ default: module.SpreadsheetPreview })));
@@ -18,6 +19,7 @@ type LoadedArtifact = {
   dataBase64: string;
   mimeType: string;
   error: string;
+  presentationProject?: PresentationProject;
 };
 
 function mediaTypeFor(artifact: ArtifactSnapshot, mimeType: string): "audio" | "video" | "" {
@@ -76,7 +78,14 @@ export function ArtifactPresentationStage({
     let cancelled = false;
     void Promise.all(visibleArtifacts.map(async (artifact) => {
       const key = `${artifact.sessionId}:${artifact.id}`;
-      const response = await window.gateway.getArtifact({
+      const previewKind = artifactPreviewKind(artifact);
+      const response = previewKind === "presentation"
+        ? await window.gateway.getArtifactPresentation({
+          agentId,
+          sessionId: artifact.sessionId,
+          artifactId: artifact.id,
+        })
+        : await window.gateway.getArtifact({
         agentId,
         sessionId: artifact.sessionId,
         artifactId: artifact.id,
@@ -88,6 +97,9 @@ export function ArtifactPresentationStage({
         artifact,
         dataBase64: typeof value.dataBase64 === "string" ? value.dataBase64 : "",
         mimeType: typeof value.mimeType === "string" ? value.mimeType : artifact.mimeType,
+        presentationProject: previewKind === "presentation" && value.project && typeof value.project === "object"
+          ? value.project as unknown as PresentationProject
+          : undefined,
         error: "",
       }] as const;
     })).then((entries) => {
@@ -163,11 +175,14 @@ function StageArtifact({
   const { t } = useTranslation();
   if (!item) return <div className="presentation-stage-loading">{t("stageUi.loading")}</div>;
   if (item.error) return <div className="presentation-stage-error">{item.error}</div>;
-  const { artifact, dataBase64, mimeType } = item;
+  const { artifact, dataBase64, mimeType, presentationProject } = item;
+  const previewKind = artifactPreviewKind(artifact);
+  if (previewKind === "presentation" && presentationProject) {
+    return <PresentationPreview project={presentationProject} compact />;
+  }
   if (!dataBase64) return <div className="presentation-stage-error">{t("stageUi.emptyArtifact")}</div>;
   const mediaType = mediaTypeFor(artifact, mimeType);
   const source = `data:${playableMimeType(artifact, mimeType, mediaType)};base64,${dataBase64}`;
-  const previewKind = artifactPreviewKind(artifact);
   if (previewKind === "visualization") {
     return <VisualizationPreview dataBase64={dataBase64} fileName={artifact.name} onFollowUp={onFollowUp} />;
   }

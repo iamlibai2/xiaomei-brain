@@ -429,7 +429,30 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                 str(annotation.get("selected_text", "")),
                 quote=False,
             )
-            if annotation_kind == "spreadsheet" and selected_text:
+            if annotation_kind == "presentation":
+                slide = annotation.get("slide")
+                element_id = html.escape(
+                    str(annotation.get("element_id", "")), quote=True,
+                )
+                element_type = html.escape(
+                    str(annotation.get("element_type", "")), quote=True,
+                )
+                slide_attribute = (
+                    f' slide="{int(slide)}"' if isinstance(slide, int) else ""
+                )
+                annotation_context = (
+                    f'\n<document_annotation kind="presentation"{slide_attribute} '
+                    f'element_id="{element_id}" element_type="{element_type}">\n'
+                    f"<selected_text>{selected_text}</selected_text>\n"
+                    "Treat the user's message as an instruction for this exact presentation element. "
+                    "Use write_document with this attached document as source_attachment_id. "
+                    "Use an update_element operation with the supplied slide and element_id; "
+                    "use delete_element only when the user explicitly asks to remove it. "
+                    "Preserve every unrelated slide and element, update the same Agent-owned artifact, "
+                    "then present the same artifact again.\n"
+                    "</document_annotation>"
+                )
+            elif annotation_kind == "spreadsheet" and selected_text:
                 sheet = html.escape(str(annotation.get("sheet", "")), quote=True)
                 cell_range = html.escape(str(annotation.get("range", "")), quote=True)
                 annotation_context = (

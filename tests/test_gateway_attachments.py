@@ -342,6 +342,60 @@ def test_chat_schema_accepts_spreadsheet_artifact_selection():
     assert selection.range == "A2:B5"
 
 
+def test_presentation_annotation_identifies_exact_slide_element(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            office_archive({"ppt/presentation.xml": "<presentation/>"}),
+        )],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "presentation",
+        "slide": 2,
+        "element_id": "slide-2-shape-3",
+        "element_type": "text",
+        "selected_text": "Old heading",
+    }
+
+    model_input = append_text_attachments("Make it shorter", prepared)
+
+    assert (
+        '<document_annotation kind="presentation" slide="2" '
+        'element_id="slide-2-shape-3" element_type="text">'
+        in model_input
+    )
+    assert "Use an update_element operation" in model_input
+
+
+def test_chat_schema_accepts_presentation_artifact_selection():
+    parsed = ChatSendParams.model_validate({
+        "content": "Change the selected heading",
+        "client_request_id": "request-presentation",
+        "session_id": "session-1",
+        "artifact_references": [{
+            "artifact_id": "c" * 32,
+            "session_id": "source-session",
+            "selection": {
+                "kind": "presentation",
+                "slide": 2,
+                "element_id": "slide-2-shape-3",
+                "element_type": "text",
+                "selected_text": "Old heading",
+            },
+        }],
+    })
+
+    selection = parsed.artifact_references[0].selection
+    assert selection is not None
+    assert selection.kind == "presentation"
+    assert selection.slide == 2
+    assert selection.element_id == "slide-2-shape-3"
+
+
 def test_html_artifact_annotation_identifies_exact_element(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     prepared, _, _ = prepare_attachments(

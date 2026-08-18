@@ -117,6 +117,17 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
       "notes": "新的演讲备注"
     },
     {
+      "type": "update_element",
+      "slide": 2,
+      "element_id": "slide-2-shape-3",
+      "text": "更新后的文字",
+      "text_color": "172033",
+      "fill_color": "F7F9FC",
+      "font_size_pt": 20,
+      "bold": true
+    },
+    {"type": "delete_element", "slide": 2, "element_id": "slide-2-shape-5"},
+    {
       "type": "append_slides",
       "slides": [{"type": "section", "title": "下一阶段", "subtitle": "实施计划"}]
     },
@@ -129,6 +140,11 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
 
 `update_slide` 可更新由本工具生成的标题、副标题和正文；对于任意外部模板，优先使用
 `replace_text` 或 `replace_placeholders`，避免猜测模板中的形状结构。
+
+当 Desktop 提供 `document_annotation kind="presentation"` 时，必须原样使用其中的
+`slide` 和 `element_id`，通过 `update_element` 精确修改该元素。支持修改 `text`、
+`text_color`、`fill_color`、`line_color`、`font_size_pt`、`bold`、`x_cm`、`y_cm`、
+`width_cm` 和 `height_cm`。只有人物明确要求删除选中元素时才使用 `delete_element`。
 
 ## 完成标准
 

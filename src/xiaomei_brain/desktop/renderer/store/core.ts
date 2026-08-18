@@ -240,6 +240,9 @@ function displayArtifact(value: unknown): DisplayArtifact | undefined {
     description: typeof item.description === "string" ? item.description : "",
     toolCallId: typeof item.tool_call_id === "string" ? item.tool_call_id : "",
     turnId: typeof item.turn_id === "string" ? item.turn_id : "",
+    sessionId: typeof item.session_id === "string"
+      ? item.session_id
+      : typeof item.sessionId === "string" ? item.sessionId : "",
   };
 }
 
@@ -965,6 +968,8 @@ export interface DisplayArtifact {
   description: string;
   toolCallId: string;
   turnId: string;
+  /** Authoritative storage session. It may differ from the conversation receiving the card. */
+  sessionId: string;
 }
 
 export interface ToolActivity {
@@ -2239,7 +2244,11 @@ export const useCoreStore = create<CoreState & CoreActions>()((set, get) => ({
                     : "document" as const,
             annotation: reference.selection ? {
               selectedText: reference.selection.selectedText,
-              page: reference.selection.kind === "text" ? reference.selection.page : undefined,
+              page: reference.selection.kind === "text"
+                ? reference.selection.page
+                : reference.selection.kind === "presentation"
+                  ? reference.selection.slide
+                  : undefined,
               sheet: reference.selection.kind === "spreadsheet" ? reference.selection.sheet : undefined,
               range: reference.selection.kind === "spreadsheet" ? reference.selection.range : undefined,
             } : undefined,

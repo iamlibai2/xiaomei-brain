@@ -106,6 +106,16 @@ def test_write_document_creates_themed_presentation_with_image_and_notes(tmp_pat
     assert result["validation"]["slide_count"] == 3
     assert result["validation"]["picture_count"] == 1
     assert result["validation"]["note_slide_count"] == 1
+    assert result["presentation_project"]["schema"] == "xiaomei.presentation.v1"
+    assert result["presentation_project"]["slide_count"] == 3
+    project_dir = outputs / ".presentation" / "product"
+    assert (project_dir / "product.pptd").is_file()
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    assert len(project["slides"]) == 3
+    assert any(
+        element["elementType"] == "image"
+        for element in project["slides"][2]["elements"]
+    )
     deck = Presentation(outputs / "product.pptx")
     assert round(deck.slide_width / Cm(1), 2) == 33.87
     assert round(deck.slide_height / Cm(1), 2) == 19.05
@@ -230,3 +240,62 @@ def test_presentation_writer_rejects_missing_image_and_invalid_slide(tmp_path):
 
     assert "error" in result
     assert not list(outputs.glob("*.pptx"))
+
+
+def test_write_document_updates_exact_presentation_element_and_rebuilds_project(tmp_path):
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "source.pptx"
+    original = Presentation()
+    slide = original.slides.add_slide(original.slide_layouts[6])
+    slide.shapes.add_textbox(Cm(2), Cm(2), Cm(12), Cm(3)).text = "Original text"
+    original.save(source)
+    spec = workspace / "element-update.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "update_element",
+            "slide": 1,
+            "element_id": "slide-1-shape-1",
+            "text": "Updated text",
+            "text_color": "336699",
+            "fill_color": "F5F7FA",
+            "font_size_pt": 24,
+            "bold": True,
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-element-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "source-deck",
+            "name": "source.pptx",
+            "kind": "document",
+            "local_path": str(source),
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="element-update.json",
+            output_name="edited.pptx",
+            source_attachment_id="source-deck",
+        )
+
+    assert result.get("success") is True, result
+    edited = Presentation(outputs / "edited.pptx")
+    shape = edited.slides[0].shapes[0]
+    assert shape.text == "Updated text"
+    assert shape.text_frame.paragraphs[0].runs[0].font.bold is True
+    project_dir = outputs / ".presentation" / "edited"
+    assert result["presentation_project"]["path"] == str(project_dir)
+    assert (project_dir / "edited.pptd").is_file()
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    assert project["slides"][0]["elements"][0]["content"]["text"] == "Updated text"
+    assert sorted(path.name for path in (outputs / ".presentation").iterdir()) == ["edited"]

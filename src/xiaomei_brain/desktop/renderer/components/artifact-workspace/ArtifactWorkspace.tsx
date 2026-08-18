@@ -8,6 +8,7 @@ import { HtmlArtifactPreview } from "../right-sidebar/HtmlArtifactPreview";
 import { artifactPreviewKind } from "../../artifacts/preview-capability";
 import { useTranslation } from "react-i18next";
 import { VisualizationPreview } from "../visualization/VisualizationPreview";
+import { PresentationPreview, type PresentationProject } from "./PresentationPreview";
 
 const PdfPreview = lazy(() => import("../right-sidebar/PdfPreview").then((module) => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("../right-sidebar/SpreadsheetPreview").then((module) => ({ default: module.SpreadsheetPreview })));
@@ -42,6 +43,7 @@ export function ArtifactWorkspace({
   )) || null, [artifactKey, artifacts]);
   const [dataBase64, setDataBase64] = useState("");
   const [mimeType, setMimeType] = useState("");
+  const [presentationProject, setPresentationProject] = useState<PresentationProject | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
@@ -53,25 +55,41 @@ export function ArtifactWorkspace({
   useEffect(() => {
     setDataBase64("");
     setMimeType("");
+    setPresentationProject(null);
     setError("");
     if (!artifact) return;
-    if (artifact.size > MAX_INLINE_BYTES) {
+    if (artifact.size > MAX_INLINE_BYTES && kind !== "presentation") {
       setError(t("preview.fileTooLarge"));
       return;
     }
     if (!kind) return;
     let cancelled = false;
     setLoading(true);
-    void window.gateway.getArtifact({
+    const request = kind === "presentation"
+      ? window.gateway.getArtifactPresentation({
+        agentId,
+        sessionId: artifact.sessionId,
+        artifactId: artifact.id,
+      })
+      : window.gateway.getArtifact({
       agentId,
       sessionId: artifact.sessionId,
       artifactId: artifact.id,
-    }).then((response) => {
+    });
+    void request.then((response) => {
       if (cancelled) return;
       if (response.error) throw new Error(response.error.message);
       const raw = response.result?.artifact;
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(t("preview.noPreviewContent"));
       const value = raw as Record<string, unknown>;
+      if (kind === "presentation") {
+        const project = value.project;
+        if (!project || typeof project !== "object" || Array.isArray(project)) {
+          throw new Error(t("preview.noPreviewContent"));
+        }
+        setPresentationProject(project as unknown as PresentationProject);
+        return;
+      }
       setDataBase64(typeof value.dataBase64 === "string" ? value.dataBase64 : "");
       setMimeType(typeof value.mimeType === "string" ? value.mimeType : artifact.mimeType);
     }).catch((reason) => {
@@ -201,6 +219,9 @@ export function ArtifactWorkspace({
           <Suspense fallback={<div className="artifact-preview-state">{t("preview.loadingPdf")}</div>}>
             <PdfPreview dataBase64={dataBase64} fileName={artifact.name} onAnnotate={annotate} />
           </Suspense>
+        )}
+        {artifact && kind === "presentation" && presentationProject && (
+          <PresentationPreview project={presentationProject} onAnnotate={annotate} />
         )}
         {artifact && kind === "spreadsheet" && dataBase64 && annotate && (
           <Suspense fallback={<div className="artifact-preview-state">{t("preview.loadingSheet")}</div>}>

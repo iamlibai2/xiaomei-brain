@@ -1064,6 +1064,182 @@ body.is-resizing-artifact-workspace {
   border-radius: 0;
 }
 
+.presentation-preview-shell {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 144px minmax(0, 1fr);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ui-bg-secondary) 88%, #78808e);
+  outline: none;
+}
+
+.presentation-preview-pages {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 11px 18px;
+  overflow: auto;
+  border-right: 1px solid var(--ui-border-default);
+  background: var(--ui-bg-primary);
+}
+
+.presentation-preview-pages button {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: 0 1px 5px rgba(25, 32, 44, .12);
+  cursor: pointer;
+}
+
+.presentation-preview-pages button:hover {
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 35%, transparent);
+}
+
+.presentation-preview-pages button.active {
+  border-color: var(--ui-brand-primary);
+}
+
+.presentation-preview-page-number {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: calc(100% + 5px);
+  color: var(--ui-color-text-tertiary);
+  font-size: 9px;
+  transform: translateY(-50%);
+}
+
+.presentation-preview-stage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  overflow: auto;
+}
+
+.presentation-preview-navigation {
+  position: absolute;
+  right: 14px;
+  bottom: 42px;
+  display: flex;
+  gap: 5px;
+}
+
+.presentation-preview-navigation button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--ui-border-default);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ui-bg-primary) 92%, transparent);
+  color: var(--ui-color-text-primary);
+  cursor: pointer;
+}
+
+.presentation-preview-navigation button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ui-brand-primary) 50%, var(--ui-border-default));
+  background: var(--ui-bg-primary);
+}
+
+.presentation-preview-navigation button:disabled {
+  opacity: .34;
+  cursor: default;
+}
+
+.presentation-preview-shell.compact {
+  display: flex;
+}
+
+.presentation-preview-shell.compact .presentation-preview-stage {
+  width: 100%;
+  padding: 18px;
+}
+
+.presentation-slide-canvas {
+  position: relative;
+  container-type: inline-size;
+  flex: 0 0 auto;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(25, 32, 44, .2);
+}
+
+.presentation-slide-canvas.thumbnail {
+  width: 100%;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.presentation-slide-element {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.presentation-slide-element.selectable {
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+
+.presentation-slide-element.selectable:hover {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-brand-primary) 45%, transparent);
+}
+
+.presentation-slide-element.selectable.selected {
+  box-shadow: 0 0 0 2px var(--ui-brand-primary), 0 0 0 5px color-mix(in srgb, var(--ui-brand-primary) 18%, transparent);
+}
+
+.presentation-slide-element.text,
+.presentation-slide-element.shape {
+  display: flex;
+  align-items: flex-start;
+  padding: .15em .22em;
+  white-space: pre-wrap;
+  line-height: 1.2;
+}
+
+.presentation-slide-element.image {
+  display: block;
+}
+
+.presentation-slide-element.table {
+  display: grid;
+  border-top: 1px solid #cfd4dd;
+  border-left: 1px solid #cfd4dd;
+  background: rgba(255, 255, 255, .94);
+  color: #253047;
+  font-size: 1.45cqw;
+}
+
+.presentation-slide-element.table > div {
+  min-width: 0;
+  padding: .25em .35em;
+  overflow: hidden;
+  border-right: 1px solid #cfd4dd;
+  border-bottom: 1px solid #cfd4dd;
+}
+
+.presentation-preview-position {
+  position: absolute;
+  right: 14px;
+  bottom: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-bg-primary) 88%, transparent);
+  color: var(--ui-color-text-secondary);
+  font-size: 10px;
+}
+
 .artifact-workspace-body .docx-preview-viewport,
 .artifact-workspace-body .pdf-preview-viewport,
 .artifact-workspace-body .spreadsheet-preview-viewport,

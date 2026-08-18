@@ -347,6 +347,11 @@ def create_write_document_tool(
                             "模板仍有未填写字段: " + ", ".join(unresolved[:30])
                         )
                 temporary_path.replace(output_path)
+                finalize_output = getattr(writer, "finalize_output", None)
+                if callable(finalize_output):
+                    finalized = finalize_output(temporary_path, output_path)
+                    if isinstance(finalized, dict):
+                        result.update(finalized)
         except Exception as exc:
             temporary_path.unlink(missing_ok=True)
             return {"error": str(exc), "format": format}

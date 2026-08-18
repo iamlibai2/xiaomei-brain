@@ -1170,6 +1170,17 @@
       "useDefault": "Open it with the system default application.",
       "loadingPdf": "Loading PDF previewer…",
       "loadingSheet": "Loading spreadsheet previewer…",
+      "presentationEmpty": "This presentation has no previewable slides",
+      "presentationPages": "Presentation slides",
+      "presentationPage": "Slide {{page}}",
+      "presentationSelectionLocation": "Slide {{page}} · {{type}}",
+      "editPresentationExample": "For example: Make the text shorter or change the color to a lighter tone",
+      "presentationElement": {
+        "text": "Text",
+        "shape": "Shape",
+        "image": "Image",
+        "table": "Table"
+      },
       "document": "Document preview",
       "documentHint": "Select text and tell the Agent how to change it; the original file is not overwritten.",
       "rendering": "Rendering document…",

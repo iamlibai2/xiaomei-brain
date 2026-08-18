@@ -1640,10 +1640,20 @@ function ArtifactCard({
   onPresentArtifact: (artifactKey: string) => void;
 }) {
   const { t } = useTranslation();
-  const storedArtifact = useCoreStore((state) => (
-    state.artifactsByAgent[agentId] || []
-  ).find((item) => item.id === message.artifact?.id && item.sessionId === sessionId));
+  // An updated artifact may be presented into a different conversation while
+  // remaining stored under the session where it was originally created.
+  // Always address the artifact by its own storage session, not by the card's
+  // destination conversation.
+  const storedArtifact = useCoreStore((state) => {
+    const matches = (state.artifactsByAgent[agentId] || [])
+      .filter((item) => item.id === message.artifact?.id);
+    const sourceSessionId = message.artifact?.sessionId;
+    return (sourceSessionId
+      ? matches.find((item) => item.sessionId === sourceSessionId)
+      : matches.find((item) => item.sessionId === sessionId)) || matches[0];
+  });
   const artifact = storedArtifact || message.artifact!;
+  const artifactSessionId = artifact.sessionId || sessionId;
   const [previewUrl, setPreviewUrl] = useState("");
   const [visualizationData, setVisualizationData] = useState("");
   const [error, setError] = useState("");
@@ -1666,10 +1676,10 @@ function ArtifactCard({
       !["image", "visualization"].includes(artifact.kind)
       || artifact.size > 20 * 1024 * 1024
       || !agentId
-      || !sessionId
+      || !artifactSessionId
     ) return;
     let cancelled = false;
-    void window.gateway.getArtifact({ agentId, sessionId, artifactId: artifact.id })
+    void window.gateway.getArtifact({ agentId, sessionId: artifactSessionId, artifactId: artifact.id })
       .then((response) => {
         if (cancelled) return;
         if (response.error) {
@@ -1693,15 +1703,15 @@ function ArtifactCard({
     artifact.mimeType,
     artifact.size,
     storedArtifact?.updatedAt,
-    sessionId,
+    artifactSessionId,
   ]);
 
   const open = async () => {
-    if (!agentId || !sessionId || opening) return;
+    if (!agentId || !artifactSessionId || opening) return;
     setOpening(true);
     try {
       const result = await window.gateway.openArtifact({
-        agentId, sessionId, artifactId: artifact.id,
+        agentId, sessionId: artifactSessionId, artifactId: artifact.id,
       });
       setError(result.ok ? "" : result.error || t("preview.openFailed"));
     } finally {
@@ -1710,12 +1720,12 @@ function ArtifactCard({
   };
 
   const playMedia = async () => {
-    if (!agentId || !sessionId || playing) return;
+    if (!agentId || !artifactSessionId || playing) return;
     setPlaying(true);
     try {
       const response = await window.gateway.authorizeArtifactMedia({
         agentId,
-        sessionId,
+        sessionId: artifactSessionId,
         artifactId: artifact.id,
       });
       if (response.error) {
@@ -1732,11 +1742,11 @@ function ArtifactCard({
   };
 
   const download = async () => {
-    if (!agentId || !sessionId || downloading) return;
+    if (!agentId || !artifactSessionId || downloading) return;
     setDownloading(true);
     try {
       const result = await window.gateway.downloadArtifact({
-        agentId, sessionId, artifactId: artifact.id,
+        agentId, sessionId: artifactSessionId, artifactId: artifact.id,
       });
       if (!result.ok && !result.canceled) {
         setError(result.error || t("home.downloadFailed"));
@@ -1749,14 +1759,14 @@ function ArtifactCard({
   };
 
   const inspectCapabilityPackage = async () => {
-    if (!agentId || !sessionId || packageBusy) return;
+    if (!agentId || !artifactSessionId || packageBusy) return;
     setPackageBusy(true);
     setPackageNotice("");
     setError("");
     try {
       const response = await window.gateway.inspectCapabilityArtifact({
         agentId,
-        sessionId,
+        sessionId: artifactSessionId,
         artifactId: artifact.id,
       });
       if (response.error) throw new Error(response.error.message);
@@ -1820,7 +1830,7 @@ function ArtifactCard({
       : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`;
 
   if (artifact.kind === "visualization") {
-    const visualizationKey = `${sessionId}:${artifact.id}`;
+    const visualizationKey = `${artifactSessionId}:${artifact.id}`;
     return (
       <div className={`assistant-message-row artifact-message-row visualization-message-row ${showAgentHeader ? "" : "agent-turn-continuation"}`}>
         {showAgentHeader && (
@@ -1861,7 +1871,7 @@ function ArtifactCard({
           <button
             type="button"
             className={`artifact-inline-image ${error ? "error" : ""}`}
-            onClick={() => onShowArtifact(artifact.id, sessionId)}
+            onClick={() => onShowArtifact(artifact.id, artifactSessionId)}
             disabled={opening}
             title={error || `${t("common.preview")} ${artifact.name}`}
           >
@@ -1877,12 +1887,12 @@ function ArtifactCard({
           <div className="artifact-inline-image-meta">
             <span title={artifact.name}>{artifact.name}</span>
             <div>
-              <button type="button" onClick={() => onShowArtifact(artifact.id, sessionId)}>
+              <button type="button" onClick={() => onShowArtifact(artifact.id, artifactSessionId)}>
                 {t("common.preview")}
               </button>
               <button
                 type="button"
-                onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
+                onClick={() => onPresentArtifact(`${artifactSessionId}:${artifact.id}`)}
                 title={t("visualize.fullscreen")}
                 aria-label={t("visualize.fullscreen")}
               >
@@ -1912,7 +1922,7 @@ function ArtifactCard({
             ? void inspectCapabilityPackage()
             : ["audio", "video"].includes(artifact.kind)
             ? void playMedia()
-            : previewSupported ? onShowArtifact(artifact.id, sessionId) : void open()}
+            : previewSupported ? onShowArtifact(artifact.id, artifactSessionId) : void open()}
           disabled={opening || playing || downloading || packageBusy}
           title={error || `${isCapabilityPackage
             ? t("capabilityUi.packageCheck")
@@ -1964,7 +1974,7 @@ function ArtifactCard({
           <button
             type="button"
             className="artifact-present-button"
-            onClick={() => onPresentArtifact(`${sessionId}:${artifact.id}`)}
+            onClick={() => onPresentArtifact(`${artifactSessionId}:${artifact.id}`)}
             title={t("visualize.fullscreen")}
             aria-label={t("visualize.fullscreen")}
           >

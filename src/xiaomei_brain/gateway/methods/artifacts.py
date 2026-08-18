@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Any
 
-from ..artifacts import ArtifactError, read_stored_artifact, stored_artifact_path
+from ..artifacts import (
+    ArtifactError,
+    read_stored_artifact,
+    read_stored_presentation_project,
+    stored_artifact_path,
+)
 from ..protocol import ErrorCode, build_error, build_response
 from ..schemas import ArtifactGetParams, ArtifactListParams, format_error
 
@@ -52,11 +57,25 @@ class ArtifactMethods:
                 "Artifact does not exist or is not visible",
             )
         try:
-            value = read_stored_artifact(
-                getattr(self._living, "_agent_id", "default"),
-                parsed.session_id,
-                artifact,
-            )
+            if parsed.representation == "presentation":
+                value = {
+                    **{
+                        key: artifact[key]
+                        for key in ("id", "name", "session_id")
+                        if key in artifact
+                    },
+                    "project": read_stored_presentation_project(
+                        getattr(self._living, "_agent_id", "default"),
+                        parsed.session_id,
+                        artifact,
+                    ),
+                }
+            else:
+                value = read_stored_artifact(
+                    getattr(self._living, "_agent_id", "default"),
+                    parsed.session_id,
+                    artifact,
+                )
         except ArtifactError as exc:
             return build_error(req_id, ErrorCode.INVALID_PARAMS, str(exc))
         return build_response(req_id, result={"artifact": value})

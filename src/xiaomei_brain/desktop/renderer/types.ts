@@ -126,7 +126,15 @@ export interface ArtifactHtmlSelection {
   contextAfter?: string;
 }
 
-export type ArtifactSelection = ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection;
+export interface ArtifactPresentationSelection {
+  kind: "presentation";
+  slide: number;
+  elementId: string;
+  elementType: "text" | "shape" | "image" | "table";
+  selectedText: string;
+}
+
+export type ArtifactSelection = ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | ArtifactPresentationSelection;
 
 export interface ChatArtifactReference {
   artifactId: string;
@@ -747,6 +755,7 @@ export interface GatewayBridge {
   getAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<JsonRpcResponse>;
   openAttachment(args: { agentId: string; sessionId: string; attachmentId: string }): Promise<{ ok: boolean; error?: string }>;
   getArtifact(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
+  getArtifactPresentation(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
   authorizeArtifactMedia(args: { agentId: string; sessionId: string; artifactId: string }): Promise<JsonRpcResponse>;
   listMediaLibrary(args: { agentId: string; limit?: number; offset?: number }): Promise<JsonRpcResponse>;
   authorizeMediaTrack(args: {

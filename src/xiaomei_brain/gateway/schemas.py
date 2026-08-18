@@ -408,11 +408,19 @@ class ArtifactHtmlSelection(BaseModel):
     context_after: str = Field(default="", max_length=2_000)
 
 
+class ArtifactPresentationSelection(BaseModel):
+    kind: Literal["presentation"] = "presentation"
+    slide: int = Field(..., ge=1, le=100_000)
+    element_id: str = Field(..., min_length=1, max_length=256)
+    element_type: Literal["text", "shape", "image", "table"]
+    selected_text: str = Field(default="", max_length=20_000)
+
+
 class ChatArtifactReference(BaseModel):
     artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
     session_id: str = Field(..., min_length=1, max_length=256)
     presentation_mode: Literal["visualization_fullscreen", "presentation_stage"] | None = None
-    selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | None = None
+    selection: ArtifactTextSelection | ArtifactSpreadsheetSelection | ArtifactHtmlSelection | ArtifactPresentationSelection | None = None
 
 
 class ChatInvocation(BaseModel):
@@ -472,6 +480,7 @@ class AttachmentGetParams(BaseModel):
 class ArtifactGetParams(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=256)
     artifact_id: str = Field(..., min_length=32, max_length=32, pattern=r"^[a-f0-9]+$")
+    representation: Literal["binary", "presentation"] = "binary"
 
 
 class ArtifactListParams(BaseModel):

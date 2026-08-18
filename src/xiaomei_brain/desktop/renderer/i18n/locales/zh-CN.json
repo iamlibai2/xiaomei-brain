@@ -1170,6 +1170,17 @@
       "useDefault": "可以使用系统中的默认应用打开。",
       "loadingPdf": "正在加载 PDF 预览器…",
       "loadingSheet": "正在加载表格预览器…",
+      "presentationEmpty": "演示文稿没有可预览的页面",
+      "presentationPages": "幻灯片页面",
+      "presentationPage": "第 {{page}} 页",
+      "presentationSelectionLocation": "第 {{page}} 页 · {{type}}",
+      "editPresentationExample": "例如：把文字改得更简洁，或把颜色改为浅色",
+      "presentationElement": {
+        "text": "文字",
+        "shape": "形状",
+        "image": "图片",
+        "table": "表格"
+      },
       "document": "文档预览",
       "documentHint": "选中文字后，可以告诉 Agent 如何修改；原文件不会被覆盖。",
       "rendering": "正在渲染文档…",

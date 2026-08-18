@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .extractor import PresentationExtractor
+from xiaomei_brain.documents.presentation_project import (
+    build_presentation_project,
+    presentation_project_directory,
+)
 
 
 MAX_SLIDES = 200
@@ -80,6 +84,11 @@ class PresentationWriter:
             raise ValueError(f"演示文稿不能超过 {MAX_SLIDES} 页")
         presentation.save(str(output_path))
 
+        project = build_presentation_project(
+            output_path,
+            presentation_project_directory(output_path),
+        )
+
         verified = Presentation(str(output_path))
         text_count, picture_count, note_count, characters = self._summary(verified)
         if text_count == 0 and picture_count == 0:
@@ -99,7 +108,20 @@ class PresentationWriter:
                 "changed_items": changed,
                 "content_preview": preview,
             },
+            "presentation_project": project,
         }
+
+    @staticmethod
+    def finalize_output(temporary_path: Path, output_path: Path) -> dict[str, Any]:
+        """Rebuild the companion presentation project for the final artifact path."""
+        temporary_project = presentation_project_directory(temporary_path)
+        if temporary_project.is_dir():
+            shutil.rmtree(temporary_project)
+        project = build_presentation_project(
+            output_path,
+            presentation_project_directory(output_path),
+        )
+        return {"presentation_project": project}
 
     @staticmethod
     def _color(value: Any, field: str):
@@ -595,6 +617,124 @@ class PresentationWriter:
         slide_ids.remove(element)
         slide_ids.insert(target, element)
 
+    @staticmethod
+    def _shape_path(element_id: Any, slide_number: int) -> list[int]:
+        prefix = f"slide-{slide_number}-shape-"
+        value = str(element_id or "").strip()
+        if not value.startswith(prefix):
+            raise ValueError(f"无效的演示元素 ID: {value}")
+        encoded = value[len(prefix):]
+        if "." in encoded:
+            try:
+                path = [int(part) for part in encoded.split(".")]
+            except ValueError as exc:
+                raise ValueError(f"无效的演示元素 ID: {value}") from exc
+        else:
+            try:
+                number = int(encoded)
+            except ValueError as exc:
+                raise ValueError(f"无效的演示元素 ID: {value}") from exc
+            path = []
+            while number > 999:
+                path.insert(0, number % 1000)
+                number //= 1000
+            path.insert(0, number)
+        if not path or any(index < 1 for index in path):
+            raise ValueError(f"无效的演示元素 ID: {value}")
+        return path
+
+    @classmethod
+    def _resolve_shape(cls, presentation: Any, operation: dict[str, Any]) -> Any:
+        slide_index = cls._slide_index(presentation, operation.get("slide"))
+        slide_number = slide_index + 1
+        path = cls._shape_path(operation.get("element_id"), slide_number)
+        shapes = presentation.slides[slide_index].shapes
+        shape = None
+        for depth, index in enumerate(path):
+            if index > len(shapes):
+                raise ValueError(f"演示元素不存在: {operation.get('element_id')}")
+            shape = shapes[index - 1]
+            if depth < len(path) - 1:
+                nested = getattr(shape, "shapes", None)
+                if nested is None:
+                    raise ValueError(f"演示元素路径无效: {operation.get('element_id')}")
+                shapes = nested
+        return shape
+
+    @classmethod
+    def _update_element(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        from pptx.util import Cm, Pt
+
+        shape = cls._resolve_shape(presentation, operation)
+        changed = 0
+        if "text" in operation:
+            if not getattr(shape, "has_text_frame", False):
+                raise ValueError("选中的演示元素不支持修改文字")
+            frame = shape.text_frame
+            paragraphs = list(frame.paragraphs)
+            runs = [run for paragraph in paragraphs for run in paragraph.runs]
+            value = cls._text(operation["text"])
+            if runs:
+                runs[0].text = value
+                for run in runs[1:]:
+                    run.text = ""
+                for paragraph in paragraphs[1:]:
+                    paragraph.text = ""
+            else:
+                frame.text = value
+            changed += 1
+        if "fill_color" in operation:
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = cls._color(operation["fill_color"], "fill_color")
+            changed += 1
+        if "line_color" in operation:
+            shape.line.color.rgb = cls._color(operation["line_color"], "line_color")
+            changed += 1
+        text_style_fields = {"text_color", "font_size_pt", "bold"}
+        if text_style_fields.intersection(operation):
+            if not getattr(shape, "has_text_frame", False):
+                raise ValueError("选中的演示元素不支持修改文字样式")
+            runs = [run for paragraph in shape.text_frame.paragraphs for run in paragraph.runs]
+            if not runs:
+                runs = [shape.text_frame.paragraphs[0].add_run()]
+            if "font_size_pt" in operation:
+                size = float(operation["font_size_pt"])
+                if not 6 <= size <= 144:
+                    raise ValueError("font_size_pt 必须在 6 到 144 之间")
+            for run in runs:
+                if "text_color" in operation:
+                    run.font.color.rgb = cls._color(operation["text_color"], "text_color")
+                if "font_size_pt" in operation:
+                    run.font.size = Pt(float(operation["font_size_pt"]))
+                if "bold" in operation:
+                    run.font.bold = bool(operation["bold"])
+            changed += len(text_style_fields.intersection(operation))
+        for field, attribute in (
+            ("x_cm", "left"),
+            ("y_cm", "top"),
+            ("width_cm", "width"),
+            ("height_cm", "height"),
+        ):
+            if field not in operation:
+                continue
+            value = float(operation[field])
+            if value < 0 or (field in {"width_cm", "height_cm"} and value <= 0):
+                raise ValueError(f"{field} 的值无效")
+            setattr(shape, attribute, Cm(value))
+            changed += 1
+        if changed == 0:
+            raise ValueError("update_element 没有提供可修改的字段")
+        return changed
+
+    @classmethod
+    def _delete_element(cls, presentation: Any, operation: dict[str, Any]) -> None:
+        shape = cls._resolve_shape(presentation, operation)
+        element = shape._element
+        parent = element.getparent()
+        if parent is None:
+            raise ValueError(f"演示元素无法删除: {operation.get('element_id')}")
+        parent.remove(element)
+
     @classmethod
     def _apply_operations(
         cls,
@@ -656,6 +796,11 @@ class PresentationWriter:
                     changed += 1
             elif kind == "update_slide":
                 changed += cls._update_slide(presentation, operation, asset_paths)
+            elif kind == "update_element":
+                changed += cls._update_element(presentation, operation)
+            elif kind == "delete_element":
+                cls._delete_element(presentation, operation)
+                changed += 1
             elif kind == "delete_slide":
                 index = cls._slide_index(presentation, operation.get("slide"))
                 if len(presentation.slides) == 1:

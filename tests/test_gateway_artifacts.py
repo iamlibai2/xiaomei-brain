@@ -12,6 +12,7 @@ from xiaomei_brain.gateway.artifacts import (
     project_stored_artifact,
     public_artifact_metadata,
     read_stored_artifact,
+    read_stored_presentation_project,
 )
 from xiaomei_brain.gateway.connection import cm
 from xiaomei_brain.gateway.server_methods import MethodRouter
@@ -71,6 +72,50 @@ def test_write_file_becomes_agent_owned_artifact(tmp_path, monkeypatch):
     assert artifacts[0]["name"] == "report.md"
     assert artifacts[0]["relative_path"] == "workspace/report.md"
     assert "relative_path" not in public_artifact_metadata(artifacts[0])
+
+
+def test_pptx_artifact_keeps_private_browser_preview_project(tmp_path, monkeypatch):
+    from pptx import Presentation
+
+    monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
+    output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "outputs" / "briefing.pptx"
+    output.parent.mkdir(parents=True)
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    slide.shapes.title.text = "经营简报"
+    slide.placeholders[1].text = "本月新增客户 12 家"
+    presentation.save(output)
+
+    artifact = discover_tool_artifacts(
+        "xiaomei",
+        "session-pptx",
+        "turn-pptx",
+        "write_document",
+        {"output_path": str(output)},
+        json.dumps({"success": True, "output_path": str(output)}, ensure_ascii=False),
+    )[0]
+    project = read_stored_presentation_project(
+        "xiaomei",
+        "session-pptx",
+        artifact,
+    )
+
+    assert artifact["name"] == "briefing.pptx"
+    assert project["schema"] == "xiaomei.presentation.v1"
+    assert len(project["slides"]) == 1
+    assert any(
+        "经营简报" in str(element)
+        for element in project["slides"][0]["elements"]
+    )
+    assert not any(item["name"].endswith(".page") for item in discover_tool_artifacts(
+        "xiaomei",
+        "session-pptx",
+        "turn-pptx-pages",
+        "write_document",
+        {},
+        "ok",
+        scan_roots=(output.parent,),
+    ))
 
 
 def test_visualization_html_becomes_sandboxed_artifact_kind(tmp_path, monkeypatch):

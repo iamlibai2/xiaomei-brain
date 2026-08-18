@@ -9,9 +9,11 @@ import json
 import mimetypes
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 MAX_VIDEO_ARTIFACT_BYTES = 128 * 1024 * 1024
@@ -107,6 +109,10 @@ def discover_tool_artifacts(
             continue
         if not relative.parts or relative.parts[0] not in _OUTPUT_DIRS or not resolved.is_file():
             continue
+        # PPTD companion projects are implementation details of their PPTX
+        # artifact, not separate user-visible deliverables.
+        if ".presentation" in relative.parts:
+            continue
         relative_path = relative.as_posix()
         if relative_path in seen:
             continue
@@ -138,6 +144,15 @@ def discover_tool_artifacts(
         )
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write(storage_path, resolved.read_bytes())
+        if suffix == ".pptx":
+            _snapshot_presentation_project(
+                resolved,
+                _presentation_project_storage_path(
+                    agent_id,
+                    storage_session_id,
+                    artifact_id,
+                ),
+            )
         artifacts.append({
             "id": artifact_id,
             "session_id": storage_session_id,
@@ -191,6 +206,40 @@ def read_stored_artifact(
     }
 
 
+def read_stored_presentation_project(
+    agent_id: str,
+    session_id: str,
+    artifact: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the browser presentation project paired with one PPTX."""
+    if Path(str(artifact.get("name") or "")).suffix.lower() != ".pptx":
+        raise ArtifactError("该产物不是 PPTX 演示文稿")
+    artifact_id = str(artifact.get("id") or "")
+    if not re.fullmatch(r"[a-f0-9]{32}", artifact_id):
+        raise ArtifactError("产物标识无效")
+    archive_path = _presentation_project_storage_path(
+        agent_id,
+        session_id,
+        artifact_id,
+    )
+    if not archive_path.is_file():
+        source = stored_artifact_path(agent_id, session_id, artifact)
+        try:
+            with tempfile.TemporaryDirectory(prefix="xiaomei-presentation-") as directory:
+                from xiaomei_brain.documents.presentation_project import (
+                    build_presentation_project,
+                )
+                project_dir = Path(directory) / ".presentation" / "project"
+                build_presentation_project(source, project_dir)
+                _write_presentation_archive(project_dir, archive_path)
+        except Exception as exc:
+            raise ArtifactError(f"无法生成演示文稿预览: {exc}") from exc
+    try:
+        return _read_presentation_archive(archive_path)
+    except (BadZipFile, KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ArtifactError("演示文稿预览项目损坏") from exc
+
+
 def stored_artifact_path(
     agent_id: str,
     session_id: str,
@@ -236,6 +285,15 @@ def project_stored_artifact(
         raise ArtifactError("产物快照与会话记录不一致")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
+    source_project = _presentation_project_storage_path(
+        agent_id, source_session_id, artifact_id,
+    )
+    if source_project.is_file():
+        target_project = _presentation_project_storage_path(
+            agent_id, target_session_id, artifact_id,
+        )
+        target_project.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(target_project, source_project.read_bytes())
 
 
 def _agent_root(agent_id: str) -> Path:
@@ -251,6 +309,70 @@ def _artifact_storage_path(
 ) -> Path:
     session_key = hashlib.sha256((session_id or "main").encode("utf-8")).hexdigest()[:16]
     return _agent_root(agent_id) / "artifacts" / session_key / f"{artifact_id}{suffix}"
+
+
+def _presentation_project_storage_path(
+    agent_id: str,
+    session_id: str,
+    artifact_id: str,
+) -> Path:
+    return _artifact_storage_path(
+        agent_id,
+        session_id,
+        artifact_id,
+        ".presentation.zip",
+    )
+
+
+def _snapshot_presentation_project(pptx_path: Path, target: Path) -> None:
+    from xiaomei_brain.documents.presentation_project import (
+        build_presentation_project,
+        presentation_project_directory,
+    )
+
+    project_dir = presentation_project_directory(pptx_path)
+    try:
+        if not (project_dir / "project.json").is_file():
+            build_presentation_project(pptx_path, project_dir)
+        _write_presentation_archive(project_dir, target)
+    except Exception:
+        # Delivering the PPTX remains authoritative. A preview may be rebuilt
+        # lazily through artifact.get if snapshotting failed here.
+        target.unlink(missing_ok=True)
+
+
+def _write_presentation_archive(project_dir: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as archive:
+            for path in sorted(project_dir.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(project_dir).as_posix())
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_presentation_archive(path: Path) -> dict[str, Any]:
+    with ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if "project.json" not in names:
+            raise ValueError("missing project.json")
+        project = json.loads(archive.read("project.json").decode("utf-8"))
+        if project.get("schema") != "xiaomei.presentation.v1":
+            raise ValueError("unsupported project schema")
+        media: dict[str, dict[str, str]] = {}
+        for name in sorted(names):
+            if not name.startswith("media/") or name.endswith("/"):
+                continue
+            data = archive.read(name)
+            media[name] = {
+                "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+                "data_base64": base64.b64encode(data).decode("ascii"),
+            }
+        project["media"] = media
+        return project
 
 
 def managed_artifact_path(agent_id: str, artifact: dict[str, Any]) -> Path:
