@@ -447,8 +447,22 @@ class PresentationWriter:
         if kind == "image":
             cls._add_image(slide, element, asset_paths)
             return
+        if kind == "shape":
+            cls._add_shape_element(slide, element, theme)
+            return
+        if kind == "line":
+            cls._add_line_element(slide, element, theme)
+            return
+        if kind == "table":
+            cls._add_table_element(slide, element, theme)
+            return
+        if kind == "chart":
+            cls._add_chart_element(slide, element, theme)
+            return
         if kind != "text":
-            raise ValueError(f"不支持的 slide element: {kind}")
+            raise ValueError(
+                f"不支持的 slide element: {kind}；支持 text、image、shape、line、table、chart"
+            )
         required = ("x_cm", "y_cm", "width_cm", "height_cm")
         if any(key not in element for key in required):
             raise ValueError("text element 必须提供 x_cm、y_cm、width_cm 和 height_cm")
@@ -467,6 +481,364 @@ class PresentationWriter:
             align=str(element.get("align") or "left").lower(),
             vertical=str(element.get("vertical") or "top").lower(),
         )
+
+    @classmethod
+    def _element_box(cls, values: dict[str, Any], kind: str) -> tuple[float, float, float, float]:
+        required = ("x_cm", "y_cm", "width_cm", "height_cm")
+        if any(key not in values for key in required):
+            raise ValueError(
+                f"{kind} element 必须提供 x_cm、y_cm、width_cm 和 height_cm"
+            )
+        try:
+            box = tuple(float(values[key]) for key in required)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{kind} element 的坐标和尺寸必须是数字") from exc
+        cls._validate_box(*box)
+        return box
+
+    @classmethod
+    def _format_text_frame(
+        cls,
+        frame: Any,
+        text: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> None:
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Pt
+
+        size = float(values.get("font_size_pt", values.get("size_pt", theme["body_size_pt"])))
+        if not 6 <= size <= 144:
+            raise ValueError("font_size_pt 必须在 6 到 144 之间")
+        frame.clear()
+        frame.word_wrap = True
+        frame.vertical_anchor = {
+            "top": MSO_ANCHOR.TOP,
+            "middle": MSO_ANCHOR.MIDDLE,
+            "bottom": MSO_ANCHOR.BOTTOM,
+        }.get(str(values.get("vertical") or "middle").lower(), MSO_ANCHOR.MIDDLE)
+        paragraph = frame.paragraphs[0]
+        paragraph.alignment = {
+            "left": PP_ALIGN.LEFT,
+            "center": PP_ALIGN.CENTER,
+            "right": PP_ALIGN.RIGHT,
+        }.get(str(values.get("align") or "center").lower(), PP_ALIGN.CENTER)
+        run = paragraph.add_run()
+        run.text = cls._text(text)
+        run.font.name = str(values.get("font") or theme["font_family"])
+        run.font.size = Pt(size)
+        run.font.bold = values.get("bold") is True
+        run.font.color.rgb = cls._color(
+            values.get("text_color") or values.get("color") or theme["text_color"],
+            "text_color",
+        )
+
+    @classmethod
+    def _apply_line_style(
+        cls,
+        shape: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+        *,
+        default_color: str | None,
+    ) -> None:
+        from pptx.util import Pt
+
+        line_color = values.get("line_color", default_color)
+        if line_color is None or str(line_color).strip().lower() in {"none", "transparent"}:
+            shape.line.fill.background()
+            return
+        shape.line.color.rgb = cls._color(line_color, "line_color")
+        width = float(values.get("line_width_pt", 1.5))
+        if not 0.1 <= width <= 50:
+            raise ValueError("line_width_pt 必须在 0.1 到 50 之间")
+        shape.line.width = Pt(width)
+        if "line_dash" in values:
+            cls._set_line_dash(shape, values["line_dash"])
+        for arrow_field in ("start_arrow", "end_arrow"):
+            if arrow_field in values:
+                cls._set_line_arrow(shape, arrow_field, values[arrow_field])
+        if "line_transparency" in values:
+            cls._set_solid_fill_transparency(
+                shape, values["line_transparency"], line=True,
+            )
+
+    @classmethod
+    def _add_shape_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> Any:
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.util import Cm
+
+        aliases = {
+            "rectangle": MSO_SHAPE.RECTANGLE,
+            "rect": MSO_SHAPE.RECTANGLE,
+            "round_rect": MSO_SHAPE.ROUNDED_RECTANGLE,
+            "rounded_rectangle": MSO_SHAPE.ROUNDED_RECTANGLE,
+            "ellipse": MSO_SHAPE.OVAL,
+            "oval": MSO_SHAPE.OVAL,
+            "triangle": MSO_SHAPE.ISOSCELES_TRIANGLE,
+            "diamond": MSO_SHAPE.DIAMOND,
+            "hexagon": MSO_SHAPE.HEXAGON,
+            "chevron": MSO_SHAPE.CHEVRON,
+            "pentagon": MSO_SHAPE.REGULAR_PENTAGON,
+            "parallelogram": MSO_SHAPE.PARALLELOGRAM,
+            "trapezoid": MSO_SHAPE.TRAPEZOID,
+        }
+        shape_kind = str(values.get("shape") or "rectangle").strip().lower().replace("-", "_")
+        auto_shape = aliases.get(shape_kind)
+        if auto_shape is None:
+            raise ValueError(
+                "shape 仅支持 rectangle、round_rect、ellipse、triangle、diamond、"
+                "hexagon、chevron、pentagon、parallelogram、trapezoid"
+            )
+        left, top, width, height = cls._element_box(values, "shape")
+        shape = slide.shapes.add_shape(
+            auto_shape, Cm(left), Cm(top), Cm(width), Cm(height),
+        )
+        shape.name = str(values.get("name") or "XiaomeiShape")
+        fill_color = values.get("fill_color", theme["accent_color"])
+        if fill_color is None or str(fill_color).strip().lower() in {"none", "transparent"}:
+            shape.fill.background()
+        else:
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = cls._color(fill_color, "fill_color")
+            if "fill_transparency" in values:
+                cls._set_solid_fill_transparency(
+                    shape, values["fill_transparency"], line=False,
+                )
+        cls._apply_line_style(
+            shape, values, theme, default_color=None,
+        )
+        if "text" in values:
+            cls._format_text_frame(shape.text_frame, values["text"], values, theme)
+        if "rotation" in values:
+            rotation = float(values["rotation"])
+            if not -360 <= rotation <= 360:
+                raise ValueError("rotation 必须在 -360 到 360 之间")
+            shape.rotation = rotation
+        return shape
+
+    @classmethod
+    def _add_line_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> Any:
+        from pptx.enum.shapes import MSO_CONNECTOR
+        from pptx.util import Cm
+
+        required = ("x_cm", "y_cm", "to_x_cm", "to_y_cm")
+        if any(key not in values for key in required):
+            raise ValueError("line element 必须提供 x_cm、y_cm、to_x_cm 和 to_y_cm")
+        try:
+            start_x, start_y, end_x, end_y = (
+                float(values[key]) for key in required
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("line element 的起点和终点必须是数字") from exc
+        if min(start_x, start_y, end_x, end_y) < 0 or max(start_x, start_y, end_x, end_y) > 200:
+            raise ValueError("line element 的坐标必须在 0 到 200 厘米之间")
+        connectors = {
+            "straight": MSO_CONNECTOR.STRAIGHT,
+            "elbow": MSO_CONNECTOR.ELBOW,
+            "curve": MSO_CONNECTOR.CURVE,
+        }
+        connector_name = str(values.get("connector") or "straight").strip().lower()
+        connector = connectors.get(connector_name)
+        if connector is None:
+            raise ValueError("connector 仅支持 straight、elbow、curve")
+        shape = slide.shapes.add_connector(
+            connector, Cm(start_x), Cm(start_y), Cm(end_x), Cm(end_y),
+        )
+        shape.name = str(values.get("name") or "XiaomeiLine")
+        cls._apply_line_style(
+            shape, values, theme, default_color=theme["accent_color"],
+        )
+        return shape
+
+    @classmethod
+    def _format_table_cell(
+        cls,
+        cell: Any,
+        value: Any,
+        defaults: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> None:
+        values = dict(defaults)
+        if isinstance(value, dict):
+            values.update(value)
+            text = value.get("text", "")
+        else:
+            text = value
+        if "fill_color" in values:
+            fill_color = values.get("fill_color")
+            if fill_color is None or str(fill_color).strip().lower() in {"none", "transparent"}:
+                cell.fill.background()
+            else:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = cls._color(fill_color, "table.fill_color")
+        values.setdefault("align", "left")
+        values.setdefault("vertical", "middle")
+        cls._format_text_frame(cell.text_frame, text, values, theme)
+
+    @classmethod
+    def _add_table_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> Any:
+        from pptx.util import Cm
+
+        left, top, width, height = cls._element_box(values, "table")
+        data = values.get("data")
+        if not isinstance(data, list) or not data:
+            raise ValueError("table.data 必须是非空二维数组")
+        if len(data) > 200:
+            raise ValueError("table.data 不能超过 200 行")
+        if not isinstance(data[0], list) or not data[0]:
+            raise ValueError("table.data 每一行必须是非空数组")
+        column_count = len(data[0])
+        if column_count > 50:
+            raise ValueError("table.data 不能超过 50 列")
+        if any(not isinstance(row, list) or len(row) != column_count for row in data):
+            raise ValueError("table.data 的每一行必须具有相同列数")
+        shape = slide.shapes.add_table(
+            len(data), column_count, Cm(left), Cm(top), Cm(width), Cm(height),
+        )
+        shape.name = str(values.get("name") or "XiaomeiTable")
+        table = shape.table
+        widths = values.get("column_widths_cm")
+        if widths is not None:
+            if not isinstance(widths, list) or len(widths) != column_count:
+                raise ValueError("column_widths_cm 必须与 table.data 列数相同")
+            normalized_widths = [float(item) for item in widths]
+            if any(item <= 0 for item in normalized_widths):
+                raise ValueError("column_widths_cm 中的宽度必须大于 0")
+            for index, column_width in enumerate(normalized_widths):
+                table.columns[index].width = Cm(column_width)
+        cell_defaults = values.get("cell_style") or {}
+        header_defaults = values.get("header_style") or {}
+        if not isinstance(cell_defaults, dict) or not isinstance(header_defaults, dict):
+            raise ValueError("cell_style 和 header_style 必须是对象")
+        for row_index, row in enumerate(data):
+            for column_index, value in enumerate(row):
+                defaults = cell_defaults
+                if row_index == 0 and header_defaults:
+                    defaults = {**cell_defaults, **header_defaults}
+                cls._format_table_cell(
+                    table.cell(row_index, column_index), value, defaults, theme,
+                )
+        return shape
+
+    @classmethod
+    def _chart_data(cls, values: dict[str, Any]) -> Any:
+        from pptx.chart.data import CategoryChartData
+
+        categories = values.get("categories")
+        series_items = values.get("series")
+        if not isinstance(categories, list) or not categories:
+            raise ValueError("chart.categories 必须是非空数组")
+        if not isinstance(series_items, list) or not series_items:
+            raise ValueError("chart.series 必须是非空数组")
+        if len(categories) > 2_000 or len(series_items) > 100:
+            raise ValueError("图表数据超过支持的大小")
+        data = CategoryChartData()
+        data.categories = [str(value) for value in categories]
+        for index, item in enumerate(series_items):
+            if not isinstance(item, dict):
+                raise ValueError("chart.series 中的每一项必须是对象")
+            series_values = item.get("values")
+            if not isinstance(series_values, list) or len(series_values) != len(categories):
+                raise ValueError("每个 chart.series 必须为每个 category 提供一个值")
+            normalized: list[float | None] = []
+            for value in series_values:
+                if value is None:
+                    normalized.append(None)
+                    continue
+                try:
+                    normalized.append(float(value))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"无效的图表数值: {value}") from exc
+            data.add_series(str(item.get("name") or f"系列 {index + 1}"), normalized)
+        return data
+
+    @classmethod
+    def _add_chart_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> Any:
+        from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+        from pptx.util import Cm
+
+        left, top, width, height = cls._element_box(values, "chart")
+        chart_types = {
+            "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+            "column_clustered": XL_CHART_TYPE.COLUMN_CLUSTERED,
+            "column_stacked": XL_CHART_TYPE.COLUMN_STACKED,
+            "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+            "bar_clustered": XL_CHART_TYPE.BAR_CLUSTERED,
+            "line": XL_CHART_TYPE.LINE,
+            "line_markers": XL_CHART_TYPE.LINE_MARKERS,
+            "pie": XL_CHART_TYPE.PIE,
+            "doughnut": XL_CHART_TYPE.DOUGHNUT,
+            "area": XL_CHART_TYPE.AREA,
+        }
+        type_name = str(values.get("chart_type") or "column").strip().lower().replace("-", "_")
+        chart_type = chart_types.get(type_name)
+        if chart_type is None:
+            raise ValueError(
+                "chart_type 仅支持 column、column_stacked、bar、line、line_markers、"
+                "pie、doughnut、area"
+            )
+        shape = slide.shapes.add_chart(
+            chart_type, Cm(left), Cm(top), Cm(width), Cm(height), cls._chart_data(values),
+        )
+        shape.name = str(values.get("name") or "XiaomeiChart")
+        chart = shape.chart
+        title = cls._text(values.get("title"))
+        chart.has_title = bool(title)
+        if title:
+            chart.chart_title.text_frame.text = title
+        chart.has_legend = bool(values.get("show_legend", True))
+        if chart.has_legend:
+            positions = {
+                "top": XL_LEGEND_POSITION.TOP,
+                "bottom": XL_LEGEND_POSITION.BOTTOM,
+                "left": XL_LEGEND_POSITION.LEFT,
+                "right": XL_LEGEND_POSITION.RIGHT,
+            }
+            position_name = str(values.get("legend_position") or "bottom").lower()
+            if position_name not in positions:
+                raise ValueError("legend_position 仅支持 top、bottom、left、right")
+            chart.legend.position = positions[position_name]
+        colors = values.get("series_colors")
+        if colors is not None:
+            if not isinstance(colors, list) or not colors:
+                raise ValueError("series_colors 必须是非空数组")
+            for index, series in enumerate(chart.series):
+                rgb = cls._color(colors[index % len(colors)], f"series_colors[{index}]")
+                try:
+                    series.format.fill.solid()
+                    series.format.fill.fore_color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+                try:
+                    series.format.line.color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+        if values.get("show_values") is True:
+            for plot in chart.plots:
+                plot.has_data_labels = True
+                plot.data_labels.show_value = True
+        return shape
 
     @staticmethod
     def _validate_box(left: float, top: float, width: float, height: float) -> None:

@@ -140,6 +140,34 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
           "bold": true,
           "align": "center",
           "vertical": "middle"
+        },
+        {
+          "type": "shape",
+          "shape": "round_rect",
+          "text": "方案确认",
+          "x_cm": 3,
+          "y_cm": 4,
+          "width_cm": 7,
+          "height_cm": 2.5,
+          "fill_color": "EAF2EC",
+          "line_color": "2F6B4F",
+          "line_width_pt": 1.5,
+          "text_color": "172033",
+          "font_size_pt": 18,
+          "bold": true,
+          "align": "center",
+          "vertical": "middle"
+        },
+        {
+          "type": "line",
+          "connector": "elbow",
+          "x_cm": 10,
+          "y_cm": 5.25,
+          "to_x_cm": 14,
+          "to_y_cm": 8,
+          "line_color": "2F6B4F",
+          "line_width_pt": 2,
+          "end_arrow": "triangle"
         }
       ]
     }
@@ -152,6 +180,62 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
 
 图片使用当前消息中的真实 `attachment_id`，或当前执行 workspace 中已有的
 相对 `workspace_path`。两者只能提供一个。自定义文字元素的位置与尺寸以厘米为单位。
+
+`slide.elements` 可创建可继续编辑的 PowerPoint 原生元素：
+
+- `text`：文字框，提供 `text`、`x_cm`、`y_cm`、`width_cm`、`height_cm`；
+- `image`：图片，提供受控附件或 Workspace 路径；
+- `shape`：基础形状。`shape` 支持 `rectangle`、`round_rect`、`ellipse`、
+  `triangle`、`diamond`、`hexagon`、`chevron`、`pentagon`、`parallelogram`、
+  `trapezoid`，可同时设置文字、填充、边线、透明度和旋转；
+- `line`：原生连接线。以 `x_cm`、`y_cm` 为起点，以 `to_x_cm`、`to_y_cm`
+  为终点；`connector` 支持 `straight`、`elbow`、`curve`，并支持虚线和箭头；
+- `table`：原生表格。用非空二维数组 `data` 提供单元格；单元格可直接写值，也可写
+  `{"text": "...", "fill_color": "...", "text_color": "...", "bold": true}`。
+  可用 `cell_style`、`header_style` 和 `column_widths_cm` 设置公共样式；
+- `chart`：原生图表。用 `categories` 和 `series` 提供数据；`chart_type` 支持
+  `column`、`column_stacked`、`bar`、`line`、`line_markers`、`pie`、`doughnut`、
+  `area`，可设置标题、图例位置、系列颜色和数值标签。
+
+需要流程图或结构图时，优先组合原生 `shape` 与 `line`，不要把整个图绘制成图片。
+需要表达数据时，优先使用原生 `table` 或 `chart`，让后续修改仍可定位到具体元素。
+
+原生表格和图表示例：
+
+```json
+{
+  "type": "blank",
+  "elements": [
+    {
+      "type": "table",
+      "x_cm": 1.5, "y_cm": 3, "width_cm": 14, "height_cm": 7,
+      "header_style": {
+        "fill_color": "2F6B4F", "text_color": "FFFFFF", "bold": true
+      },
+      "data": [
+        ["地区", "一季度", "二季度"],
+        ["华东", 120, 148],
+        ["华南", 98, 126]
+      ]
+    },
+    {
+      "type": "chart",
+      "chart_type": "column",
+      "x_cm": 17, "y_cm": 3, "width_cm": 15, "height_cm": 9,
+      "title": "季度销售额",
+      "categories": ["一季度", "二季度"],
+      "series": [
+        {"name": "华东", "values": [120, 148]},
+        {"name": "华南", "values": [98, 126]}
+      ],
+      "show_legend": true,
+      "legend_position": "bottom",
+      "series_colors": ["2F6B4F", "C6F24E"],
+      "show_values": true
+    }
+  ]
+}
+```
 
 调用示例：
 

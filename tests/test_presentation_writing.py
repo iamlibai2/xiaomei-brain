@@ -128,6 +128,147 @@ def test_write_document_creates_themed_presentation_with_image_and_notes(tmp_pat
     )
 
 
+def test_write_document_creates_native_shape_line_table_and_chart(tmp_path):
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from pptx.oxml.ns import qn
+
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    spec = workspace / "native-elements.json"
+    spec.write_text(json.dumps({
+        "page": {"size": "wide"},
+        "theme": {
+            "accent_color": "2F6B4F",
+            "text_color": "172033",
+            "font_family": "Microsoft YaHei",
+        },
+        "slides": [{
+            "type": "blank",
+            "elements": [
+                {
+                    "type": "shape",
+                    "shape": "round_rect",
+                    "name": "ApprovalNode",
+                    "x_cm": 1,
+                    "y_cm": 1,
+                    "width_cm": 7,
+                    "height_cm": 2.5,
+                    "fill_color": "EAF2EC",
+                    "line_color": "2F6B4F",
+                    "line_width_pt": 2,
+                    "text": "方案确认",
+                    "font_size_pt": 18,
+                    "bold": True,
+                    "align": "center",
+                    "vertical": "middle",
+                },
+                {
+                    "type": "line",
+                    "connector": "elbow",
+                    "name": "ApprovalFlow",
+                    "x_cm": 8,
+                    "y_cm": 2.25,
+                    "to_x_cm": 12,
+                    "to_y_cm": 4,
+                    "line_color": "2F6B4F",
+                    "line_width_pt": 2.5,
+                    "line_dash": "dash",
+                    "end_arrow": {"type": "triangle", "width": "lg", "length": "lg"},
+                },
+                {
+                    "type": "table",
+                    "name": "SalesTable",
+                    "x_cm": 1,
+                    "y_cm": 5,
+                    "width_cm": 13,
+                    "height_cm": 6,
+                    "column_widths_cm": [5, 4, 4],
+                    "header_style": {
+                        "fill_color": "2F6B4F",
+                        "text_color": "FFFFFF",
+                        "bold": True,
+                        "align": "center",
+                    },
+                    "cell_style": {"font_size_pt": 13},
+                    "data": [
+                        ["地区", "一季度", "二季度"],
+                        ["华东", 120, 148],
+                        ["华南", 98, {"text": 126, "bold": True}],
+                    ],
+                },
+                {
+                    "type": "chart",
+                    "chart_type": "column",
+                    "name": "SalesChart",
+                    "x_cm": 15,
+                    "y_cm": 1,
+                    "width_cm": 17,
+                    "height_cm": 10,
+                    "title": "季度销售额",
+                    "categories": ["一季度", "二季度"],
+                    "series": [
+                        {"name": "华东", "values": [120, 148]},
+                        {"name": "华南", "values": [98, 126]},
+                    ],
+                    "show_legend": True,
+                    "legend_position": "bottom",
+                    "series_colors": ["2F6B4F", "C6F24E"],
+                    "show_values": True,
+                },
+            ],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-native-elements",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="native-elements.json",
+            output_name="native-elements.pptx",
+        )
+
+    assert result.get("success") is True, result
+    assert result["validation"]["chart_count"] == 1
+    deck = Presentation(outputs / "native-elements.pptx")
+    shapes = list(deck.slides[0].shapes)
+    node = next(shape for shape in shapes if shape.name == "ApprovalNode")
+    assert node.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+    assert node.text == "方案确认"
+    connector = next(shape for shape in shapes if shape.name == "ApprovalFlow")
+    assert connector.shape_type == MSO_SHAPE_TYPE.LINE
+    line = connector._element.spPr.find(qn("a:ln"))
+    assert line.find(qn("a:prstDash")).get("val") == "dash"
+    assert line.find(qn("a:tailEnd")).get("type") == "triangle"
+    table_shape = next(shape for shape in shapes if shape.name == "SalesTable")
+    assert table_shape.has_table
+    assert table_shape.table.cell(1, 0).text == "华东"
+    assert table_shape.table.cell(2, 2).text == "126"
+    chart_shape = next(shape for shape in shapes if shape.name == "SalesChart")
+    assert chart_shape.has_chart
+    assert chart_shape.chart.chart_title.text_frame.text == "季度销售额"
+    assert list(chart_shape.chart.series[0].values) == [120.0, 148.0]
+    project = json.loads(
+        (outputs / ".presentation" / "native-elements" / "project.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    element_types = {item["elementType"] for item in project["slides"][0]["elements"]}
+    assert {"shape", "line", "table", "chart"}.issubset(element_types)
+    extracted = PresentationExtractor().extract(outputs / "native-elements.pptx")
+    content = extracted.sections[0].content
+    for element_type in ("shape", "line", "table", "chart"):
+        assert f"type={element_type}" in content
+
+
 def test_write_document_revises_presentation_copy_and_preserves_source(tmp_path):
     registry = _presentation_registry()
     tool = create_write_document_tool(registry)
