@@ -1202,10 +1202,25 @@ body.is-resizing-artifact-workspace {
 .presentation-slide-element.text,
 .presentation-slide-element.shape {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  padding: .15em .22em;
+  padding: 0;
   white-space: pre-wrap;
   line-height: 1.2;
+}
+
+.presentation-text-paragraph {
+  width: 100%;
+  min-height: 1em;
+  flex: 0 0 auto;
+  white-space: pre-wrap;
+}
+
+.presentation-text-bullet {
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+  text-align: center;
 }
 
 .presentation-slide-element.image {
@@ -1214,7 +1229,6 @@ body.is-resizing-artifact-workspace {
 
 .presentation-slide-element.chart {
   padding: 1.4cqw 1.6cqw 1.1cqw;
-  background: rgba(255, 255, 255, .96);
   color: #253047;
 }
 
@@ -1336,8 +1350,6 @@ body.is-resizing-artifact-workspace {
   display: grid;
   border-top: 1px solid #cfd4dd;
   border-left: 1px solid #cfd4dd;
-  background: rgba(255, 255, 255, .94);
-  color: #253047;
   font-size: 1.45cqw;
 }
 

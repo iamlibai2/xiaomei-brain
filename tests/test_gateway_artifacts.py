@@ -76,6 +76,7 @@ def test_write_file_becomes_agent_owned_artifact(tmp_path, monkeypatch):
 
 def test_pptx_artifact_keeps_private_browser_preview_project(tmp_path, monkeypatch):
     from pptx import Presentation
+    from xiaomei_brain.documents.presentation_project import PROJECT_GENERATOR_VERSION
 
     monkeypatch.setattr(artifact_module.Path, "home", classmethod(lambda cls: tmp_path))
     output = tmp_path / ".xiaomei-brain" / "xiaomei" / "workspace" / "outputs" / "briefing.pptx"
@@ -102,6 +103,7 @@ def test_pptx_artifact_keeps_private_browser_preview_project(tmp_path, monkeypat
 
     assert artifact["name"] == "briefing.pptx"
     assert project["schema"] == "xiaomei.presentation.v1"
+    assert project["generatorVersion"] == PROJECT_GENERATOR_VERSION
     assert len(project["slides"]) == 1
     assert any(
         "经营简报" in str(element)

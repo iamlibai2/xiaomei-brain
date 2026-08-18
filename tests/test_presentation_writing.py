@@ -461,6 +461,7 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     )
     assert chart_element["elementId"].endswith(str(chart_shape.shape_id))
     assert chart_element["title"] == "Quarterly sales"
+    assert chart_element["fill"]["color"] == "transparent"
     assert chart_element["categories"] == ["Q1", "Q2", "Q3"]
     assert chart_element["series"][0]["values"] == [10.0, 18.0, 24.0]
 
@@ -513,3 +514,124 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     assert [series.name for series in updated_chart.series] == ["East", "West"]
     assert list(updated_chart.series[1].values) == [8.0, 15.0, 19.0, 26.0]
     assert updated_chart.has_legend is True
+
+
+def test_presentation_preview_preserves_no_fill_and_no_line(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from xiaomei_brain.documents.presentation_project import (
+        PROJECT_GENERATOR_VERSION,
+        build_presentation_project,
+    )
+
+    source = tmp_path / "dark-cover.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = RGBColor(0x14, 0x14, 0x14)
+    text_shape = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Cm(2), Cm(2), Cm(20), Cm(3),
+    )
+    text_shape.text = "把对话变成生产力"
+    text_shape.fill.background()
+    text_shape.line.fill.background()
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "dark-cover"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    element = project["slides"][0]["elements"][0]
+
+    assert project["generatorVersion"] == PROJECT_GENERATOR_VERSION
+    assert project["slides"][0]["background"]["color"] == "#141414"
+    assert element["fill"] == {"type": "none", "color": "transparent"}
+    assert element["line"] == {
+        "type": "none",
+        "color": "transparent",
+        "width": 0,
+    }
+
+
+def test_presentation_preview_preserves_rich_text_layout_and_rotation(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Pt
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "rich-cover.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(2), Cm(2), Cm(20), Cm(5))
+    shape.rotation = 4
+    shape.fill.background()
+    shape.line.fill.background()
+    frame = shape.text_frame
+    frame.clear()
+    frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    frame.margin_left = Pt(12)
+    frame.margin_right = Pt(14)
+    frame.margin_top = Pt(6)
+    frame.margin_bottom = Pt(8)
+    paragraph = frame.paragraphs[0]
+    paragraph.alignment = PP_ALIGN.CENTER
+    paragraph.space_after = Pt(5)
+    first = paragraph.add_run()
+    first.text = "Before "
+    first.font.size = Pt(42)
+    first.font.bold = True
+    first.font.color.rgb = RGBColor(0xF2, 0xF2, 0xF2)
+    second = paragraph.add_run()
+    second.text = "After"
+    second.font.size = Pt(42)
+    second.font.bold = True
+    second.font.color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "rich-cover"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    element = project["slides"][0]["elements"][0]
+    text_style = element["textStyle"]
+    rich_paragraph = element["richText"]["paragraphs"][0]
+
+    assert element["rotation"] == 4.0
+    assert text_style["verticalAlign"] == "middle"
+    assert text_style["margins"] == [6.0, 14.0, 8.0, 12.0]
+    assert rich_paragraph["align"] == "center"
+    assert rich_paragraph["spaceAfter"] == 5.0
+    assert [run["color"] for run in rich_paragraph["runs"]] == ["#F2F2F2", "#C6F24E"]
+    assert [run["fontSize"] for run in rich_paragraph["runs"]] == [42.0, 42.0]
+
+
+def test_presentation_preview_preserves_table_cell_styles_and_merges(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "styled-table.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    table = slide.shapes.add_table(2, 2, Cm(2), Cm(2), Cm(20), Cm(8)).table
+    header = table.cell(0, 0)
+    header.text = "Header"
+    header.fill.solid()
+    header.fill.fore_color.rgb = RGBColor(0x14, 0x14, 0x14)
+    header.text_frame.paragraphs[0].runs[0].font.color.rgb = RGBColor(0xF2, 0xF2, 0xF2)
+    header.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+    header.merge(table.cell(0, 1))
+    table.cell(1, 0).text = "A"
+    table.cell(1, 1).text = "B"
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "styled-table"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    cells = project["slides"][0]["elements"][0]["cells"]
+
+    assert cells[0]["fill"] == {"type": "solid", "color": "#141414"}
+    assert cells[0]["textStyle"]["color"] == "#F2F2F2"
+    assert cells[0]["textStyle"]["fontSize"] == 18.0
+    assert cells[0]["columnSpan"] == 2
+    assert cells[1]["hidden"] is True

@@ -223,21 +223,40 @@ def read_stored_presentation_project(
         artifact_id,
     )
     if not archive_path.is_file():
-        source = stored_artifact_path(agent_id, session_id, artifact)
-        try:
-            with tempfile.TemporaryDirectory(prefix="xiaomei-presentation-") as directory:
-                from xiaomei_brain.documents.presentation_project import (
-                    build_presentation_project,
-                )
-                project_dir = Path(directory) / ".presentation" / "project"
-                build_presentation_project(source, project_dir)
-                _write_presentation_archive(project_dir, archive_path)
-        except Exception as exc:
-            raise ArtifactError(f"无法生成演示文稿预览: {exc}") from exc
+        _rebuild_stored_presentation_project(
+            agent_id, session_id, artifact, archive_path,
+        )
     try:
         return _read_presentation_archive(archive_path)
-    except (BadZipFile, KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
-        raise ArtifactError("演示文稿预览项目损坏") from exc
+    except (BadZipFile, KeyError, OSError, ValueError, json.JSONDecodeError):
+        # Preview archives are derived caches. Rebuild old generator versions
+        # and damaged archives from the immutable PPTX snapshot.
+        _rebuild_stored_presentation_project(
+            agent_id, session_id, artifact, archive_path,
+        )
+        try:
+            return _read_presentation_archive(archive_path)
+        except (BadZipFile, KeyError, OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ArtifactError("演示文稿预览项目损坏") from exc
+
+
+def _rebuild_stored_presentation_project(
+    agent_id: str,
+    session_id: str,
+    artifact: dict[str, Any],
+    archive_path: Path,
+) -> None:
+    source = stored_artifact_path(agent_id, session_id, artifact)
+    try:
+        with tempfile.TemporaryDirectory(prefix="xiaomei-presentation-") as directory:
+            from xiaomei_brain.documents.presentation_project import (
+                build_presentation_project,
+            )
+            project_dir = Path(directory) / ".presentation" / "project"
+            build_presentation_project(source, project_dir)
+            _write_presentation_archive(project_dir, archive_path)
+    except Exception as exc:
+        raise ArtifactError(f"无法生成演示文稿预览: {exc}") from exc
 
 
 def stored_artifact_path(
@@ -332,8 +351,7 @@ def _snapshot_presentation_project(pptx_path: Path, target: Path) -> None:
 
     project_dir = presentation_project_directory(pptx_path)
     try:
-        if not (project_dir / "project.json").is_file():
-            build_presentation_project(pptx_path, project_dir)
+        build_presentation_project(pptx_path, project_dir)
         _write_presentation_archive(project_dir, target)
     except Exception:
         # Delivering the PPTX remains authoritative. A preview may be rebuilt
@@ -355,6 +373,10 @@ def _write_presentation_archive(project_dir: Path, target: Path) -> None:
 
 
 def _read_presentation_archive(path: Path) -> dict[str, Any]:
+    from xiaomei_brain.documents.presentation_project import (
+        PROJECT_GENERATOR_VERSION,
+    )
+
     with ZipFile(path) as archive:
         names = set(archive.namelist())
         if "project.json" not in names:
@@ -362,6 +384,8 @@ def _read_presentation_archive(path: Path) -> dict[str, Any]:
         project = json.loads(archive.read("project.json").decode("utf-8"))
         if project.get("schema") != "xiaomei.presentation.v1":
             raise ValueError("unsupported project schema")
+        if project.get("generatorVersion") != PROJECT_GENERATOR_VERSION:
+            raise ValueError("stale presentation preview")
         media: dict[str, dict[str, str]] = {}
         for name in sorted(names):
             if not name.startswith("media/") or name.endswith("/"):

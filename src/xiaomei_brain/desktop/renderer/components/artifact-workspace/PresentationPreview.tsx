@@ -9,23 +9,58 @@ type PresentationMedia = {
   data_base64: string;
 };
 
+type PresentationTextStyle = {
+  fontSize?: number;
+  fontFamily?: string;
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  align?: string;
+  verticalAlign?: "top" | "middle" | "bottom";
+  margins?: [number, number, number, number];
+};
+
+type PresentationTextRun = PresentationTextStyle & { text: string };
+
+type PresentationTextParagraph = {
+  align?: string;
+  level?: number;
+  bullet?: boolean;
+  spaceBefore?: number;
+  spaceAfter?: number;
+  lineHeight?: { points?: number; multiple?: number };
+  runs?: PresentationTextRun[];
+};
+
 type PresentationElement = {
   elementId: string;
   elementType: "text" | "shape" | "image" | "table" | "chart";
   bounds: [number, number, number, number];
-  content?: { text?: string; fontSize?: number; fontFamily?: string; color?: string; bold?: boolean; align?: string };
+  rotation?: number;
+  content?: PresentationTextStyle & { text?: string };
   text?: string;
-  textStyle?: { fontSize?: number; fontFamily?: string; color?: string; bold?: boolean; align?: string };
+  textStyle?: PresentationTextStyle;
+  richText?: { paragraphs?: PresentationTextParagraph[] };
   shapeName?: string;
-  fill?: { color?: string };
-  line?: { color?: string; width?: number };
+  fill?: { type?: "none" | "solid" | "unknown"; color?: string };
+  line?: { type?: "none" | "solid" | "unknown"; color?: string; width?: number };
   src?: string;
   fit?: { mode?: "cover" | "contain" };
   rows?: number;
   columns?: number;
-  cells?: Array<{ row: number; column: number; text: string }>;
+  cells?: Array<{
+    row: number;
+    column: number;
+    text: string;
+    fill?: { type?: "none" | "solid" | "unknown"; color?: string };
+    textStyle?: PresentationTextStyle;
+    columnSpan?: number;
+    rowSpan?: number;
+    hidden?: boolean;
+  }>;
   chartType?: string;
   title?: string;
+  titleStyle?: { fontSize?: number; fontFamily?: string; color?: string; bold?: boolean; align?: string };
   categories?: string[];
   series?: Array<{ name: string; values: Array<number | string | null>; color?: string }>;
   hasLegend?: boolean;
@@ -53,10 +88,60 @@ function elementStyle(element: PresentationElement, project: PresentationProject
     top: `${y / project.size[1] * 100}%`,
     width: `${width / project.size[0] * 100}%`,
     height: `${height / project.size[1] * 100}%`,
+    transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
   };
 }
 
-function PresentationChart({ element }: { element: PresentationElement }) {
+function pointsToCanvasWidth(points: number | undefined, project: PresentationProject): string | undefined {
+  return typeof points === "number" ? `${points / project.size[0] * 100}cqw` : undefined;
+}
+
+function richTextContent(
+  element: PresentationElement,
+  baseStyle: PresentationTextStyle | undefined,
+  project: PresentationProject,
+) {
+  const paragraphs = element.richText?.paragraphs || [];
+  if (!paragraphs.length) return element.elementType === "text" ? element.content?.text : element.text;
+  return paragraphs.map((paragraph, paragraphIndex) => {
+    const lineHeight = paragraph.lineHeight?.points
+      ? pointsToCanvasWidth(paragraph.lineHeight.points, project)
+      : paragraph.lineHeight?.multiple;
+    return (
+      <div
+        className="presentation-text-paragraph"
+        key={`${element.elementId}-paragraph-${paragraphIndex}`}
+        style={{
+          marginTop: pointsToCanvasWidth(paragraph.spaceBefore, project),
+          marginBottom: pointsToCanvasWidth(paragraph.spaceAfter, project),
+          paddingLeft: paragraph.level ? `${paragraph.level * 1.2}em` : undefined,
+          lineHeight,
+          textAlign: paragraph.align === "center" || paragraph.align === "right" || paragraph.align === "justify"
+            ? paragraph.align
+            : baseStyle?.align === "center" || baseStyle?.align === "right" ? baseStyle.align : "left",
+        }}
+      >
+        {paragraph.bullet && <span className="presentation-text-bullet" aria-hidden="true">•</span>}
+        {(paragraph.runs || []).map((run, runIndex) => (
+          <span
+            key={`${element.elementId}-paragraph-${paragraphIndex}-run-${runIndex}`}
+            style={{
+              color: run.color,
+              fontFamily: run.fontFamily,
+              fontSize: run.fontSize ? `${run.fontSize / project.size[0] * 100}cqw` : undefined,
+              fontWeight: run.bold ? 700 : undefined,
+              fontStyle: run.italic ? "italic" : undefined,
+            }}
+          >
+            {run.text}
+          </span>
+        ))}
+      </div>
+    );
+  });
+}
+
+function PresentationChart({ element, project }: { element: PresentationElement; project: PresentationProject }) {
   const categories = (element.categories || []).slice(0, 16);
   const series = (element.series || []).slice(0, 8);
   const numericSeries = series.map((item) => ({
@@ -83,7 +168,24 @@ function PresentationChart({ element }: { element: PresentationElement }) {
   }).join(", ")})` : "#e5e7eb";
   return (
     <div className="presentation-chart-content">
-      {element.title && <div className="presentation-chart-title">{element.title}</div>}
+      {element.title && (
+        <div
+          className="presentation-chart-title"
+          style={{
+            color: element.titleStyle?.color,
+            fontFamily: element.titleStyle?.fontFamily,
+            fontSize: element.titleStyle?.fontSize
+              ? `${element.titleStyle.fontSize / project.size[0] * 100}cqw`
+              : undefined,
+            fontWeight: element.titleStyle?.bold ? 700 : undefined,
+            textAlign: element.titleStyle?.align === "left" || element.titleStyle?.align === "right"
+              ? element.titleStyle.align
+              : "center",
+          }}
+        >
+          {element.title}
+        </div>
+      )}
       <div className="presentation-chart-plot">
         {isPie ? (
           <div className={`presentation-chart-pie${chartType.includes("doughnut") ? " doughnut" : ""}`} style={{ background: pieBackground }} />
@@ -186,17 +288,17 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
               key={element.elementId}
               className={`presentation-slide-element chart${selectableClass}${selectedClass}`}
               data-element-id={element.elementId}
-              style={style}
+              style={{ ...style, background: element.fill?.color || "transparent" }}
               onClick={select}
             >
-              <PresentationChart element={element} />
+              <PresentationChart element={element} project={project} />
             </div>
           );
         }
         if (element.elementType === "table") {
           const columns = Math.max(1, element.columns || 1);
           const rows = Math.max(1, element.rows || 1);
-          const cells = new Map((element.cells || []).map((cell) => [`${cell.row}:${cell.column}`, cell.text]));
+          const cells = new Map((element.cells || []).map((cell) => [`${cell.row}:${cell.column}`, cell]));
           return (
             <div
               key={element.elementId}
@@ -208,12 +310,29 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
               {Array.from({ length: rows * columns }, (_, index) => {
                 const row = Math.floor(index / columns);
                 const column = index % columns;
-                const text = cells.get(`${row}:${column}`) || "";
+                const cell = cells.get(`${row}:${column}`);
+                if (cell?.hidden) return null;
+                const text = cell?.text || "";
                 const cellKey = `${row + 1}:${column + 1}`;
                 return (
                   <div
                     key={`${row}:${column}`}
                     className={selectedCell === cellKey ? "selected" : ""}
+                    style={{
+                      gridColumn: `${column + 1} / span ${Math.max(1, cell?.columnSpan || 1)}`,
+                      gridRow: `${row + 1} / span ${Math.max(1, cell?.rowSpan || 1)}`,
+                      background: cell?.fill?.color || "transparent",
+                      color: cell?.textStyle?.color,
+                      fontFamily: cell?.textStyle?.fontFamily,
+                      fontSize: cell?.textStyle?.fontSize
+                        ? `${cell.textStyle.fontSize / project.size[0] * 100}cqw`
+                        : undefined,
+                      fontWeight: cell?.textStyle?.bold ? 700 : undefined,
+                      fontStyle: cell?.textStyle?.italic ? "italic" : undefined,
+                      textAlign: cell?.textStyle?.align === "center" || cell?.textStyle?.align === "right"
+                        ? cell.textStyle.align
+                        : "left",
+                    }}
                     onClick={(event) => {
                       if (!onSelectElement) return;
                       event.stopPropagation();
@@ -234,6 +353,7 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
         const textStyle = element.elementType === "text" ? element.content : element.textStyle;
         const content = element.elementType === "text" ? element.content?.text : element.text;
         const borderRadius = element.shapeName === "ellipse" ? "50%" : element.shapeName === "roundRect" ? "8%" : 0;
+        const margins = textStyle?.margins || [0, 0, 0, 0];
         return (
           <div
             key={element.elementId}
@@ -248,11 +368,16 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
               fontFamily: textStyle?.fontFamily,
               fontSize: `${(textStyle?.fontSize || 18) / project.size[0] * 100}cqw`,
               fontWeight: textStyle?.bold ? 700 : 400,
+              fontStyle: textStyle?.italic ? "italic" : undefined,
               textAlign: textStyle?.align === "center" || textStyle?.align === "right" ? textStyle.align : "left",
+              justifyContent: textStyle?.verticalAlign === "middle"
+                ? "center"
+                : textStyle?.verticalAlign === "bottom" ? "flex-end" : "flex-start",
+              padding: margins.map((value) => pointsToCanvasWidth(value, project) || "0").join(" "),
             }}
             onClick={select}
           >
-            {content}
+            {element.richText?.paragraphs?.length ? richTextContent(element, textStyle, project) : content}
           </div>
         );
       })}

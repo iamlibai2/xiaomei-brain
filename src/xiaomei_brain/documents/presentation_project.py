@@ -17,6 +17,7 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
+PROJECT_GENERATOR_VERSION = 4
 CANVAS_WIDTH = 960.0
 
 
@@ -94,6 +95,7 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
     _write_json(project_dir / manifest_name, manifest)
     project = {
         "schema": PROJECT_SCHEMA,
+        "generatorVersion": PROJECT_GENERATOR_VERSION,
         "title": title,
         "size": [canvas_width, canvas_height],
         "manifest": manifest_name,
@@ -187,6 +189,7 @@ def _shape_elements(
                 "elementId": element_id,
                 "elementType": "image",
                 "bounds": bounds,
+                "rotation": _shape_rotation(shape),
                 "src": f"media/{filename}",
                 "fit": {"mode": "cover"},
             }]
@@ -203,23 +206,30 @@ def _shape_elements(
     if getattr(shape, "has_text_frame", False):
         text = str(shape.text or "").strip()
     style = _text_style(shape)
+    rich_text = _rich_text(shape.text_frame) if getattr(shape, "has_text_frame", False) else None
     if shape_type in {MSO_SHAPE_TYPE.AUTO_SHAPE, MSO_SHAPE_TYPE.FREEFORM}:
+        fill = _shape_fill(shape)
+        line = _shape_line(shape)
         return [{
             "elementId": element_id,
             "elementType": "shape",
             "bounds": bounds,
+            "rotation": _shape_rotation(shape),
             "shapeName": _shape_name(shape),
-            "fill": {"type": "solid", "color": _fill_color(shape, "#FFFFFF")},
-            "line": {"color": _line_color(shape, "#D7DCE5"), "width": 1},
+            "fill": fill,
+            "line": line,
             "text": text,
             "textStyle": style,
+            "richText": rich_text,
         }]
     if text:
         return [{
             "elementId": element_id,
             "elementType": "text",
             "bounds": bounds,
+            "rotation": _shape_rotation(shape),
             "content": {"text": text, **style},
+            "richText": rich_text,
         }]
     return []
 
@@ -240,6 +250,11 @@ def _table_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
                 "row": row_index,
                 "column": column_index,
                 "text": str(cell.text or ""),
+                "fill": _fill_format(cell.fill),
+                "textStyle": _text_frame_style(cell.text_frame),
+                "columnSpan": int(getattr(cell, "span_width", 1) or 1),
+                "rowSpan": int(getattr(cell, "span_height", 1) or 1),
+                "hidden": bool(getattr(cell, "is_spanned", False)),
             })
     return [{
         "elementId": element_id,
@@ -287,10 +302,39 @@ def _chart_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
         "bounds": bounds,
         "chartType": chart_type,
         "title": title,
+        "titleStyle": _chart_title_style(chart),
+        "fill": _chart_fill(chart),
         "categories": categories,
         "series": series_items,
         "hasLegend": bool(chart.has_legend),
     }]
+
+
+def _chart_fill(chart: Any) -> dict[str, Any]:
+    """Return the chart-area fill from ``c:chartSpace/c:spPr``."""
+    try:
+        from pptx.oxml.ns import qn
+
+        properties = chart._chartSpace.find(qn("c:spPr"))
+        if properties is None or properties.find(qn("a:noFill")) is not None:
+            return {"type": "none", "color": "transparent"}
+        solid = properties.find(qn("a:solidFill"))
+        if solid is not None:
+            color = solid.find(qn("a:srgbClr"))
+            if color is not None and color.get("val"):
+                return {"type": "solid", "color": f"#{color.get('val')}"}
+    except Exception:
+        pass
+    return {"type": "unknown", "color": "transparent"}
+
+
+def _chart_title_style(chart: Any) -> dict[str, Any]:
+    try:
+        if chart.has_title:
+            return _text_frame_style(chart.chart_title.text_frame)
+    except Exception:
+        pass
+    return {"fontSize": 18, "color": "#253047", "bold": False, "align": "center"}
 
 
 def _chart_value(value: Any) -> float | str | None:
@@ -323,14 +367,23 @@ def _chart_series_color(series: Any, index: int) -> str:
 
 
 def _text_style(shape: Any) -> dict[str, Any]:
+    try:
+        return _text_frame_style(shape.text_frame)
+    except Exception:
+        return {"fontSize": 18, "color": "#253047", "bold": False, "align": "left"}
+
+
+def _text_frame_style(text_frame: Any) -> dict[str, Any]:
     style: dict[str, Any] = {
         "fontSize": 18,
         "color": "#253047",
         "bold": False,
         "align": "left",
+        "verticalAlign": _vertical_alignment(text_frame),
+        "margins": _text_frame_margins(text_frame),
     }
     try:
-        paragraphs: Iterable[Any] = shape.text_frame.paragraphs
+        paragraphs: Iterable[Any] = text_frame.paragraphs
         paragraph = next(iter(paragraphs), None)
         if paragraph is None:
             return style
@@ -343,8 +396,9 @@ def _text_style(shape: Any) -> dict[str, Any]:
         font = run.font if run is not None else paragraph.font
         if font.size is not None:
             style["fontSize"] = round(float(font.size.pt), 2)
-        if font.name:
-            style["fontFamily"] = str(font.name)
+        family = _font_family(font)
+        if family:
+            style["fontFamily"] = family
         if font.bold is not None:
             style["bold"] = bool(font.bold)
         color = _font_color(font)
@@ -355,6 +409,140 @@ def _text_style(shape: Any) -> dict[str, Any]:
     return style
 
 
+def _rich_text(text_frame: Any) -> dict[str, Any]:
+    """Preserve paragraph and run formatting instead of flattening a text box."""
+    paragraphs: list[dict[str, Any]] = []
+    try:
+        for paragraph in text_frame.paragraphs:
+            paragraph_item: dict[str, Any] = {
+                "align": _paragraph_alignment(paragraph),
+                "level": int(paragraph.level or 0),
+                "bullet": _paragraph_has_bullet(paragraph),
+                "runs": [],
+            }
+            for field, value in (
+                ("spaceBefore", _length_points(paragraph.space_before)),
+                ("spaceAfter", _length_points(paragraph.space_after)),
+            ):
+                if value is not None:
+                    paragraph_item[field] = value
+            line_height = _paragraph_line_height(paragraph)
+            if line_height is not None:
+                paragraph_item["lineHeight"] = line_height
+
+            runs: list[dict[str, Any]] = []
+            for run in paragraph.runs:
+                if not run.text:
+                    continue
+                item: dict[str, Any] = {"text": str(run.text)}
+                font = run.font
+                if font.size is not None:
+                    item["fontSize"] = round(float(font.size.pt), 2)
+                family = _font_family(font)
+                if family:
+                    item["fontFamily"] = family
+                if font.bold is not None:
+                    item["bold"] = bool(font.bold)
+                if font.italic is not None:
+                    item["italic"] = bool(font.italic)
+                color = _font_color(font)
+                if color:
+                    item["color"] = color
+                runs.append(item)
+            if not runs and paragraph.text:
+                runs.append({"text": str(paragraph.text)})
+            paragraph_item["runs"] = runs
+            paragraphs.append(paragraph_item)
+    except Exception:
+        return {"paragraphs": []}
+    return {"paragraphs": paragraphs}
+
+
+def _paragraph_alignment(paragraph: Any) -> str:
+    alignment = str(getattr(paragraph, "alignment", "") or "").lower()
+    if "center" in alignment:
+        return "center"
+    if "right" in alignment:
+        return "right"
+    if "justify" in alignment or "distributed" in alignment:
+        return "justify"
+    return "left"
+
+
+def _vertical_alignment(text_frame: Any) -> str:
+    anchor = str(getattr(text_frame, "vertical_anchor", "") or "").lower()
+    if "middle" in anchor:
+        return "middle"
+    if "bottom" in anchor:
+        return "bottom"
+    return "top"
+
+
+def _text_frame_margins(text_frame: Any) -> list[float]:
+    values = []
+    for name in ("margin_top", "margin_right", "margin_bottom", "margin_left"):
+        value = _length_points(getattr(text_frame, name, None))
+        values.append(value if value is not None else 0.0)
+    return values
+
+
+def _length_points(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return round(float(value.pt), 2)
+    except Exception:
+        return None
+
+
+def _paragraph_line_height(paragraph: Any) -> dict[str, float] | None:
+    try:
+        value = paragraph.line_spacing
+        if value is None:
+            return None
+        if hasattr(value, "pt"):
+            return {"points": round(float(value.pt), 2)}
+        return {"multiple": round(float(value), 3)}
+    except Exception:
+        return None
+
+
+def _paragraph_has_bullet(paragraph: Any) -> bool:
+    try:
+        properties = paragraph._p.pPr
+        if properties is None:
+            return False
+        return any(
+            child.tag.rsplit("}", 1)[-1] in {"buChar", "buAutoNum", "buBlip"}
+            for child in properties
+        )
+    except Exception:
+        return False
+
+
+def _font_family(font: Any) -> str:
+    try:
+        properties = font._rPr
+        if properties is not None:
+            for tag in ("ea", "latin", "cs"):
+                node = properties.find(f"{{http://schemas.openxmlformats.org/drawingml/2006/main}}{tag}")
+                if node is not None and node.get("typeface"):
+                    return str(node.get("typeface"))
+    except Exception:
+        pass
+    try:
+        return str(font.name) if font.name else ""
+    except Exception:
+        return ""
+
+
+def _shape_rotation(shape: Any) -> float:
+    try:
+        return round(float(shape.rotation or 0), 3)
+    except Exception:
+        return 0.0
+
+
 def _font_color(font: Any) -> str:
     try:
         rgb = font.color.rgb
@@ -363,20 +551,42 @@ def _font_color(font: Any) -> str:
         return ""
 
 
-def _fill_color(shape: Any, fallback: str) -> str:
+def _shape_fill(shape: Any) -> dict[str, Any]:
+    """Return the real fill without inventing a white background."""
+    return _fill_format(shape.fill)
+
+
+def _fill_format(fill: Any) -> dict[str, Any]:
     try:
-        rgb = shape.fill.fore_color.rgb
-        return f"#{rgb}" if rgb is not None else fallback
+        fill_type = fill.type
+        if fill_type is None or "background" in str(fill_type).lower():
+            return {"type": "none", "color": "transparent"}
+        rgb = fill.fore_color.rgb
+        if rgb is not None:
+            return {"type": "solid", "color": f"#{rgb}"}
     except Exception:
-        return fallback
+        pass
+    return {"type": "unknown", "color": "transparent"}
 
 
-def _line_color(shape: Any, fallback: str) -> str:
+def _shape_line(shape: Any) -> dict[str, Any]:
+    """Return only an explicitly visible line; never synthesize a border."""
     try:
+        fill_type = shape.line.fill.type
+        if fill_type is None or "background" in str(fill_type).lower():
+            return {"type": "none", "color": "transparent", "width": 0}
         rgb = shape.line.color.rgb
-        return f"#{rgb}" if rgb is not None else fallback
+        if rgb is not None:
+            line_width = shape.line.width
+            width = (
+                max(0.0, round(float(line_width.pt), 2))
+                if line_width is not None
+                else 1.0
+            )
+            return {"type": "solid", "color": f"#{rgb}", "width": width}
     except Exception:
-        return fallback
+        pass
+    return {"type": "unknown", "color": "transparent", "width": 0}
 
 
 def _slide_background(slide: Any) -> str:
