@@ -73,7 +73,7 @@ def toggle_ears(action: str = 'status') -> str:
             return "VoiceListener 未初始化，请重启 agent。"
 
     else:  # status
-        enabled = getattr(living, '_ears_enabled', True)
+        enabled = getattr(living, '_ears_enabled', False)
         running = vl and vl.is_running
         if not enabled:
             return "语音监听：已关闭"

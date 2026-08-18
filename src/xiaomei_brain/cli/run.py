@@ -688,7 +688,7 @@ def _run_agent(
         def _on_voice(text: str, pcm: bytes, emotion: str) -> None:
             if getattr(living, '_suppress_voice', False):
                 return
-            if not getattr(living, '_ears_enabled', True):
+            if not getattr(living, '_ears_enabled', False):
                 return
 
             # 注意力门控

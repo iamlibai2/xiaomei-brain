@@ -17,7 +17,7 @@ def register(ctx):
     # 始终初始化摄像头，eyes.enabled 仅控制运行时 see()/recognize_faces()
     # 这样 /eyes on/off 同一会话无需重启。
     agent_id = getattr(ctx, 'agent_id', '') or ''
-    eyes_enabled = True
+    eyes_enabled = False
     if agent_id:
         from xiaomei_brain.consciousness.living_commands import load_eyes_enabled
         eyes_enabled = load_eyes_enabled(agent_id)

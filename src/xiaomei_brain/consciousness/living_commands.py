@@ -723,18 +723,18 @@ def cmd_switch(living: ConsciousLiving, args: str = "") -> None:
 # ── Body 感官命令 ──────────────────────────────────────────────
 
 def load_eyes_enabled(agent_id: str) -> bool:
-    """读取持久化的眼睛状态，默认 True。"""
+    """读取持久化的眼睛状态，未配置时默认关闭。"""
     import json
     path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
     try:
         if not os.path.exists(path):
-            return True
+            return False
         with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        return cfg.get("eyes_enabled", True)
+        return cfg.get("eyes_enabled", False)
     except Exception:
-        logger.warning("Failed to read eyes config, defaulting to enabled", exc_info=True)
-        return True
+        logger.warning("Failed to read eyes config, defaulting to disabled", exc_info=True)
+        return False
 
 
 def _save_eyes_config(living, enabled: bool) -> None:
@@ -837,18 +837,18 @@ def _save_ears_config(living, enabled: bool) -> None:
 
 
 def load_ears_enabled(agent_id: str) -> bool:
-    """读取持久化的耳朵状态，默认 True。"""
+    """读取持久化的耳朵状态，未配置时默认关闭。"""
     import json
     path = os.path.join(os.path.expanduser("~/.xiaomei-brain"), agent_id, "config.json")
     try:
         if not os.path.exists(path):
-            return True
+            return False
         with open(path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        return cfg.get("ears_enabled", True)
+        return cfg.get("ears_enabled", False)
     except Exception:
-        logger.warning("Failed to read ears config, defaulting to enabled", exc_info=True)
-        return True
+        logger.warning("Failed to read ears config, defaulting to disabled", exc_info=True)
+        return False
 
 
 def cmd_ears(living, args: str) -> None:

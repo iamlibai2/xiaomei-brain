@@ -72,7 +72,7 @@ def toggle_eyes(action: str = 'status') -> str:
         return "视觉感知已开启。" if opened else "视觉感知已开启，但摄像头不可用。"
 
     else:  # status
-        enabled = getattr(living, '_eyes_enabled', True)
+        enabled = getattr(living, '_eyes_enabled', False)
         if not enabled:
             return "视觉感知：已关闭"
         elif eyes.is_available():

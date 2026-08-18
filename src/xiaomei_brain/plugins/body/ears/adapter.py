@@ -17,7 +17,7 @@ def register(ctx):
     # 始终初始化麦克风，ears.enabled 仅控制运行时 contribute_to()/capture_raw()
     # 这样 /ears on/off 同一会话无需重启。
     agent_id = getattr(ctx, 'agent_id', '') or ''
-    ears_enabled = True
+    ears_enabled = False
     if agent_id:
         from xiaomei_brain.consciousness.living_commands import load_ears_enabled
         ears_enabled = load_ears_enabled(agent_id)

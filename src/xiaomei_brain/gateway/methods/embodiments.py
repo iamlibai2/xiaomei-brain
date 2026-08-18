@@ -268,7 +268,7 @@ class EmbodimentMethods:
             self._resume_local_listener = False
         if should_resume:
             listener = getattr(self._living, "_voice_listener", None)
-            if listener is not None and getattr(self._living, "_ears_enabled", True):
+            if listener is not None and getattr(self._living, "_ears_enabled", False):
                 try:
                     listener.start()
                 except Exception:
