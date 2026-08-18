@@ -466,6 +466,10 @@ def append_text_attachments(content: str, attachments: list[dict[str, Any]]) -> 
                         "Use replace_image with the supplied slide and element_id when replacing "
                         "the picture, or update_element for its size and position."
                     ),
+                    "chart": (
+                        "Use update_chart with the supplied slide and element_id to change its "
+                        "title, categories, series, legend, or series colors. Keep it as a native chart."
+                    ),
                 }.get(
                     str(annotation.get("element_type", "")),
                     "Use update_element with the supplied slide and element_id.",

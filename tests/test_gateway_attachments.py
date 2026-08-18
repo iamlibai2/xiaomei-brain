@@ -424,6 +424,32 @@ def test_presentation_table_cell_annotation_includes_revision_and_coordinates(tm
     assert "use update_table_cell" in model_input
 
 
+def test_presentation_chart_annotation_keeps_native_chart_guidance(tmp_path, monkeypatch):
+    monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
+    prepared, _, _ = prepare_attachments(
+        "xiaomei",
+        "session-1",
+        [payload(
+            "deck.pptx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            office_archive({"ppt/presentation.xml": "<presentation/>"}),
+        )],
+    )
+    prepared[0]["annotation"] = {
+        "kind": "presentation",
+        "slide": 4,
+        "element_id": "slide-4-shape-id-9",
+        "element_type": "chart",
+        "selected_text": "Sales\nQ1 / Q2\nEast: 10, 20",
+        "source_revision": "b" * 64,
+    }
+
+    model_input = append_text_attachments("Change Q2 to 28", prepared)
+
+    assert "Use update_chart" in model_input
+    assert "Keep it as a native chart" in model_input
+
+
 def test_html_artifact_annotation_identifies_exact_element(tmp_path, monkeypatch):
     monkeypatch.setattr(attachment_module.Path, "home", classmethod(lambda cls: tmp_path))
     prepared, _, _ = prepare_attachments(

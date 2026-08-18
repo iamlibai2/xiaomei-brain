@@ -15,6 +15,7 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
 - `element_type="text"` 或 `shape`：使用 `update_element`；只有明确删除时才使用 `delete_element`。
 - `element_type="table"` 且提供 `row`、`column`：使用 `update_table_cell`，行列号从 1 开始，可修改 `text`、`fill_color`、`text_color`、`font_size_pt`、`bold`。
 - `element_type="image"`：替换图片时使用 `replace_image`，并提供当前消息中的 `attachment_id` 或受控工作区 `workspace_path`；只改大小和位置时使用 `update_element`。
+- `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致。
 
 始终把当前 PPT 附件的真实 ID 作为 `source_attachment_id` 传给 `write_document`。如果工具返回
 `stale_presentation_selection`，说明预览所依据的版本已变化：停止修改，要求刷新预览后重新选择；不要绕过校验。
@@ -38,6 +39,16 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
       "slide": 5,
       "element_id": "slide-5-shape-id-9",
       "attachment_id": "attachment-2"
+    },
+    {
+      "type": "update_chart",
+      "slide": 6,
+      "element_id": "slide-6-shape-id-14",
+      "title": "季度销售额",
+      "categories": ["Q1", "Q2", "Q3", "Q4"],
+      "series": [{"name": "华东", "values": [120, 148, 172, 205]}],
+      "show_legend": false,
+      "series_colors": ["2F6B4F"]
     }
   ]
 }

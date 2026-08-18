@@ -193,6 +193,9 @@ def _shape_elements(
         except Exception:
             return []
 
+    if getattr(shape, "has_chart", False):
+        return _chart_elements(shape, element_id, bounds)
+
     if getattr(shape, "has_table", False):
         return _table_elements(shape, element_id, bounds)
 
@@ -248,6 +251,75 @@ def _table_elements(shape: Any, element_id: str, bounds: list[float]) -> list[di
         "cellHeight": cell_height,
         "cells": values,
     }]
+
+
+def _chart_elements(shape: Any, element_id: str, bounds: list[float]) -> list[dict[str, Any]]:
+    chart = shape.chart
+    title = ""
+    try:
+        if chart.has_title:
+            title = str(chart.chart_title.text_frame.text or "").strip()
+    except Exception:
+        pass
+    categories: list[str] = []
+    try:
+        categories = [
+            " / ".join(str(part) for part in label if part is not None)
+            for label in chart.plots[0].categories.flattened_labels
+        ]
+    except Exception:
+        pass
+    series_items: list[dict[str, Any]] = []
+    for index, series in enumerate(chart.series):
+        try:
+            values = [_chart_value(value) for value in series.values]
+        except Exception:
+            values = []
+        series_items.append({
+            "name": str(series.name or f"Series {index + 1}"),
+            "values": values,
+            "color": _chart_series_color(series, index),
+        })
+    chart_type = str(chart.chart_type or "chart").split("(", 1)[0].strip().lower()
+    return [{
+        "elementId": element_id,
+        "elementType": "chart",
+        "bounds": bounds,
+        "chartType": chart_type,
+        "title": title,
+        "categories": categories,
+        "series": series_items,
+        "hasLegend": bool(chart.has_legend),
+    }]
+
+
+def _chart_value(value: Any) -> float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _chart_series_color(series: Any, index: int) -> str:
+    palette = ("#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB")
+    for format_object in (getattr(series, "format", None),):
+        try:
+            rgb = format_object.fill.fore_color.rgb
+            if rgb is not None:
+                return f"#{rgb}"
+        except Exception:
+            pass
+        try:
+            rgb = format_object.line.color.rgb
+            if rgb is not None:
+                return f"#{rgb}"
+        except Exception:
+            pass
+    return palette[index % len(palette)]
 
 
 def _text_style(shape: Any) -> dict[str, Any]:

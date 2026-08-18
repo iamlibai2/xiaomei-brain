@@ -11,7 +11,7 @@ type PresentationMedia = {
 
 type PresentationElement = {
   elementId: string;
-  elementType: "text" | "shape" | "image" | "table";
+  elementType: "text" | "shape" | "image" | "table" | "chart";
   bounds: [number, number, number, number];
   content?: { text?: string; fontSize?: number; fontFamily?: string; color?: string; bold?: boolean; align?: string };
   text?: string;
@@ -24,6 +24,11 @@ type PresentationElement = {
   rows?: number;
   columns?: number;
   cells?: Array<{ row: number; column: number; text: string }>;
+  chartType?: string;
+  title?: string;
+  categories?: string[];
+  series?: Array<{ name: string; values: Array<number | string | null>; color?: string }>;
+  hasLegend?: boolean;
 };
 
 type PresentationSlide = {
@@ -49,6 +54,77 @@ function elementStyle(element: PresentationElement, project: PresentationProject
     width: `${width / project.size[0] * 100}%`,
     height: `${height / project.size[1] * 100}%`,
   };
+}
+
+function PresentationChart({ element }: { element: PresentationElement }) {
+  const categories = (element.categories || []).slice(0, 16);
+  const series = (element.series || []).slice(0, 8);
+  const numericSeries = series.map((item) => ({
+    ...item,
+    values: categories.map((_, index) => {
+      const value = Number(item.values[index]);
+      return Number.isFinite(value) ? value : 0;
+    }),
+  }));
+  const maxValue = Math.max(1, ...numericSeries.flatMap((item) => item.values.map((value) => Math.abs(value))));
+  const chartType = (element.chartType || "").toLowerCase();
+  const isPie = chartType.includes("pie") || chartType.includes("doughnut");
+  const isLine = chartType.includes("line") || chartType.includes("scatter");
+  const primaryValues = numericSeries[0]?.values || [];
+  const total = primaryValues.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
+  const piePalette = [series[0]?.color || "#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB"];
+  let offset = 0;
+  const pieBackground = primaryValues.length > 0 ? `conic-gradient(${primaryValues.map((value, index) => {
+    const start = offset / total * 100;
+    offset += Math.max(0, value);
+    const end = offset / total * 100;
+    const color = piePalette[index % piePalette.length];
+    return `${color} ${start}% ${end}%`;
+  }).join(", ")})` : "#e5e7eb";
+  return (
+    <div className="presentation-chart-content">
+      {element.title && <div className="presentation-chart-title">{element.title}</div>}
+      <div className="presentation-chart-plot">
+        {isPie ? (
+          <div className={`presentation-chart-pie${chartType.includes("doughnut") ? " doughnut" : ""}`} style={{ background: pieBackground }} />
+        ) : isLine ? (
+          <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+            {numericSeries.map((item, seriesIndex) => {
+              const denominator = Math.max(1, item.values.length - 1);
+              const points = item.values.map((value, index) => (
+                `${index / denominator * 100},${56 - Math.max(0, value) / maxValue * 50}`
+              )).join(" ");
+              return <polyline key={seriesIndex} points={points} fill="none" stroke={item.color || "#4F6BED"} strokeWidth="2" vectorEffect="non-scaling-stroke" />;
+            })}
+          </svg>
+        ) : (
+          <div className="presentation-chart-columns">
+            {categories.map((category, categoryIndex) => (
+              <div className="presentation-chart-category" key={`${category}-${categoryIndex}`}>
+                <div className="presentation-chart-bars">
+                  {numericSeries.map((item, seriesIndex) => (
+                    <span
+                      key={seriesIndex}
+                      style={{
+                        height: `${Math.max(2, Math.abs(item.values[categoryIndex] || 0) / maxValue * 100)}%`,
+                        background: item.color || "#4F6BED",
+                      }}
+                    />
+                  ))}
+                </div>
+                <small>{category}</small>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {element.hasLegend && series.length > 0 && (
+        <div className="presentation-chart-legend">
+          {series.map((item, index) => <span key={`${item.name}-${index}`}><i style={{ background: item.color || "#4F6BED" }} />{item.name}</span>)}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, selectedCell, onSelectElement, onSelectSlide }: {
@@ -102,6 +178,19 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
               alt=""
               onClick={select}
             />
+          );
+        }
+        if (element.elementType === "chart") {
+          return (
+            <div
+              key={element.elementId}
+              className={`presentation-slide-element chart${selectableClass}${selectedClass}`}
+              data-element-id={element.elementId}
+              style={style}
+              onClick={select}
+            >
+              <PresentationChart element={element} />
+            </div>
           );
         }
         if (element.elementType === "table") {
@@ -233,6 +322,12 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
         ? element.text || ""
         : element.elementType === "table"
           ? (element.cells || []).map((cell) => cell.text).filter(Boolean).join(" / ")
+          : element.elementType === "chart"
+            ? [
+              element.title || "",
+              (element.categories || []).join(" / "),
+              ...(element.series || []).map((item) => `${item.name}: ${item.values.join(", ")}`),
+            ].filter(Boolean).join("\n").slice(0, 20_000)
           : "";
     selectionAnchorRef.current = anchor;
     setSelection({

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Cm
 
 from xiaomei_brain.plugin.context import PluginContext
@@ -423,3 +425,91 @@ def test_write_document_rejects_stale_presentation_annotation(tmp_path):
 
     assert result["subtype"] == "stale_presentation_selection"
     assert not (outputs / "stale.pptx").exists()
+
+
+def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_path):
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    source = tmp_path / "chart-source.pptx"
+
+    data = CategoryChartData()
+    data.categories = ["Q1", "Q2", "Q3"]
+    data.add_series("East", [10, 18, 24])
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    chart_shape = slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        data,
+    )
+    chart_shape.chart.has_title = True
+    chart_shape.chart.chart_title.text_frame.text = "Quarterly sales"
+    chart_shape.chart.has_legend = True
+    deck.save(source)
+
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    preview_dir = tmp_path / ".presentation" / "chart-source"
+    build_presentation_project(source, preview_dir)
+    project = json.loads((preview_dir / "project.json").read_text(encoding="utf-8"))
+    chart_element = next(
+        item for item in project["slides"][0]["elements"]
+        if item["elementType"] == "chart"
+    )
+    assert chart_element["elementId"].endswith(str(chart_shape.shape_id))
+    assert chart_element["title"] == "Quarterly sales"
+    assert chart_element["categories"] == ["Q1", "Q2", "Q3"]
+    assert chart_element["series"][0]["values"] == [10.0, 18.0, 24.0]
+
+    spec = workspace / "update-chart.json"
+    spec.write_text(json.dumps({
+        "operations": [{
+            "type": "update_chart",
+            "slide": 1,
+            "element_id": chart_element["elementId"],
+            "title": "Updated sales",
+            "categories": ["Q1", "Q2", "Q3", "Q4"],
+            "series": [
+                {"name": "East", "values": [12, 20, 28, 35]},
+                {"name": "West", "values": [8, 15, 19, 26]},
+            ],
+            "show_legend": True,
+            "series_colors": ["2F6B4F", "D97706"],
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-chart-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "chart-source",
+            "name": "chart-source.pptx",
+            "kind": "document",
+            "local_path": str(source),
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="update-chart.json",
+            output_name="chart-updated.pptx",
+            source_attachment_id="chart-source",
+        )
+
+    assert result.get("success") is True, result
+    assert result["validation"]["chart_count"] == 1
+    updated = Presentation(outputs / "chart-updated.pptx")
+    updated_chart = updated.slides[0].shapes[0].chart
+    assert updated_chart.chart_title.text_frame.text == "Updated sales"
+    assert [str(label[0]) for label in updated_chart.plots[0].categories.flattened_labels] == [
+        "Q1", "Q2", "Q3", "Q4",
+    ]
+    assert [series.name for series in updated_chart.series] == ["East", "West"]
+    assert list(updated_chart.series[1].values) == [8.0, 15.0, 19.0, 26.0]
+    assert updated_chart.has_legend is True

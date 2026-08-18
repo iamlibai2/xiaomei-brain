@@ -90,8 +90,8 @@ class PresentationWriter:
         )
 
         verified = Presentation(str(output_path))
-        text_count, picture_count, note_count, characters = self._summary(verified)
-        if text_count == 0 and picture_count == 0:
+        text_count, picture_count, chart_count, note_count, characters = self._summary(verified)
+        if text_count == 0 and picture_count == 0 and chart_count == 0:
             raise ValueError("生成的演示文稿没有文字或图片内容")
         extraction = PresentationExtractor().extract(output_path)
         preview = extraction.sections[0].content[:1200] if extraction.sections else ""
@@ -103,6 +103,7 @@ class PresentationWriter:
                 "slide_count": len(verified.slides),
                 "text_shape_count": text_count,
                 "picture_count": picture_count,
+                "chart_count": chart_count,
                 "note_slide_count": note_count,
                 "character_count": characters,
                 "changed_items": changed,
@@ -832,6 +833,85 @@ class PresentationWriter:
         return 1
 
     @classmethod
+    def _update_chart(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        shape = cls._resolve_shape(presentation, operation)
+        if not getattr(shape, "has_chart", False):
+            raise ValueError("The selected presentation element is not a chart")
+        chart = shape.chart
+        changed = 0
+        if "title" in operation:
+            title = cls._text(operation.get("title"))
+            chart.has_title = bool(title)
+            if title:
+                chart.chart_title.text_frame.text = title
+            changed += 1
+        categories_supplied = "categories" in operation
+        series_supplied = "series" in operation
+        if categories_supplied != series_supplied:
+            raise ValueError("update_chart must provide categories and series together")
+        if categories_supplied:
+            from pptx.chart.data import CategoryChartData
+
+            categories = operation.get("categories")
+            series_items = operation.get("series")
+            if not isinstance(categories, list) or not categories:
+                raise ValueError("update_chart.categories must be a non-empty array")
+            if not isinstance(series_items, list) or not series_items:
+                raise ValueError("update_chart.series must be a non-empty array")
+            if len(categories) > 2_000 or len(series_items) > 100:
+                raise ValueError("Chart data exceeds the supported size")
+            data = CategoryChartData()
+            data.categories = [str(value) for value in categories]
+            for index, item in enumerate(series_items):
+                if not isinstance(item, dict):
+                    raise ValueError("Each update_chart series must be an object")
+                values = item.get("values")
+                if not isinstance(values, list) or len(values) != len(categories):
+                    raise ValueError(
+                        "Each chart series must contain one value for every category"
+                    )
+                normalized: list[float | None] = []
+                for value in values:
+                    if value is None:
+                        normalized.append(None)
+                        continue
+                    try:
+                        normalized.append(float(value))
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"Invalid chart value: {value}") from exc
+                data.add_series(str(item.get("name") or f"Series {index + 1}"), normalized)
+            try:
+                chart.replace_data(data)
+            except (AttributeError, ValueError) as exc:
+                raise ValueError(
+                    "This chart type does not support category-data replacement"
+                ) from exc
+            changed += 1
+        if "show_legend" in operation:
+            chart.has_legend = bool(operation["show_legend"])
+            changed += 1
+        colors = operation.get("series_colors")
+        if colors is not None:
+            if not isinstance(colors, list) or not colors:
+                raise ValueError("series_colors must be a non-empty array")
+            for index, series in enumerate(chart.series):
+                color = colors[index % len(colors)]
+                rgb = cls._color(color, f"series_colors[{index}]")
+                try:
+                    series.format.fill.solid()
+                    series.format.fill.fore_color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+                try:
+                    series.format.line.color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+            changed += 1
+        if changed == 0:
+            raise ValueError("update_chart did not include any editable fields")
+        return changed
+
+    @classmethod
     def _apply_operations(
         cls,
         presentation: Any,
@@ -898,6 +978,8 @@ class PresentationWriter:
                 changed += cls._update_table_cell(presentation, operation)
             elif kind == "replace_image":
                 changed += cls._replace_image(presentation, operation, asset_paths)
+            elif kind == "update_chart":
+                changed += cls._update_chart(presentation, operation)
             elif kind == "delete_element":
                 cls._delete_element(presentation, operation)
                 changed += 1
@@ -920,11 +1002,12 @@ class PresentationWriter:
         return changed
 
     @staticmethod
-    def _summary(presentation: Any) -> tuple[int, int, int, int]:
+    def _summary(presentation: Any) -> tuple[int, int, int, int, int]:
         from pptx.enum.shapes import MSO_SHAPE_TYPE
 
         text_count = 0
         picture_count = 0
+        chart_count = 0
         note_count = 0
         characters = 0
         for slide in presentation.slides:
@@ -934,6 +1017,8 @@ class PresentationWriter:
                     characters += len(shape.text)
                 if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.PICTURE:
                     picture_count += 1
+                if getattr(shape, "has_chart", False):
+                    chart_count += 1
             try:
                 if not slide.has_notes_slide:
                     continue
@@ -943,4 +1028,4 @@ class PresentationWriter:
             if notes:
                 note_count += 1
                 characters += len(notes)
-        return text_count, picture_count, note_count, characters
+        return text_count, picture_count, chart_count, note_count, characters
