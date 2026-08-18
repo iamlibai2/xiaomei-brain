@@ -828,3 +828,91 @@ def test_presentation_preview_preserves_group_transform_gradient_crop_and_shadow
     assert image["crop"] == {
         "left": 0.1, "top": 0.2, "right": 0.15, "bottom": 0.05,
     }
+
+
+def test_presentation_preview_extracts_connectors_arrows_and_theme_lines(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_CONNECTOR
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls, qn
+    from pptx.util import Pt
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "connectors.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    straight = slide.shapes.add_connector(
+        MSO_CONNECTOR.STRAIGHT, Cm(2), Cm(2), Cm(12), Cm(5),
+    )
+    straight.line.color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    straight.line.width = Pt(2)
+    line = straight._element.spPr.find(qn("a:ln"))
+    line.append(parse_xml(f'<a:prstDash {nsdecls("a")} val="dash"/>'))
+    line.append(parse_xml(
+        f'<a:headEnd {nsdecls("a")} type="diamond" w="sm" len="med"/>'
+    ))
+    line.append(parse_xml(
+        f'<a:tailEnd {nsdecls("a")} type="triangle" w="lg" len="lg"/>'
+    ))
+    slide.shapes.add_connector(
+        MSO_CONNECTOR.ELBOW, Cm(2), Cm(8), Cm(12), Cm(12),
+    )
+    slide.shapes.add_connector(
+        MSO_CONNECTOR.CURVE, Cm(16), Cm(2), Cm(26), Cm(12),
+    )
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "connectors"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    lines = [
+        element for element in project["slides"][0]["elements"]
+        if element["elementType"] == "line"
+    ]
+
+    assert len(lines) == 3
+    assert [item["connectorKind"] for item in lines] == [
+        "line", "bentConnector3", "curvedConnector3",
+    ]
+    assert lines[0]["line"] == {
+        "type": "dash", "color": "#C6F24E", "width": 2.0,
+    }
+    assert lines[0]["startArrow"] == {
+        "type": "diamond", "width": "sm", "length": "med",
+    }
+    assert lines[0]["endArrow"] == {
+        "type": "triangle", "width": "lg", "length": "lg",
+    }
+    assert lines[1]["line"]["color"] != "transparent"
+    assert lines[1]["line"]["width"] > 0
+
+
+def test_presentation_preview_extracts_freeform_geometry(tmp_path):
+    from pptx.dml.color import RGBColor
+    from pptx.util import Pt
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "freeform.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    builder = slide.shapes.build_freeform(0, 0, scale=(10000, 10000))
+    builder.add_line_segments([(80, 0), (100, 80), (50, 50), (0, 80)], close=True)
+    shape = builder.convert_to_shape(Cm(4), Cm(3))
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = RGBColor(0xC6, 0xF2, 0x4E)
+    shape.line.color.rgb = RGBColor(0x14, 0x14, 0x14)
+    shape.line.width = Pt(1.5)
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "freeform"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    element = project["slides"][0]["elements"][0]
+    paths = element["customGeometry"]["paths"]
+
+    assert element["elementType"] == "shape"
+    assert element["fill"] == {"type": "solid", "color": "#C6F24E"}
+    assert paths
+    assert paths[0]["d"].startswith("M ")
+    assert " L " in paths[0]["d"]
+    assert paths[0]["d"].endswith("Z")

@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 6
+PROJECT_GENERATOR_VERSION = 7
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -195,6 +195,20 @@ def _shape_elements(
         + ".".join(str(shape_id) for shape_id in shape_id_path)
     )
 
+    if shape_type == MSO_SHAPE_TYPE.LINE:
+        return [{
+            "elementId": element_id,
+            "elementType": "line",
+            "bounds": bounds,
+            "rotation": inherited_rotation + _shape_rotation(shape),
+            "connectorKind": _connector_kind(shape),
+            "flip": _shape_flip(shape),
+            "adjustments": _shape_adjustments(shape),
+            "line": _shape_line_with_theme(shape),
+            "startArrow": _line_arrow(shape, "headEnd"),
+            "endArrow": _line_arrow(shape, "tailEnd"),
+        }]
+
     if shape_type == MSO_SHAPE_TYPE.PICTURE:
         try:
             image_counter[0] += 1
@@ -253,6 +267,7 @@ def _shape_elements(
             "fill": fill,
             "line": line,
             "shadow": _shape_shadow(shape),
+            "customGeometry": _custom_geometry(shape) if shape_type == MSO_SHAPE_TYPE.FREEFORM else None,
             "text": text,
             "textStyle": style,
             "richText": rich_text,
@@ -914,6 +929,168 @@ def _shape_line(shape: Any) -> dict[str, Any]:
     except Exception:
         pass
     return {"type": "unknown", "color": "transparent", "width": 0}
+
+
+def _shape_line_with_theme(shape: Any) -> dict[str, Any]:
+    """Resolve a connector's inherited theme line without affecting ordinary shapes."""
+    explicit = _shape_line(shape)
+    if explicit.get("width", 0) > 0 and explicit.get("color") != "transparent":
+        return explicit
+    try:
+        style = shape._element.find(
+            "{http://schemas.openxmlformats.org/presentationml/2006/main}style"
+        )
+        line_reference = style.find(f"{{{A_NS}}}lnRef") if style is not None else None
+        if line_reference is None:
+            return explicit
+        color_node = next(iter(line_reference), None)
+        scheme_name = (
+            str(color_node.get("val") or "accent1")
+            if color_node is not None
+            else "accent1"
+        )
+        color = _theme_scheme_color(shape.part, scheme_name) or "#4472C4"
+        theme_line = _theme_line_style(shape.part, int(line_reference.get("idx") or 1))
+        return {
+            "type": theme_line.get("type", "solid"),
+            "color": color,
+            "width": theme_line.get("width", 1.0),
+        }
+    except Exception:
+        return explicit
+
+
+def _theme_root(part: Any) -> Any | None:
+    try:
+        from lxml import etree
+
+        master_part = part.slide_layout.slide_master.part
+        theme_part = next(
+            rel.target_part
+            for rel in master_part.rels.values()
+            if str(rel.reltype).endswith("/theme")
+        )
+        return etree.fromstring(theme_part.blob)
+    except Exception:
+        return None
+
+
+def _theme_scheme_color(part: Any, scheme_name: str) -> str:
+    root = _theme_root(part)
+    if root is None:
+        return ""
+    aliases = {"tx1": "dk1", "tx2": "dk2", "bg1": "lt1", "bg2": "lt2"}
+    name = aliases.get(scheme_name, scheme_name)
+    node = root.find(f".//{{{A_NS}}}clrScheme/{{{A_NS}}}{name}")
+    return _xml_color(node) if node is not None else ""
+
+
+def _theme_line_style(part: Any, index: int) -> dict[str, Any]:
+    root = _theme_root(part)
+    if root is None:
+        return {"type": "solid", "width": 1.0}
+    lines = root.findall(
+        f".//{{{A_NS}}}fmtScheme/{{{A_NS}}}lnStyleLst/{{{A_NS}}}ln"
+    )
+    if not lines:
+        return {"type": "solid", "width": 1.0}
+    line = lines[max(0, min(len(lines) - 1, index - 1))]
+    width = round(float(line.get("w") or 12700) / 12700, 2)
+    dash = line.find(f"{{{A_NS}}}prstDash")
+    dash_value = str(dash.get("val") or "solid") if dash is not None else "solid"
+    return {
+        "type": "dash" if "dash" in dash_value else "dot" if "dot" in dash_value else "solid",
+        "width": width,
+    }
+
+
+def _connector_kind(shape: Any) -> str:
+    try:
+        geometry = shape._element.spPr.find(f"{{{A_NS}}}prstGeom")
+        return str(geometry.get("prst") or "line") if geometry is not None else "line"
+    except Exception:
+        return "line"
+
+
+def _shape_flip(shape: Any) -> list[bool]:
+    try:
+        transform = shape._element.spPr.find(f"{{{A_NS}}}xfrm")
+        return [
+            str(transform.get("flipH") or "0").lower() in {"1", "true"},
+            str(transform.get("flipV") or "0").lower() in {"1", "true"},
+        ] if transform is not None else [False, False]
+    except Exception:
+        return [False, False]
+
+
+def _shape_adjustments(shape: Any) -> list[float]:
+    try:
+        geometry = shape._element.spPr.find(f"{{{A_NS}}}prstGeom")
+        values: list[float] = []
+        guides = geometry.findall(f".//{{{A_NS}}}gd") if geometry is not None else []
+        for guide in guides:
+            formula = str(guide.get("fmla") or "")
+            if formula.startswith("val "):
+                values.append(float(formula[4:]) / 100000)
+        return values
+    except Exception:
+        return []
+
+
+def _line_arrow(shape: Any, tag_name: str) -> dict[str, Any] | None:
+    try:
+        line = shape._element.spPr.find(f"{{{A_NS}}}ln")
+        arrow = line.find(f"{{{A_NS}}}{tag_name}") if line is not None else None
+        arrow_type = str(arrow.get("type") or "none") if arrow is not None else "none"
+        if arrow_type == "none":
+            return None
+        return {
+            "type": arrow_type,
+            "width": str(arrow.get("w") or "med"),
+            "length": str(arrow.get("len") or "med"),
+        }
+    except Exception:
+        return None
+
+
+def _custom_geometry(shape: Any) -> dict[str, Any] | None:
+    try:
+        geometry = shape._element.spPr.find(f"{{{A_NS}}}custGeom")
+        if geometry is None:
+            return None
+        rendered_paths: list[dict[str, Any]] = []
+        paths = geometry.findall(f".//{{{A_NS}}}pathLst/{{{A_NS}}}path")
+        for path in paths:
+            width = max(1.0, float(path.get("w") or shape.width or 1))
+            height = max(1.0, float(path.get("h") or shape.height or 1))
+            commands: list[str] = []
+            for command in path:
+                command_name = str(command.tag).rsplit("}", 1)[-1]
+                points = command.findall(f"{{{A_NS}}}pt")
+                coordinates = [
+                    (float(point.get("x") or 0), float(point.get("y") or 0))
+                    for point in points
+                ]
+                if command_name == "moveTo" and coordinates:
+                    commands.append(f"M {coordinates[0][0]} {coordinates[0][1]}")
+                elif command_name == "lnTo" and coordinates:
+                    commands.append(f"L {coordinates[0][0]} {coordinates[0][1]}")
+                elif command_name == "cubicBezTo" and len(coordinates) >= 3:
+                    commands.append("C " + " ".join(f"{x} {y}" for x, y in coordinates[:3]))
+                elif command_name == "quadBezTo" and len(coordinates) >= 2:
+                    commands.append("Q " + " ".join(f"{x} {y}" for x, y in coordinates[:2]))
+                elif command_name == "close":
+                    commands.append("Z")
+            if commands:
+                rendered_paths.append({
+                    "d": " ".join(commands),
+                    "viewBox": [width, height],
+                    "fill": str(path.get("fill") or "norm") != "none",
+                    "stroke": str(path.get("stroke") or "1").lower() not in {"0", "false"},
+                })
+        return {"paths": rendered_paths} if rendered_paths else None
+    except Exception:
+        return None
 
 
 def _slide_background(

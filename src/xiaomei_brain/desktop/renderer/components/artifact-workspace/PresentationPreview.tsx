@@ -104,9 +104,24 @@ type PresentationChartLayout = {
   h?: number;
 };
 
+type PresentationArrow = {
+  type?: string;
+  width?: string;
+  length?: string;
+};
+
+type PresentationCustomGeometry = {
+  paths?: Array<{
+    d: string;
+    viewBox: [number, number];
+    fill?: boolean;
+    stroke?: boolean;
+  }>;
+};
+
 type PresentationElement = {
   elementId: string;
-  elementType: "text" | "shape" | "image" | "table" | "chart";
+  elementType: "text" | "shape" | "image" | "table" | "chart" | "line";
   bounds: [number, number, number, number];
   rotation?: number;
   content?: PresentationTextStyle & { text?: string };
@@ -116,6 +131,12 @@ type PresentationElement = {
   shapeName?: string;
   fill?: PresentationFill;
   line?: PresentationLine;
+  connectorKind?: string;
+  flip?: [boolean, boolean];
+  adjustments?: number[];
+  startArrow?: PresentationArrow;
+  endArrow?: PresentationArrow;
+  customGeometry?: PresentationCustomGeometry;
   shadow?: PresentationShadow;
   src?: string;
   fit?: { mode?: "cover" | "contain" | "fill" };
@@ -186,6 +207,94 @@ function pointsToCanvasWidth(points: number | undefined, project: PresentationPr
 function mediaUrl(source: string | undefined, media: Record<string, PresentationMedia>): string | undefined {
   const item = source ? media[source] : undefined;
   return item ? `data:${item.mime_type};base64,${item.data_base64}` : undefined;
+}
+
+function connectorPath(element: PresentationElement): string {
+  const [flipH, flipV] = element.flip || [false, false];
+  const startX = flipH ? 100 : 0;
+  const endX = flipH ? 0 : 100;
+  const startY = flipV ? 100 : 0;
+  const endY = flipV ? 0 : 100;
+  const kind = element.connectorKind || "line";
+  const ratio = Math.max(0.05, Math.min(0.95, element.adjustments?.[0] ?? 0.5));
+  const bendX = startX + (endX - startX) * ratio;
+  if (kind.startsWith("curvedConnector")) {
+    return `M ${startX} ${startY} C ${bendX} ${startY}, ${bendX} ${endY}, ${endX} ${endY}`;
+  }
+  if (kind.startsWith("bentConnector")) {
+    return `M ${startX} ${startY} L ${bendX} ${startY} L ${bendX} ${endY} L ${endX} ${endY}`;
+  }
+  return `M ${startX} ${startY} L ${endX} ${endY}`;
+}
+
+function arrowScale(arrow: PresentationArrow | undefined): { width: number; length: number } {
+  const sizes: Record<string, number> = { sm: 0.75, med: 1, lg: 1.35 };
+  return {
+    width: sizes[arrow?.width || "med"] || 1,
+    length: sizes[arrow?.length || "med"] || 1,
+  };
+}
+
+function arrowMarkerShape(arrow: PresentationArrow | undefined, color: string) {
+  const type = arrow?.type || "none";
+  if (type === "none") return null;
+  if (type === "diamond") return <path d="M 0 5 L 5 0 L 10 5 L 5 10 Z" fill={color} />;
+  if (type === "oval") return <circle cx="5" cy="5" r="4" fill={color} />;
+  if (type === "open") return <path d="M 0 0 L 10 5 L 0 10" fill="none" stroke={color} strokeWidth="1.7" />;
+  if (type === "stealth") return <path d="M 0 0 L 10 5 L 0 10 L 3.4 5 Z" fill={color} />;
+  return <path d="M 0 0 L 10 5 L 0 10 Z" fill={color} />;
+}
+
+function PresentationConnector({ element }: { element: PresentationElement }) {
+  const color = element.line?.color || "#4472C4";
+  const markerId = element.elementId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const dash = element.line?.type === "dash" ? "6 4" : element.line?.type === "dot" ? "1 3" : undefined;
+  const startScale = arrowScale(element.startArrow);
+  const endScale = arrowScale(element.endArrow);
+  return (
+    <svg className="presentation-line-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        {element.startArrow && (
+          <marker id={`${markerId}-start`} viewBox="0 0 10 10" refX="1" refY="5" markerUnits="strokeWidth"
+            markerWidth={5 * startScale.length} markerHeight={5 * startScale.width} orient="auto-start-reverse">
+            {arrowMarkerShape(element.startArrow, color)}
+          </marker>
+        )}
+        {element.endArrow && (
+          <marker id={`${markerId}-end`} viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth"
+            markerWidth={5 * endScale.length} markerHeight={5 * endScale.width} orient="auto">
+            {arrowMarkerShape(element.endArrow, color)}
+          </marker>
+        )}
+      </defs>
+      <path
+        d={connectorPath(element)}
+        fill="none"
+        stroke={color}
+        strokeWidth={Math.max(0.6, element.line?.width || 1)}
+        strokeDasharray={dash}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+        markerStart={element.startArrow ? `url(#${markerId}-start)` : undefined}
+        markerEnd={element.endArrow ? `url(#${markerId}-end)` : undefined}
+      />
+    </svg>
+  );
+}
+
+function PresentationCustomShape({ element }: { element: PresentationElement }) {
+  const fill = element.fill?.type === "solid" ? element.fill.color || "transparent" : "transparent";
+  const stroke = element.line?.color || "transparent";
+  return <>
+    {(element.customGeometry?.paths || []).map((path, index) => (
+      <svg key={index} className="presentation-custom-shape" viewBox={`0 0 ${path.viewBox[0]} ${path.viewBox[1]}`}
+        preserveAspectRatio="none" aria-hidden="true">
+        <path d={path.d} fill={path.fill ? fill : "none"} stroke={path.stroke ? stroke : "none"}
+          strokeWidth={Math.max(0.6, element.line?.width || 1)} vectorEffect="non-scaling-stroke" />
+      </svg>
+    ))}
+  </>;
 }
 
 function fillStyle(fill: PresentationFill | undefined, media: Record<string, PresentationMedia>): CSSProperties {
@@ -732,6 +841,19 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
           event.stopPropagation();
           onSelectElement(element, event.currentTarget);
         };
+        if (element.elementType === "line") {
+          return (
+            <div
+              key={element.elementId}
+              className={`presentation-slide-element line${selectableClass}${selectedClass}`}
+              data-element-id={element.elementId}
+              style={{ ...style, minWidth: 1, minHeight: 1 }}
+              onClick={select}
+            >
+              <PresentationConnector element={element} />
+            </div>
+          );
+        }
         if (element.elementType === "image") {
           const source = element.src ? media[element.src] : undefined;
           if (!source) return null;
@@ -834,15 +956,16 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
         const content = element.elementType === "text" ? element.content?.text : element.text;
         const borderRadius = element.shapeName === "ellipse" ? "50%" : element.shapeName === "roundRect" ? "8%" : 0;
         const margins = textStyle?.margins || [0, 0, 0, 0];
+        const hasCustomGeometry = Boolean(element.customGeometry?.paths?.length);
         return (
           <div
             key={element.elementId}
-            className={`presentation-slide-element ${element.elementType}${selectableClass}${selectedClass}`}
+            className={`presentation-slide-element ${element.elementType}${hasCustomGeometry ? " has-custom-geometry" : ""}${selectableClass}${selectedClass}`}
             data-element-id={element.elementId}
             style={{
               ...style,
-              ...(element.elementType === "shape" ? fillStyle(element.fill, media) : {}),
-              border: element.elementType === "shape" ? `${element.line?.width || 0}px solid ${element.line?.color || "transparent"}` : undefined,
+              ...(element.elementType === "shape" && !hasCustomGeometry ? fillStyle(element.fill, media) : {}),
+              border: element.elementType === "shape" && !hasCustomGeometry ? `${element.line?.width || 0}px solid ${element.line?.color || "transparent"}` : undefined,
               boxShadow: shadowStyle(element.shadow, project),
               borderRadius,
               color: textStyle?.color || "#253047",
@@ -858,7 +981,12 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
             }}
             onClick={select}
           >
-            {element.richText?.paragraphs?.length ? richTextContent(element, textStyle, project) : content}
+            {hasCustomGeometry ? <>
+              <PresentationCustomShape element={element} />
+              <div className="presentation-shape-text">
+                {element.richText?.paragraphs?.length ? richTextContent(element, textStyle, project) : content}
+              </div>
+            </> : (element.richText?.paragraphs?.length ? richTextContent(element, textStyle, project) : content)}
           </div>
         );
       })}
