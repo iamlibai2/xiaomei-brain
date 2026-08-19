@@ -18,7 +18,12 @@ from xiaomei_brain.tools.execution_context import (
 
 
 _DOCUMENT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_DOCUMENT_MEDIA_SUFFIXES = {
+    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
+    ".mp4", ".mov", ".m4v", ".webm", ".avi", ".wmv",
+}
 _MAX_DOCUMENT_ASSET_BYTES = 10 * 1024 * 1024
+_MAX_DOCUMENT_MEDIA_BYTES = 500 * 1024 * 1024
 _TARGET_LOCKS: dict[str, threading.Lock] = {}
 _TARGET_LOCKS_GUARD = threading.Lock()
 
@@ -41,9 +46,10 @@ def _workspace_asset_references(value: Any) -> set[str]:
     """Collect explicit workspace_path values without scanning the workspace."""
     found: set[str] = set()
     if isinstance(value, dict):
-        raw_path = value.get("workspace_path")
-        if isinstance(raw_path, str) and raw_path.strip():
-            found.add(raw_path.strip())
+        for field in ("workspace_path", "poster_workspace_path"):
+            raw_path = value.get(field)
+            if isinstance(raw_path, str) and raw_path.strip():
+                found.add(raw_path.strip())
         for child in value.values():
             found.update(_workspace_asset_references(child))
     elif isinstance(value, list):
@@ -57,7 +63,7 @@ def _resolve_workspace_asset(
     workspace_root: Path,
     working_directory: Path,
 ) -> Path:
-    """Resolve one explicitly referenced image inside the execution workspace."""
+    """Resolve one explicitly referenced document asset inside the workspace."""
     candidate = Path(raw_path)
     if candidate.is_absolute() or ".." in candidate.parts:
         raise ValueError(f"workspace_path must be a relative workspace path: {raw_path}")
@@ -67,11 +73,20 @@ def _resolve_workspace_asset(
         resolved = (base / candidate).resolve(strict=True)
         resolved.relative_to(workspace_root)
     except (OSError, ValueError) as exc:
-        raise ValueError(f"Workspace image is unavailable: {raw_path}") from exc
-    if not resolved.is_file() or resolved.suffix.lower() not in _DOCUMENT_IMAGE_SUFFIXES:
-        raise ValueError(f"workspace_path is not a supported image: {raw_path}")
-    if resolved.stat().st_size > _MAX_DOCUMENT_ASSET_BYTES:
-        raise ValueError(f"Workspace image exceeds 10 MB: {raw_path}")
+        raise ValueError(f"Workspace document asset is unavailable: {raw_path}") from exc
+    suffix = resolved.suffix.lower()
+    supported = _DOCUMENT_IMAGE_SUFFIXES | _DOCUMENT_MEDIA_SUFFIXES
+    if not resolved.is_file() or suffix not in supported:
+        raise ValueError(f"workspace_path is not a supported document asset: {raw_path}")
+    maximum = (
+        _MAX_DOCUMENT_MEDIA_BYTES
+        if suffix in _DOCUMENT_MEDIA_SUFFIXES
+        else _MAX_DOCUMENT_ASSET_BYTES
+    )
+    if resolved.stat().st_size > maximum:
+        raise ValueError(
+            f"Workspace document asset exceeds {maximum // (1024 * 1024)} MB: {raw_path}"
+        )
     return resolved
 
 
@@ -410,8 +425,8 @@ def create_write_document_tool(
             "修改本轮上传的文档时传入 source_attachment_id；继续修改当前 Workspace 中的"
             "持久文件时传入 source_asset_id；基于 Agent 已保存的模板创建时传入 template_id。"
             "原始上传附件和模板不会被覆盖；如果来源是 Agent 自己生成的产物，则在原产物"
-            "位置更新并保留原 artifact_id。规格文件可以引用当前消息中的图片 attachment_id，"
-            "也可以引用图片工具提供的工作区相对路径。"
+            "位置更新并保留原 artifact_id。规格文件可以引用当前消息中的图片、音频或视频"
+            " attachment_id，也可以引用受控工作区相对路径。"
         ),
         parameters={
             "type": "object",

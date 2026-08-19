@@ -19,12 +19,14 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 11
+PROJECT_GENERATOR_VERSION = 12
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+DGM_NS = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 
 
 def presentation_project_directory(output_path: Path) -> Path:
@@ -83,10 +85,22 @@ def build_presentation_project(pptx_path: Path, project_dir: Path) -> dict[str, 
                 media_dir=media_dir,
                 image_counter=image_counter,
             ))
+        animations = _slide_animations(slide, slide_index)
+        animations_by_element: dict[str, list[dict[str, Any]]] = {}
+        for animation in animations:
+            target = str(animation.get("targetElementId") or "")
+            if target:
+                animations_by_element.setdefault(target, []).append(animation)
+        for element in elements:
+            element_animations = animations_by_element.get(str(element.get("elementId") or ""))
+            if element_animations:
+                element["animations"] = element_animations
         page = {
             "pageType": "content",
             "background": background,
             "elements": elements,
+            "transition": _slide_transition(slide),
+            "animations": animations,
         }
         _write_json(project_dir / page_path, page)
         preview_slides.append({
@@ -207,6 +221,15 @@ def _shape_elements(
     if formula is not None:
         return [formula]
 
+    smartart = _smartart_element(
+        shape,
+        element_id,
+        bounds,
+        rotation=inherited_rotation + _shape_rotation(shape),
+    )
+    if smartart is not None:
+        return [smartart]
+
     if shape_type == MSO_SHAPE_TYPE.LINE:
         return [{
             "elementId": element_id,
@@ -312,6 +335,160 @@ def _shape_elements(
             "shadow": _shape_shadow(shape),
         }]
     return []
+
+
+def _slide_transition(slide: Any) -> dict[str, Any] | None:
+    transition = slide._element.find(f"{{{P_NS}}}transition")
+    if transition is None:
+        return None
+    effect = next(
+        (
+            child for child in transition
+            if str(child.tag).rsplit("}", 1)[-1] not in {"sndAc", "extLst"}
+        ),
+        None,
+    )
+    effect_name = str(effect.tag).rsplit("}", 1)[-1] if effect is not None else "cut"
+    speed = str(transition.get("spd") or "med")
+    duration_ms = {"fast": 250, "med": 500, "slow": 1000}.get(speed, 500)
+    result: dict[str, Any] = {
+        "type": effect_name,
+        "durationMs": duration_ms,
+        "advanceOnClick": str(transition.get("advClick") or "1") != "0",
+    }
+    if transition.get("advTm") is not None:
+        try:
+            result["advanceAfterMs"] = max(0, int(transition.get("advTm")))
+        except (TypeError, ValueError):
+            pass
+    if effect is not None:
+        for name in ("dir", "orient", "spokes", "thruBlk"):
+            if effect.get(name) is not None:
+                result[name] = str(effect.get(name))
+    return result
+
+
+def _slide_animations(slide: Any, slide_index: int) -> list[dict[str, Any]]:
+    timing = slide._element.find(f"{{{P_NS}}}timing")
+    if timing is None:
+        return []
+    supported = {"animEffect", "animMotion", "anim", "set", "cmd"}
+    animations: list[dict[str, Any]] = []
+    for node in timing.iter():
+        kind = str(node.tag).rsplit("}", 1)[-1]
+        if kind not in supported:
+            continue
+        target = node.find(f".//{{{P_NS}}}spTgt")
+        shape_id = str(target.get("spid") or "").strip() if target is not None else ""
+        if not shape_id:
+            continue
+        common_timing = node.find(f".//{{{P_NS}}}cTn")
+        duration = str(common_timing.get("dur") or "") if common_timing is not None else ""
+        try:
+            duration_ms = max(1, int(duration))
+        except (TypeError, ValueError):
+            duration_ms = 500
+        condition = node.find(f".//{{{P_NS}}}stCondLst/{{{P_NS}}}cond")
+        if condition is None:
+            ancestor = node.getparent()
+            while ancestor is not None:
+                condition = ancestor.find(
+                    f"{{{P_NS}}}stCondLst/{{{P_NS}}}cond"
+                )
+                if condition is not None:
+                    break
+                ancestor = ancestor.getparent()
+        try:
+            delay_ms = max(0, int(condition.get("delay") or 0)) if condition is not None else 0
+        except (TypeError, ValueError):
+            delay_ms = 0
+        node_type = ""
+        ancestor = node
+        while ancestor is not None:
+            if str(ancestor.tag).rsplit("}", 1)[-1] == "cTn" and ancestor.get("nodeType"):
+                node_type = str(ancestor.get("nodeType"))
+                break
+            ancestor = ancestor.getparent()
+        effect = str(node.get("filter") or node.get("path") or node.get("cmd") or kind)
+        animations.append({
+            "id": f"slide-{slide_index}-animation-{len(animations) + 1}",
+            "targetShapeId": int(shape_id) if shape_id.isdigit() else shape_id,
+            "targetElementId": f"slide-{slide_index}-shape-id-{shape_id}",
+            "kind": kind,
+            "effect": effect,
+            "transition": str(node.get("transition") or "in"),
+            "trigger": node_type or "afterEffect",
+            "delayMs": delay_ms,
+            "durationMs": duration_ms,
+        })
+    return animations
+
+
+def _smartart_element(
+    shape: Any,
+    element_id: str,
+    bounds: list[float],
+    *,
+    rotation: float = 0.0,
+) -> dict[str, Any] | None:
+    relationship_ids = shape._element.find(f".//{{{DGM_NS}}}relIds")
+    if relationship_ids is None:
+        return None
+    data_id = relationship_ids.get(f"{{{R_NS}}}dm")
+    if not data_id:
+        return None
+    try:
+        from lxml import etree
+
+        data_root = etree.fromstring(shape.part.related_part(data_id).blob)
+    except Exception:
+        return None
+    nodes: list[dict[str, Any]] = []
+    for point in data_root.findall(f".//{{{DGM_NS}}}pt"):
+        point_type = str(point.get("type") or "node")
+        if point_type in {"doc", "asst"}:
+            continue
+        text = "".join(
+            str(item.text or "")
+            for item in point.findall(f".//{{{A_NS}}}t")
+        ).strip()
+        if not text:
+            continue
+        nodes.append({
+            "id": str(point.get("modelId") or f"node-{len(nodes) + 1}"),
+            "text": text,
+            "type": point_type,
+            "order": len(nodes),
+        })
+    node_ids = {str(item["id"]) for item in nodes}
+    connections = []
+    for connection in data_root.findall(f".//{{{DGM_NS}}}cxn"):
+        source = str(connection.get("srcId") or "")
+        target = str(connection.get("destId") or "")
+        if source in node_ids and target in node_ids:
+            connections.append({
+                "source": source,
+                "target": target,
+                "type": str(connection.get("type") or "parOf"),
+            })
+    layout_name = ""
+    layout_id = relationship_ids.get(f"{{{R_NS}}}lo")
+    if layout_id:
+        try:
+            layout_root = etree.fromstring(shape.part.related_part(layout_id).blob)
+            title = layout_root.find(f".//{{{DGM_NS}}}title")
+            layout_name = str(title.get("val") or "") if title is not None else ""
+        except Exception:
+            pass
+    return {
+        "elementId": element_id,
+        "elementType": "smartart",
+        "bounds": bounds,
+        "rotation": rotation,
+        "layoutName": layout_name,
+        "nodes": nodes,
+        "connections": connections,
+    }
 
 
 def _formula_element(

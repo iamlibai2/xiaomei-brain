@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import shutil
 from copy import deepcopy
 from pathlib import Path
@@ -17,6 +18,7 @@ from .validator import validate_presentation_project
 
 MAX_SLIDES = 200
 MAX_TEXT_LENGTH = 100_000
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 
 DEFAULT_THEME = {
@@ -95,8 +97,16 @@ class PresentationWriter:
         )
 
         verified = Presentation(str(output_path))
-        text_count, picture_count, chart_count, note_count, characters = self._summary(verified)
-        if text_count == 0 and picture_count == 0 and chart_count == 0:
+        (
+            text_count,
+            picture_count,
+            chart_count,
+            formula_count,
+            media_count,
+            note_count,
+            characters,
+        ) = self._summary(verified)
+        if not any((text_count, picture_count, chart_count, formula_count, media_count)):
             raise ValueError("生成的演示文稿没有文字或图片内容")
         extraction = PresentationExtractor().extract(output_path)
         preview = extraction.sections[0].content[:1200] if extraction.sections else ""
@@ -114,6 +124,8 @@ class PresentationWriter:
                 "text_shape_count": text_count,
                 "picture_count": picture_count,
                 "chart_count": chart_count,
+                "formula_count": formula_count,
+                "media_count": media_count,
                 "note_slide_count": note_count,
                 "character_count": characters,
                 "changed_items": changed,
@@ -292,7 +304,17 @@ class PresentationWriter:
         if not isinstance(elements, list):
             raise ValueError("slide.elements 必须是数组")
         for element in elements:
-            cls._add_element(slide, element, slide_theme, asset_paths)
+            shape = cls._add_element(slide, element, slide_theme, asset_paths)
+            if shape is not None and isinstance(element, dict) and "animation" in element:
+                animations = element["animation"]
+                if not isinstance(animations, list):
+                    animations = [animations]
+                if not animations:
+                    raise ValueError("element.animation 不能为空数组")
+                for animation in animations:
+                    cls._add_shape_animation(slide, shape, animation)
+        if "transition" in slide_spec:
+            cls._set_slide_transition(slide, slide_spec.get("transition"))
         cls._set_notes(slide, slide_spec.get("notes"))
         return slide
 
@@ -449,33 +471,32 @@ class PresentationWriter:
         element: Any,
         theme: dict[str, Any],
         asset_paths: dict[str, Path] | None,
-    ) -> None:
+    ) -> Any | None:
         if not isinstance(element, dict):
             raise ValueError("slide.elements 中的每一项必须是对象")
         kind = str(element.get("type") or "text").lower()
         if kind == "image":
-            cls._add_image(slide, element, asset_paths)
-            return
+            return cls._add_image(slide, element, asset_paths)
         if kind == "shape":
-            cls._add_shape_element(slide, element, theme)
-            return
+            return cls._add_shape_element(slide, element, theme)
         if kind == "line":
-            cls._add_line_element(slide, element, theme)
-            return
+            return cls._add_line_element(slide, element, theme)
         if kind == "table":
-            cls._add_table_element(slide, element, theme)
-            return
+            return cls._add_table_element(slide, element, theme)
         if kind == "chart":
-            cls._add_chart_element(slide, element, theme)
-            return
+            return cls._add_chart_element(slide, element, theme)
+        if kind == "formula":
+            return cls._add_formula_element(slide, element, theme)
+        if kind == "media":
+            return cls._add_media_element(slide, element, asset_paths)
         if kind != "text":
             raise ValueError(
-                f"不支持的 slide element: {kind}；支持 text、image、shape、line、table、chart"
+                f"不支持的 slide element: {kind}；支持 text、image、shape、line、table、chart、formula、media"
             )
         required = ("x_cm", "y_cm", "width_cm", "height_cm")
         if any(key not in element for key in required):
             raise ValueError("text element 必须提供 x_cm、y_cm、width_cm 和 height_cm")
-        cls._add_text_box(
+        return cls._add_text_box(
             slide,
             str(element.get("text") or ""),
             float(element["x_cm"]),
@@ -490,6 +511,356 @@ class PresentationWriter:
             align=str(element.get("align") or "left").lower(),
             vertical=str(element.get("vertical") or "top").lower(),
         )
+
+    @staticmethod
+    def _insert_slide_metadata(slide: Any, element: Any) -> None:
+        """Insert transition/timing before extLst while preserving slide schema order."""
+        extension_list = slide._element.find(f"{{{P_NS}}}extLst")
+        if extension_list is None:
+            slide._element.append(element)
+        else:
+            extension_list.addprevious(element)
+
+    @classmethod
+    def _set_slide_transition(cls, slide: Any, values: Any) -> None:
+        from lxml import etree
+
+        existing = slide._element.find(f"{{{P_NS}}}transition")
+        if existing is not None:
+            slide._element.remove(existing)
+        if values in (None, False):
+            return
+        if not isinstance(values, dict):
+            raise ValueError("slide.transition 必须是对象、null 或 false")
+        transition_type = str(values.get("type") or "fade").strip().lower()
+        aliases = {"none": "cut", "dissolve": "fade"}
+        transition_type = aliases.get(transition_type, transition_type)
+        if transition_type not in {"cut", "fade", "push", "wipe", "split"}:
+            raise ValueError("transition.type 仅支持 cut、fade、push、wipe、split")
+        speed = str(values.get("speed") or "medium").strip().lower()
+        speed = {"medium": "med", "normal": "med"}.get(speed, speed)
+        if speed not in {"fast", "med", "slow"}:
+            raise ValueError("transition.speed 仅支持 fast、medium、slow")
+        transition = etree.Element(f"{{{P_NS}}}transition")
+        transition.set("spd", speed)
+        transition.set("advClick", "1" if values.get("advance_on_click", True) else "0")
+        if values.get("advance_after_ms") is not None:
+            try:
+                advance_after = int(values["advance_after_ms"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("transition.advance_after_ms 必须是非负整数") from exc
+            if advance_after < 0:
+                raise ValueError("transition.advance_after_ms 必须是非负整数")
+            transition.set("advTm", str(advance_after))
+        effect = etree.SubElement(transition, f"{{{P_NS}}}{transition_type}")
+        if transition_type in {"push", "wipe"}:
+            direction = str(values.get("direction") or "left").strip().lower()
+            direction_value = {
+                "left": "l", "right": "r", "up": "u", "down": "d",
+                "l": "l", "r": "r", "u": "u", "d": "d",
+            }.get(direction)
+            if direction_value is None:
+                raise ValueError("transition.direction 仅支持 left、right、up、down")
+            effect.set("dir", direction_value)
+        elif transition_type == "split":
+            orientation = str(values.get("orientation") or "vertical").strip().lower()
+            orientation_value = {"vertical": "vert", "horizontal": "horz", "vert": "vert", "horz": "horz"}.get(orientation)
+            direction = str(values.get("direction") or "out").strip().lower()
+            if orientation_value is None or direction not in {"in", "out"}:
+                raise ValueError("split 转场仅支持 vertical/horizontal 和 in/out")
+            effect.set("orient", orientation_value)
+            effect.set("dir", direction)
+        cls._insert_slide_metadata(slide, transition)
+
+    @staticmethod
+    def _next_timing_id(timing: Any) -> int:
+        values = []
+        for node in timing.findall(f".//{{{P_NS}}}cTn"):
+            try:
+                values.append(int(node.get("id") or 0))
+            except (TypeError, ValueError):
+                continue
+        return max(values, default=0) + 1
+
+    @classmethod
+    def _animation_container(cls, slide: Any) -> tuple[Any, int]:
+        from lxml import etree
+
+        timing = slide._element.find(f"{{{P_NS}}}timing")
+        if timing is None:
+            timing = etree.Element(f"{{{P_NS}}}timing")
+            timing_list = etree.SubElement(timing, f"{{{P_NS}}}tnLst")
+            parallel = etree.SubElement(timing_list, f"{{{P_NS}}}par")
+            root = etree.SubElement(parallel, f"{{{P_NS}}}cTn")
+            root.set("id", "1")
+            root.set("dur", "indefinite")
+            root.set("restart", "never")
+            root.set("nodeType", "tmRoot")
+            root_children = etree.SubElement(root, f"{{{P_NS}}}childTnLst")
+            sequence = etree.SubElement(root_children, f"{{{P_NS}}}seq")
+            sequence.set("concurrent", "1")
+            sequence.set("nextAc", "seek")
+            main = etree.SubElement(sequence, f"{{{P_NS}}}cTn")
+            main.set("id", "2")
+            main.set("dur", "indefinite")
+            main.set("nodeType", "mainSeq")
+            container = etree.SubElement(main, f"{{{P_NS}}}childTnLst")
+            cls._insert_slide_metadata(slide, timing)
+            return container, 3
+        container = timing.find(
+            f".//{{{P_NS}}}cTn[@nodeType='mainSeq']/{{{P_NS}}}childTnLst"
+        )
+        if container is None:
+            root = timing.find(f".//{{{P_NS}}}cTn[@nodeType='tmRoot']")
+            if root is None:
+                raise ValueError("现有 PPT 动画时间线结构无法安全扩展")
+            container = root.find(f"{{{P_NS}}}childTnLst")
+            if container is None:
+                container = etree.SubElement(root, f"{{{P_NS}}}childTnLst")
+        return container, cls._next_timing_id(timing)
+
+    @classmethod
+    def _add_shape_animation(cls, slide: Any, shape: Any, values: Any) -> None:
+        from lxml import etree
+
+        if not isinstance(values, dict):
+            raise ValueError("element.animation 必须是对象或对象数组")
+        effect_name = str(values.get("effect") or "fade").strip().lower()
+        if effect_name not in {"fade", "fly", "wipe", "zoom"}:
+            raise ValueError("animation.effect 仅支持 fade、fly、wipe、zoom")
+        trigger = str(values.get("trigger") or "after_previous").strip().lower()
+        node_type = {
+            "on_click": "clickEffect",
+            "with_previous": "withEffect",
+            "after_previous": "afterEffect",
+        }.get(trigger)
+        if node_type is None:
+            raise ValueError("animation.trigger 仅支持 on_click、with_previous、after_previous")
+        try:
+            duration_ms = int(values.get("duration_ms", 500))
+            delay_ms = int(values.get("delay_ms", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("animation.duration_ms 和 delay_ms 必须是整数") from exc
+        if not 80 <= duration_ms <= 60_000 or not 0 <= delay_ms <= 60_000:
+            raise ValueError("animation.duration_ms 必须在 80 到 60000，delay_ms 必须在 0 到 60000")
+        filter_value = effect_name
+        if effect_name in {"fly", "wipe"}:
+            direction = str(values.get("direction") or "left").strip().lower()
+            direction_value = {
+                "left": "Left", "right": "Right", "up": "Top", "down": "Bottom",
+            }.get(direction)
+            if direction_value is None:
+                raise ValueError("animation.direction 仅支持 left、right、up、down")
+            filter_value = f"{effect_name}(from{direction_value})"
+        container, next_id = cls._animation_container(slide)
+        parallel = etree.SubElement(container, f"{{{P_NS}}}par")
+        timing = etree.SubElement(parallel, f"{{{P_NS}}}cTn")
+        timing.set("id", str(next_id))
+        timing.set("nodeType", node_type)
+        timing.set("fill", "hold")
+        start_conditions = etree.SubElement(timing, f"{{{P_NS}}}stCondLst")
+        condition = etree.SubElement(start_conditions, f"{{{P_NS}}}cond")
+        condition.set("delay", str(delay_ms))
+        child_list = etree.SubElement(timing, f"{{{P_NS}}}childTnLst")
+        effect = etree.SubElement(child_list, f"{{{P_NS}}}animEffect")
+        effect.set("transition", "in")
+        effect.set("filter", filter_value)
+        behavior = etree.SubElement(effect, f"{{{P_NS}}}cBhvr")
+        behavior_timing = etree.SubElement(behavior, f"{{{P_NS}}}cTn")
+        behavior_timing.set("id", str(next_id + 1))
+        behavior_timing.set("dur", str(duration_ms))
+        behavior_timing.set("fill", "hold")
+        target = etree.SubElement(behavior, f"{{{P_NS}}}tgtEl")
+        shape_target = etree.SubElement(target, f"{{{P_NS}}}spTgt")
+        shape_target.set("spid", str(shape.shape_id))
+
+    @staticmethod
+    def _asset_path(
+        values: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+        *,
+        label: str,
+        prefix: str = "",
+        required: bool = True,
+    ) -> Path | None:
+        attachment_field = f"{prefix}attachment_id"
+        workspace_field = f"{prefix}workspace_path"
+        attachment_id = str(values.get(attachment_field) or "").strip()
+        workspace_path = str(values.get(workspace_field) or "").strip()
+        if not attachment_id and not workspace_path and not required:
+            return None
+        if bool(attachment_id) == bool(workspace_path):
+            raise ValueError(
+                f"{label} 必须且只能提供 {attachment_field} 或 {workspace_field} 之一"
+            )
+        key = attachment_id or f"workspace:{workspace_path}"
+        path = (asset_paths or {}).get(key)
+        if path is None or not path.is_file():
+            raise ValueError(f"当前执行现场没有可用{label}: {attachment_id or workspace_path}")
+        return path
+
+    @classmethod
+    def _formula_node(cls, value: Any) -> Any:
+        from lxml import etree
+
+        namespace = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+
+        def node(name: str, *children: Any, text: str | None = None) -> Any:
+            element = etree.Element(f"{{{namespace}}}{name}")
+            if text is not None:
+                element.text = text
+            for child in children:
+                element.append(child)
+            return element
+
+        def container(name: str, content: Any) -> Any:
+            return node(name, cls._formula_node(content))
+
+        if isinstance(value, (str, int, float)):
+            return node("r", node("t", text=str(value)))
+        if not isinstance(value, dict):
+            raise ValueError("formula.expression 必须是文字、数字或公式对象")
+        kind = str(value.get("type") or "text").strip().lower()
+        if kind == "text":
+            return cls._formula_node(value.get("text", ""))
+        if kind == "fraction":
+            return node(
+                "f",
+                container("num", value.get("numerator", "")),
+                container("den", value.get("denominator", "")),
+            )
+        if kind in {"superscript", "subscript", "subscript_superscript"}:
+            tag = {
+                "superscript": "sSup",
+                "subscript": "sSub",
+                "subscript_superscript": "sSubSup",
+            }[kind]
+            children = [container("e", value.get("base", ""))]
+            if kind != "superscript":
+                children.append(container("sub", value.get("subscript", "")))
+            if kind != "subscript":
+                children.append(container("sup", value.get("superscript", "")))
+            return node(tag, *children)
+        if kind == "radical":
+            children = []
+            if value.get("degree") not in (None, ""):
+                children.append(container("deg", value["degree"]))
+            children.append(container("e", value.get("radicand", "")))
+            return node("rad", *children)
+        if kind == "nary":
+            operator = str(value.get("operator") or "∑")
+            properties = node("naryPr")
+            character = node("chr")
+            character.set(f"{{{namespace}}}val", operator)
+            properties.append(character)
+            return node(
+                "nary",
+                properties,
+                container("sub", value.get("lower", "")),
+                container("sup", value.get("upper", "")),
+                container("e", value.get("expression", "")),
+            )
+        if kind == "delimiter":
+            properties = node("dPr")
+            for tag, field, default in (
+                ("begChr", "begin", "("),
+                ("endChr", "end", ")"),
+            ):
+                item = node(tag)
+                item.set(f"{{{namespace}}}val", str(value.get(field, default)))
+                properties.append(item)
+            return node("d", properties, container("e", value.get("expression", "")))
+        if kind == "sequence":
+            items = value.get("items")
+            if not isinstance(items, list) or not items:
+                raise ValueError("formula sequence.items 必须是非空数组")
+            wrapper = node("e")
+            for item in items:
+                wrapper.append(cls._formula_node(item))
+            return wrapper
+        raise ValueError(
+            "formula.type 仅支持 text、fraction、superscript、subscript、"
+            "subscript_superscript、radical、nary、delimiter、sequence"
+        )
+
+    @classmethod
+    def _set_formula_shape(cls, shape: Any, expression: Any) -> None:
+        from lxml import etree
+        from pptx.oxml.ns import qn
+
+        paragraph = shape._element.find(".//" + qn("a:p"))
+        if paragraph is None:
+            raise ValueError("所选元素无法承载 PowerPoint 公式")
+        for child in list(paragraph):
+            paragraph.remove(child)
+        wrapper = etree.Element(
+            "{http://schemas.microsoft.com/office/drawing/2010/main}m"
+        )
+        equation = etree.SubElement(
+            wrapper,
+            "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath",
+        )
+        formula = cls._formula_node(expression)
+        if str(formula.tag).endswith("}e"):
+            for child in list(formula):
+                equation.append(child)
+        else:
+            equation.append(formula)
+        paragraph.append(wrapper)
+
+    @classmethod
+    def _add_formula_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        theme: dict[str, Any],
+    ) -> Any:
+        from pptx.util import Cm
+
+        left, top, width, height = cls._element_box(values, "formula")
+        if "expression" not in values:
+            raise ValueError("formula element 必须提供 expression")
+        shape = slide.shapes.add_textbox(Cm(left), Cm(top), Cm(width), Cm(height))
+        shape.name = str(values.get("name") or "XiaomeiFormula")
+        cls._set_formula_shape(shape, values["expression"])
+        return shape
+
+    @classmethod
+    def _add_media_element(
+        cls,
+        slide: Any,
+        values: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> Any:
+        from pptx.oxml.ns import qn
+        from pptx.util import Cm
+
+        left, top, width, height = cls._element_box(values, "media")
+        media_path = cls._asset_path(values, asset_paths, label="媒体文件")
+        assert media_path is not None
+        media_kind = str(values.get("media_kind") or "video").strip().lower()
+        if media_kind not in {"audio", "video"}:
+            raise ValueError("media_kind 仅支持 audio 或 video")
+        poster_path = cls._asset_path(
+            values, asset_paths, label="媒体封面", prefix="poster_", required=False,
+        )
+        mime_type = str(values.get("mime_type") or "").strip()
+        if not mime_type:
+            mime_type = mimetypes.guess_type(media_path.name)[0] or (
+                "audio/mpeg" if media_kind == "audio" else "video/mp4"
+            )
+        shape = slide.shapes.add_movie(
+            str(media_path),
+            Cm(left), Cm(top), Cm(width), Cm(height),
+            poster_frame_image=str(poster_path) if poster_path else None,
+            mime_type=mime_type,
+        )
+        shape.name = str(values.get("name") or "XiaomeiMedia")
+        if media_kind == "audio":
+            source = shape._element.find(".//" + qn("a:videoFile"))
+            if source is not None:
+                source.tag = qn("a:audioFile")
+        return shape
 
     @classmethod
     def _element_box(cls, values: dict[str, Any], kind: str) -> tuple[float, float, float, float]:
@@ -746,7 +1117,7 @@ class PresentationWriter:
         return shape
 
     @classmethod
-    def _chart_data(cls, values: dict[str, Any]) -> Any:
+    def _category_chart_data(cls, values: dict[str, Any]) -> Any:
         from pptx.chart.data import CategoryChartData
 
         categories = values.get("categories")
@@ -778,6 +1149,43 @@ class PresentationWriter:
         return data
 
     @classmethod
+    def _xy_chart_data(cls, values: dict[str, Any]) -> Any:
+        from pptx.chart.data import XyChartData
+
+        series_items = values.get("series")
+        if not isinstance(series_items, list) or not series_items:
+            raise ValueError("scatter chart.series 必须是非空数组")
+        if len(series_items) > 100:
+            raise ValueError("图表数据超过支持的大小")
+        data = XyChartData()
+        point_count = 0
+        for index, item in enumerate(series_items):
+            if not isinstance(item, dict):
+                raise ValueError("scatter chart.series 中的每一项必须是对象")
+            x_values = item.get("x_values")
+            y_values = item.get("values")
+            if not isinstance(x_values, list) or not isinstance(y_values, list):
+                raise ValueError(
+                    "每个 scatter chart.series 必须提供 x_values 和 values 数组"
+                )
+            if not x_values or len(x_values) != len(y_values):
+                raise ValueError(
+                    "每个 scatter chart.series 的 x_values 和 values 必须非空且长度相同"
+                )
+            point_count += len(x_values)
+            if point_count > 2_000:
+                raise ValueError("图表数据超过支持的大小")
+            series = data.add_series(str(item.get("name") or f"系列 {index + 1}"))
+            for x_value, y_value in zip(x_values, y_values):
+                try:
+                    series.add_data_point(float(x_value), float(y_value))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"无效的散点图坐标: ({x_value}, {y_value})"
+                    ) from exc
+        return data
+
+    @classmethod
     def _add_chart_element(
         cls,
         slide: Any,
@@ -799,16 +1207,34 @@ class PresentationWriter:
             "pie": XL_CHART_TYPE.PIE,
             "doughnut": XL_CHART_TYPE.DOUGHNUT,
             "area": XL_CHART_TYPE.AREA,
+            "scatter": XL_CHART_TYPE.XY_SCATTER,
+            "xy_scatter": XL_CHART_TYPE.XY_SCATTER,
+            "scatter_lines": XL_CHART_TYPE.XY_SCATTER_LINES,
+            "xy_scatter_lines": XL_CHART_TYPE.XY_SCATTER_LINES,
+            "scatter_lines_no_markers": XL_CHART_TYPE.XY_SCATTER_LINES_NO_MARKERS,
+            "xy_scatter_lines_no_markers": XL_CHART_TYPE.XY_SCATTER_LINES_NO_MARKERS,
+            "radar": XL_CHART_TYPE.RADAR,
+            "radar_markers": XL_CHART_TYPE.RADAR_MARKERS,
+            "radar_filled": XL_CHART_TYPE.RADAR_FILLED,
         }
         type_name = str(values.get("chart_type") or "column").strip().lower().replace("-", "_")
         chart_type = chart_types.get(type_name)
         if chart_type is None:
             raise ValueError(
                 "chart_type 仅支持 column、column_stacked、bar、line、line_markers、"
-                "pie、doughnut、area"
+                "pie、doughnut、area、scatter、scatter_lines、"
+                "scatter_lines_no_markers、radar、radar_markers、radar_filled"
             )
+        data = (
+            cls._xy_chart_data(values)
+            if type_name in {
+                "scatter", "xy_scatter", "scatter_lines", "xy_scatter_lines",
+                "scatter_lines_no_markers", "xy_scatter_lines_no_markers",
+            }
+            else cls._category_chart_data(values)
+        )
         shape = slide.shapes.add_chart(
-            chart_type, Cm(left), Cm(top), Cm(width), Cm(height), cls._chart_data(values),
+            chart_type, Cm(left), Cm(top), Cm(width), Cm(height), data,
         )
         shape.name = str(values.get("name") or "XiaomeiChart")
         chart = shape.chart
@@ -968,14 +1394,41 @@ class PresentationWriter:
                 cls._color(operation["background_color"], "background_color"),
             )
             changed += 1
+        if "transition" in operation:
+            cls._set_slide_transition(slide, operation.get("transition"))
+            changed += 1
         elements = operation.get("elements", [])
         if not isinstance(elements, list):
             raise ValueError("update_slide.elements 必须是数组")
         theme = cls._theme(operation.get("theme"))
         for element in elements:
-            cls._add_element(slide, element, theme, asset_paths)
+            shape = cls._add_element(slide, element, theme, asset_paths)
+            if shape is not None and isinstance(element, dict) and "animation" in element:
+                animations = element["animation"]
+                if not isinstance(animations, list):
+                    animations = [animations]
+                if not animations:
+                    raise ValueError("element.animation 不能为空数组")
+                for animation in animations:
+                    cls._add_shape_animation(slide, shape, animation)
             changed += 1
         return changed
+
+    @classmethod
+    def _set_transition_operation(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        slide = presentation.slides[cls._slide_index(presentation, operation.get("slide"))]
+        cls._set_slide_transition(slide, operation.get("transition"))
+        return 1
+
+    @classmethod
+    def _add_animation_operation(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        shape = cls._resolve_shape(presentation, operation)
+        animation = operation.get("animation")
+        if not isinstance(animation, dict):
+            raise ValueError("add_animation 必须提供 animation 对象")
+        slide = presentation.slides[cls._slide_index(presentation, operation.get("slide"))]
+        cls._add_shape_animation(slide, shape, animation)
+        return 1
 
     @staticmethod
     def _slide_index(presentation: Any, value: Any) -> int:
@@ -1370,6 +1823,8 @@ class PresentationWriter:
 
     @classmethod
     def _update_chart(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        from pptx.enum.chart import XL_CHART_TYPE
+
         shape = cls._resolve_shape(presentation, operation)
         if not getattr(shape, "has_chart", False):
             raise ValueError("The selected presentation element is not a chart")
@@ -1383,45 +1838,31 @@ class PresentationWriter:
             changed += 1
         categories_supplied = "categories" in operation
         series_supplied = "series" in operation
-        if categories_supplied != series_supplied:
+        scatter_types = {
+            XL_CHART_TYPE.XY_SCATTER,
+            XL_CHART_TYPE.XY_SCATTER_LINES,
+            XL_CHART_TYPE.XY_SCATTER_LINES_NO_MARKERS,
+            XL_CHART_TYPE.XY_SCATTER_SMOOTH,
+            XL_CHART_TYPE.XY_SCATTER_SMOOTH_NO_MARKERS,
+        }
+        is_scatter = chart.chart_type in scatter_types
+        if is_scatter and categories_supplied:
+            raise ValueError(
+                "update_chart 修改散点图时不使用 categories；请在每个 series 中提供 x_values"
+            )
+        if not is_scatter and categories_supplied != series_supplied:
             raise ValueError("update_chart must provide categories and series together")
-        if categories_supplied:
-            from pptx.chart.data import CategoryChartData
-
-            categories = operation.get("categories")
-            series_items = operation.get("series")
-            if not isinstance(categories, list) or not categories:
-                raise ValueError("update_chart.categories must be a non-empty array")
-            if not isinstance(series_items, list) or not series_items:
-                raise ValueError("update_chart.series must be a non-empty array")
-            if len(categories) > 2_000 or len(series_items) > 100:
-                raise ValueError("Chart data exceeds the supported size")
-            data = CategoryChartData()
-            data.categories = [str(value) for value in categories]
-            for index, item in enumerate(series_items):
-                if not isinstance(item, dict):
-                    raise ValueError("Each update_chart series must be an object")
-                values = item.get("values")
-                if not isinstance(values, list) or len(values) != len(categories):
-                    raise ValueError(
-                        "Each chart series must contain one value for every category"
-                    )
-                normalized: list[float | None] = []
-                for value in values:
-                    if value is None:
-                        normalized.append(None)
-                        continue
-                    try:
-                        normalized.append(float(value))
-                    except (TypeError, ValueError) as exc:
-                        raise ValueError(f"Invalid chart value: {value}") from exc
-                data.add_series(str(item.get("name") or f"Series {index + 1}"), normalized)
+        if is_scatter and series_supplied:
+            data = cls._xy_chart_data(operation)
+        elif categories_supplied:
+            data = cls._category_chart_data(operation)
+        else:
+            data = None
+        if data is not None:
             try:
                 chart.replace_data(data)
             except (AttributeError, ValueError) as exc:
-                raise ValueError(
-                    "This chart type does not support category-data replacement"
-                ) from exc
+                raise ValueError("This chart type does not support data replacement") from exc
             changed += 1
         if "show_legend" in operation:
             chart.has_legend = bool(operation["show_legend"])
@@ -1446,6 +1887,56 @@ class PresentationWriter:
         if changed == 0:
             raise ValueError("update_chart did not include any editable fields")
         return changed
+
+    @classmethod
+    def _update_formula(cls, presentation: Any, operation: dict[str, Any]) -> int:
+        shape = cls._resolve_shape(presentation, operation)
+        if shape._element.find(
+            ".//{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath"
+        ) is None:
+            raise ValueError("所选演示元素不是公式")
+        if "expression" not in operation:
+            raise ValueError("update_formula 必须提供 expression")
+        cls._set_formula_shape(shape, operation["expression"])
+        return 1
+
+    @classmethod
+    def _replace_media(
+        cls,
+        presentation: Any,
+        operation: dict[str, Any],
+        asset_paths: dict[str, Path] | None,
+    ) -> int:
+        from pptx.oxml.ns import qn
+        from pptx.util import Cm
+
+        slide_index = cls._slide_index(presentation, operation.get("slide"))
+        slide = presentation.slides[slide_index]
+        shape = cls._resolve_shape(presentation, operation)
+        has_media = any(
+            shape._element.find(".//" + tag) is not None
+            for tag in (
+                qn("a:videoFile"),
+                qn("a:audioFile"),
+                "{http://schemas.microsoft.com/office/powerpoint/2010/main}media",
+            )
+        )
+        if not has_media:
+            raise ValueError("所选演示元素不是嵌入媒体")
+        values = dict(operation)
+        values.setdefault("x_cm", shape.left / Cm(1))
+        values.setdefault("y_cm", shape.top / Cm(1))
+        values.setdefault("width_cm", shape.width / Cm(1))
+        values.setdefault("height_cm", shape.height / Cm(1))
+        replacement = cls._add_media_element(slide, values, asset_paths)
+        parent = shape._element.getparent()
+        old_index = parent.index(shape._element)
+        replacement_element = replacement._element
+        replacement_parent = replacement_element.getparent()
+        replacement_parent.remove(replacement_element)
+        parent.insert(old_index, replacement_element)
+        parent.remove(shape._element)
+        return 1
 
     @classmethod
     def _apply_operations(
@@ -1516,6 +2007,14 @@ class PresentationWriter:
                 changed += cls._replace_image(presentation, operation, asset_paths)
             elif kind == "update_chart":
                 changed += cls._update_chart(presentation, operation)
+            elif kind == "update_formula":
+                changed += cls._update_formula(presentation, operation)
+            elif kind == "replace_media":
+                changed += cls._replace_media(presentation, operation, asset_paths)
+            elif kind == "set_transition":
+                changed += cls._set_transition_operation(presentation, operation)
+            elif kind == "add_animation":
+                changed += cls._add_animation_operation(presentation, operation)
             elif kind == "delete_element":
                 cls._delete_element(presentation, operation)
                 changed += 1
@@ -1538,12 +2037,15 @@ class PresentationWriter:
         return changed
 
     @staticmethod
-    def _summary(presentation: Any) -> tuple[int, int, int, int, int]:
+    def _summary(presentation: Any) -> tuple[int, int, int, int, int, int, int]:
         from pptx.enum.shapes import MSO_SHAPE_TYPE
+        from pptx.oxml.ns import qn
 
         text_count = 0
         picture_count = 0
         chart_count = 0
+        formula_count = 0
+        media_count = 0
         note_count = 0
         characters = 0
         for slide in presentation.slides:
@@ -1555,6 +2057,17 @@ class PresentationWriter:
                     picture_count += 1
                 if getattr(shape, "has_chart", False):
                     chart_count += 1
+                if shape._element.find(".//" + qn("m:oMath")) is not None:
+                    formula_count += 1
+                if any(
+                    shape._element.find(".//" + tag) is not None
+                    for tag in (
+                        qn("a:videoFile"),
+                        qn("a:audioFile"),
+                        "{http://schemas.microsoft.com/office/powerpoint/2010/main}media",
+                    )
+                ):
+                    media_count += 1
             try:
                 if not slide.has_notes_slide:
                     continue
@@ -1564,4 +2077,12 @@ class PresentationWriter:
             if notes:
                 note_count += 1
                 characters += len(notes)
-        return text_count, picture_count, chart_count, note_count, characters
+        return (
+            text_count,
+            picture_count,
+            chart_count,
+            formula_count,
+            media_count,
+            note_count,
+            characters,
+        )

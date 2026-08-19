@@ -15,7 +15,7 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
 - `element_type="text"` 或 `shape`：使用 `update_element`；只有明确删除时才使用 `delete_element`。
 - `element_type="table"` 且提供 `row`、`column`：使用 `update_table_cell`，行列号从 1 开始，可修改 `text`、`fill_color`、`text_color`、`font_size_pt`、`bold`。
 - `element_type="image"`：替换图片时使用 `replace_image`，并提供当前消息中的 `attachment_id` 或受控工作区 `workspace_path`；只改大小和位置时使用 `update_element`。
-- `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致。
+- `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。分类图修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致；散点图不使用 `categories`，每个系列提供长度相同的 `x_values` 与 `values`。
 - `element_type="line"`：使用 `update_element` 修改连接线。可修改 `line_color`、`line_width_pt`、`line_dash`、`start_arrow`、`end_arrow`、`line_transparency` 和位置；不要把连接线转换成图片或普通矩形。
 
 始终把当前 PPT 附件的真实 ID 作为 `source_attachment_id` 传给 `write_document`。如果工具返回
@@ -195,7 +195,16 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
   可用 `cell_style`、`header_style` 和 `column_widths_cm` 设置公共样式；
 - `chart`：原生图表。用 `categories` 和 `series` 提供数据；`chart_type` 支持
   `column`、`column_stacked`、`bar`、`line`、`line_markers`、`pie`、`doughnut`、
-  `area`，可设置标题、图例位置、系列颜色和数值标签。
+  `area`、`scatter`、`scatter_lines`、`scatter_lines_no_markers`、`radar`、
+  `radar_markers`、`radar_filled`，可设置标题、图例位置、系列颜色和数值标签。
+  散点图不提供 `categories`，而是在每个系列中提供长度相同的 `x_values` 和
+  `values`；雷达图仍使用公共 `categories`。
+- `formula`：PowerPoint 原生公式。提供 `expression` 和位置尺寸；表达式支持文字、
+  数字以及 `fraction`、`superscript`、`subscript`、`subscript_superscript`、
+  `radical`、`nary`、`delimiter`、`sequence` 等结构，可继续在 Office 中编辑；
+- `media`：PowerPoint 内嵌音频或视频。`media_kind` 为 `audio` 或 `video`，媒体与
+  可选封面分别使用受控的 `attachment_id` / `workspace_path` 和
+  `poster_attachment_id` / `poster_workspace_path`，并提供位置尺寸。
 
 需要流程图或结构图时，优先组合原生 `shape` 与 `line`，不要把整个图绘制成图片。
 需要表达数据时，优先使用原生 `table` 或 `chart`，让后续修改仍可定位到具体元素。
@@ -236,6 +245,66 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
   ]
 }
 ```
+
+原生公式和媒体示例：
+
+```json
+{
+  "type": "blank",
+  "elements": [
+    {
+      "type": "formula",
+      "x_cm": 2, "y_cm": 1.5, "width_cm": 14, "height_cm": 3,
+      "expression": {
+        "type": "fraction",
+        "numerator": "x",
+        "denominator": {
+          "type": "superscript", "base": "y", "superscript": 2
+        }
+      }
+    },
+    {
+      "type": "media",
+      "media_kind": "video",
+      "workspace_path": "outputs/demo.mp4",
+      "poster_workspace_path": "work/poster.png",
+      "x_cm": 17, "y_cm": 3, "width_cm": 15, "height_cm": 9
+    }
+  ]
+}
+```
+
+公式结构可嵌套。求和示例为
+  `{"type":"nary","operator":"∑","lower":"i=1","upper":"n","expression":"xᵢ"}`；
+三次根式为 `{"type":"radical","degree":3,"radicand":"x"}`。
+
+页面可以设置常用原生转场，`slide.transition` 支持 `cut`、`fade`、`push`、`wipe`、
+`split`，速度支持 `fast`、`medium`、`slow`。`push` 和 `wipe` 可设置
+`direction: left/right/up/down`；还可设置 `advance_on_click` 和
+`advance_after_ms`：
+
+```json
+{
+  "type": "blank",
+  "transition": {"type": "fade", "speed": "medium"},
+  "elements": [{
+    "type": "text",
+    "text": "关键结论",
+    "x_cm": 3, "y_cm": 4, "width_cm": 16, "height_cm": 3,
+    "animation": {
+      "effect": "fly",
+      "direction": "left",
+      "trigger": "after_previous",
+      "duration_ms": 600,
+      "delay_ms": 100
+    }
+  }]
+}
+```
+
+对象进入动画写在 `slide.elements[].animation`，也可提供数组。第一版支持 `fade`、
+`fly`、`wipe`、`zoom`；触发方式支持 `on_click`、`with_previous`、
+`after_previous`。只在确实有助于讲述节奏时使用动画，不要给每个对象机械添加效果。
 
 调用示例：
 
@@ -295,6 +364,33 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
       "font_size_pt": 20,
       "bold": true
     },
+    {
+      "type": "update_formula",
+      "slide": 2,
+      "element_id": "slide-2-shape-id-7",
+      "expression": {"type": "radical", "radicand": "x"}
+    },
+    {
+      "type": "replace_media",
+      "slide": 3,
+      "element_id": "slide-3-shape-id-5",
+      "media_kind": "video",
+      "workspace_path": "outputs/new-demo.mp4",
+      "poster_workspace_path": "work/new-poster.png"
+    },
+    {
+      "type": "set_transition",
+      "slide": 2,
+      "transition": {"type": "wipe", "direction": "left", "speed": "fast"}
+    },
+    {
+      "type": "add_animation",
+      "slide": 2,
+      "element_id": "slide-2-shape-id-7",
+      "animation": {
+        "effect": "fade", "trigger": "on_click", "duration_ms": 500
+      }
+    },
     {"type": "delete_element", "slide": 2, "element_id": "slide-2-shape-5"},
     {
       "type": "append_slides",
@@ -318,6 +414,19 @@ Agent 自己生成并交付的产物会原位更新，继续使用同一个产�
 `dash_dot`、`long_dash` 和 `long_dash_dot`；箭头支持 `none`、`triangle`、`stealth`、
 `diamond`、`oval` 和 `open`。透明度范围为 0 到 100。只有人物明确要求删除选中元素时
 才使用 `delete_element`。
+
+## 现有文稿中的高级对象
+
+读取和预览已有 PPTX 时，Desktop 会保留并展示：
+
+- 页面转场及自动换页时间；
+- 常见对象进入动画的目标、效果、延时和时长；
+- SmartArt 的节点文字、连接关系和布局名称；
+- 原生公式和内嵌音视频。
+
+转场与动画在浏览器中按原始元数据近似播放，原始 PPTX 内容不会被改写。复杂动作路径、
+触发器组合和 PowerPoint 专有动画仍以 Office 中的真实效果为准。SmartArt 预览优先保证
+业务节点与关系可读，不承诺复现 PowerPoint 私有布局算法的每个像素。
 
 ## 完成标准
 

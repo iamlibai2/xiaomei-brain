@@ -161,6 +161,109 @@ def test_presentation_validation_returns_structured_quality_issues(tmp_path):
         assert set(("page", "element_id", "severity", "reason", "suggestion")) <= issue.keys()
 
 
+def test_write_document_creates_and_updates_native_scatter_and_radar_charts(tmp_path):
+    from xiaomei_brain.plugins.tools.document_presentation.writer import PresentationWriter
+
+    source = tmp_path / "scatter-radar-created.pptx"
+    specification = {
+        "slides": [
+            {
+                "type": "blank",
+                "elements": [{
+                    "type": "chart",
+                    "chart_type": "scatter",
+                    "x_cm": 2,
+                    "y_cm": 2,
+                    "width_cm": 20,
+                    "height_cm": 11,
+                    "title": "投入与产出",
+                    "series": [{
+                        "name": "项目",
+                        "x_values": [1, 2, 4],
+                        "values": [4, 9, 16],
+                    }],
+                }],
+            },
+            {
+                "type": "blank",
+                "elements": [{
+                    "type": "chart",
+                    "chart_type": "radar_filled",
+                    "x_cm": 2,
+                    "y_cm": 2,
+                    "width_cm": 20,
+                    "height_cm": 11,
+                    "title": "能力雷达",
+                    "categories": ["质量", "速度", "成本", "服务"],
+                    "series": [{"name": "当前", "values": [82, 68, 74, 91]}],
+                }],
+            },
+        ],
+    }
+
+    result = PresentationWriter().write(specification, source)
+
+    assert result["validation"]["chart_count"] == 2
+    deck = Presentation(source)
+    scatter = deck.slides[0].shapes[0].chart
+    radar = deck.slides[1].shapes[0].chart
+    assert scatter.chart_type == XL_CHART_TYPE.XY_SCATTER
+    assert radar.chart_type == XL_CHART_TYPE.RADAR_FILLED
+    project = json.loads(
+        (tmp_path / ".presentation" / "scatter-radar-created" / "project.json")
+        .read_text(encoding="utf-8")
+    )
+    scatter_element = project["slides"][0]["elements"][0]
+    radar_element = project["slides"][1]["elements"][0]
+    assert scatter_element["series"][0]["xValues"] == [1.0, 2.0, 4.0]
+    assert scatter_element["series"][0]["values"] == [4.0, 9.0, 16.0]
+    assert radar_element["categories"] == ["质量", "速度", "成本", "服务"]
+
+    updated = tmp_path / "scatter-updated.pptx"
+    scatter_id = scatter_element["elementId"]
+    radar_id = radar_element["elementId"]
+    update_result = PresentationWriter().write(
+        {
+            "operations": [
+                {
+                    "type": "update_chart",
+                    "slide": 1,
+                    "element_id": scatter_id,
+                    "series": [{
+                        "name": "修订项目",
+                        "x_values": [2, 3, 5],
+                        "values": [5, 10, 20],
+                    }],
+                },
+                {
+                    "type": "update_chart",
+                    "slide": 2,
+                    "element_id": radar_id,
+                    "categories": ["质量", "速度", "成本", "服务"],
+                    "series": [{"name": "目标", "values": [90, 80, 70, 95]}],
+                },
+            ],
+        },
+        updated,
+        source_path=source,
+    )
+
+    assert updated.is_file()
+    assert updated.stat().st_size > 0
+    assert updated != source
+    assert update_result["validation"]["changed_items"] == 2
+    updated_project = json.loads(
+        (tmp_path / ".presentation" / "scatter-updated" / "project.json")
+        .read_text(encoding="utf-8")
+    )
+    updated_scatter = updated_project["slides"][0]["elements"][0]
+    updated_radar = updated_project["slides"][1]["elements"][0]
+    assert updated_scatter["series"][0]["xValues"] == [2.0, 3.0, 5.0]
+    assert updated_scatter["series"][0]["values"] == [5.0, 10.0, 20.0]
+    assert updated_radar["series"][0]["name"] == "目标"
+    assert updated_radar["series"][0]["values"] == [90.0, 80.0, 70.0, 95.0]
+
+
 def test_presentation_validation_rejects_chart_data_length_mismatch(tmp_path):
     from xiaomei_brain.plugins.tools.document_presentation.validator import (
         validate_presentation_project,
@@ -1469,3 +1572,341 @@ def test_presentation_preview_extracts_native_formula_and_embedded_video(tmp_pat
     )
     assert audio_element["mimeType"].startswith("audio/")
     assert (project_dir / audio_element["src"]).read_bytes() == audio_path.read_bytes()
+
+
+def test_write_document_creates_and_updates_native_formula_and_media(tmp_path):
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    work = workspace / "work"
+    work.mkdir(parents=True)
+    (work / "poster.png").write_bytes(PNG_1PX)
+    (work / "clip.mp4").write_bytes(b"first-video")
+    (work / "replacement.mp4").write_bytes(b"replacement-video")
+    spec = workspace / "formula-media.json"
+    spec.write_text(json.dumps({
+        "slides": [{
+            "type": "blank",
+            "elements": [
+                {
+                    "type": "formula",
+                    "name": "NativeFormula",
+                    "x_cm": 2, "y_cm": 1, "width_cm": 14, "height_cm": 3,
+                    "expression": {
+                        "type": "fraction",
+                        "numerator": "x",
+                        "denominator": {
+                            "type": "superscript",
+                            "base": "y",
+                            "superscript": 2,
+                        },
+                    },
+                },
+                {
+                    "type": "media",
+                    "media_kind": "video",
+                    "workspace_path": "work/clip.mp4",
+                    "poster_workspace_path": "work/poster.png",
+                    "x_cm": 3, "y_cm": 5, "width_cm": 16, "height_cm": 9,
+                },
+            ],
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-formula-media",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=(),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="formula-media.json",
+            output_name="formula-media.pptx",
+        )
+
+    assert result.get("success") is True, result
+    assert result["validation"]["formula_count"] == 1
+    assert result["validation"]["media_count"] == 1
+    project_dir = tmp_path / ".presentation" / "formula-media-created"
+    build_presentation_project(outputs / "formula-media.pptx", project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    elements = project["slides"][0]["elements"]
+    formula = next(item for item in elements if item["elementType"] == "formula")
+    media = next(item for item in elements if item["elementType"] == "media")
+    assert "<mfrac>" in formula["mathMl"]
+    assert "<msup>" in formula["mathMl"]
+    assert (project_dir / media["src"]).read_bytes() == b"first-video"
+
+    update = workspace / "formula-media-update.json"
+    update.write_text(json.dumps({
+        "operations": [
+            {
+                "type": "update_formula",
+                "slide": 1,
+                "element_id": formula["elementId"],
+                "expression": {
+                    "type": "radical",
+                    "degree": 3,
+                    "radicand": "z",
+                },
+            },
+            {
+                "type": "replace_media",
+                "slide": 1,
+                "element_id": media["elementId"],
+                "media_kind": "video",
+                "workspace_path": "work/replacement.mp4",
+                "poster_workspace_path": "work/poster.png",
+            },
+        ],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-formula-media-update",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        attachments=({
+            "id": "source-deck",
+            "name": "formula-media.pptx",
+            "kind": "document",
+            "local_path": str(outputs / "formula-media.pptx"),
+        },),
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        updated = tool.execute(
+            format="presentation",
+            specification_path="formula-media-update.json",
+            output_name="formula-media-updated.pptx",
+            source_attachment_id="source-deck",
+        )
+
+    assert updated.get("success") is True, updated
+    updated_dir = tmp_path / ".presentation" / "formula-media-updated"
+    build_presentation_project(outputs / "formula-media-updated.pptx", updated_dir)
+    updated_project = json.loads(
+        (updated_dir / "project.json").read_text(encoding="utf-8")
+    )
+    updated_elements = updated_project["slides"][0]["elements"]
+    updated_formula = next(
+        item for item in updated_elements if item["elementType"] == "formula"
+    )
+    updated_media = next(
+        item for item in updated_elements if item["elementType"] == "media"
+    )
+    assert "<mroot>" in updated_formula["mathMl"]
+    assert (updated_dir / updated_media["src"]).read_bytes() == b"replacement-video"
+
+
+def test_presentation_preview_extracts_transition_and_animation(tmp_path):
+    from lxml import etree
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "animated.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    shape = slide.shapes.add_textbox(Cm(2), Cm(2), Cm(10), Cm(2))
+    shape.text = "Animated title"
+    transition = etree.fromstring("""
+      <p:transition xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                    spd="slow" advClick="1" advTm="3200">
+        <p:fade thruBlk="0"/>
+      </p:transition>
+    """.strip().encode("utf-8"))
+    timing = etree.fromstring(f"""
+      <p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+        <p:tnLst><p:par><p:cTn id="1" nodeType="tmRoot"><p:childTnLst>
+          <p:seq><p:cTn id="2" nodeType="clickEffect"><p:childTnLst>
+            <p:animEffect transition="in" filter="fade">
+              <p:cBhvr>
+                <p:cTn id="3" dur="650">
+                  <p:stCondLst><p:cond delay="120"/></p:stCondLst>
+                </p:cTn>
+                <p:tgtEl><p:spTgt spid="{shape.shape_id}"/></p:tgtEl>
+              </p:cBhvr>
+            </p:animEffect>
+          </p:childTnLst></p:cTn></p:seq>
+        </p:childTnLst></p:cTn></p:par></p:tnLst>
+      </p:timing>
+    """.strip().encode("utf-8"))
+    slide._element.append(transition)
+    slide._element.append(timing)
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "animated"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    preview_slide = project["slides"][0]
+    assert preview_slide["transition"] == {
+        "type": "fade",
+        "durationMs": 1000,
+        "advanceOnClick": True,
+        "advanceAfterMs": 3200,
+        "thruBlk": "0",
+    }
+    animation = preview_slide["animations"][0]
+    assert animation["targetShapeId"] == shape.shape_id
+    assert animation["targetElementId"] == f"slide-1-shape-id-{shape.shape_id}"
+    assert animation["effect"] == "fade"
+    assert animation["durationMs"] == 650
+    assert animation["delayMs"] == 120
+    assert preview_slide["elements"][0]["animations"][0]["id"] == animation["id"]
+
+
+def test_write_document_creates_and_updates_basic_transition_and_animation(tmp_path):
+    from xiaomei_brain.plugins.tools.document_presentation.writer import PresentationWriter
+
+    writer = PresentationWriter()
+    created = tmp_path / "motion-created.pptx"
+    writer.write({
+        "slides": [{
+            "type": "blank",
+            "transition": {
+                "type": "push",
+                "speed": "slow",
+                "direction": "right",
+                "advance_on_click": True,
+            },
+            "elements": [{
+                "type": "text",
+                "text": "关键结论",
+                "x_cm": 3, "y_cm": 4, "width_cm": 16, "height_cm": 3,
+                "animation": {
+                    "effect": "fade",
+                    "trigger": "after_previous",
+                    "duration_ms": 800,
+                    "delay_ms": 150,
+                },
+            }],
+        }],
+    }, created)
+
+    created_project = json.loads(
+        (tmp_path / ".presentation" / "motion-created" / "project.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    created_slide = created_project["slides"][0]
+    assert created_slide["transition"] == {
+        "type": "push",
+        "durationMs": 1000,
+        "advanceOnClick": True,
+        "dir": "r",
+    }
+    first_animation = created_slide["animations"][0]
+    assert first_animation["effect"] == "fade"
+    assert first_animation["trigger"] == "afterEffect"
+    assert first_animation["durationMs"] == 800
+    assert first_animation["delayMs"] == 150
+    element_id = created_slide["elements"][0]["elementId"]
+
+    updated = tmp_path / "motion-updated.pptx"
+    writer.write({
+        "operations": [
+            {
+                "type": "set_transition",
+                "slide": 1,
+                "transition": {
+                    "type": "wipe",
+                    "speed": "fast",
+                    "direction": "down",
+                    "advance_on_click": False,
+                    "advance_after_ms": 2500,
+                },
+            },
+            {
+                "type": "add_animation",
+                "slide": 1,
+                "element_id": element_id,
+                "animation": {
+                    "effect": "fly",
+                    "direction": "left",
+                    "trigger": "on_click",
+                    "duration_ms": 500,
+                },
+            },
+        ],
+    }, updated, source_path=created)
+
+    updated_project = json.loads(
+        (tmp_path / ".presentation" / "motion-updated" / "project.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    updated_slide = updated_project["slides"][0]
+    assert updated_slide["transition"] == {
+        "type": "wipe",
+        "durationMs": 250,
+        "advanceOnClick": False,
+        "advanceAfterMs": 2500,
+        "dir": "d",
+    }
+    assert len(updated_slide["animations"]) == 2
+    second_animation = updated_slide["animations"][1]
+    assert second_animation["effect"] == "fly(fromLeft)"
+    assert second_animation["trigger"] == "clickEffect"
+    assert second_animation["durationMs"] == 500
+
+
+def test_presentation_preview_reads_smartart_data_model():
+    from lxml import etree
+    from xiaomei_brain.documents.presentation_project import _smartart_element
+
+    class RelatedPart:
+        def __init__(self, blob: bytes):
+            self.blob = blob
+
+    class ShapePart:
+        def __init__(self, related):
+            self._related = related
+
+        def related_part(self, relationship_id):
+            return self._related[relationship_id]
+
+    class Shape:
+        pass
+
+    shape = Shape()
+    shape._element = etree.fromstring("""
+      <p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                      xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                      xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"
+                      xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <a:graphic><a:graphicData><dgm:relIds r:dm="rIdData" r:lo="rIdLayout"/></a:graphicData></a:graphic>
+      </p:graphicFrame>
+    """.strip().encode("utf-8"))
+    shape.part = ShapePart({
+        "rIdData": RelatedPart("""
+          <dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"
+                         xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <dgm:ptLst>
+              <dgm:pt modelId="one"><dgm:t><a:p><a:r><a:t>需求</a:t></a:r></a:p></dgm:t></dgm:pt>
+              <dgm:pt modelId="two"><dgm:t><a:p><a:r><a:t>交付</a:t></a:r></a:p></dgm:t></dgm:pt>
+            </dgm:ptLst>
+            <dgm:cxnLst><dgm:cxn srcId="one" destId="two" type="parOf"/></dgm:cxnLst>
+          </dgm:dataModel>
+        """.strip().encode("utf-8")),
+        "rIdLayout": RelatedPart("""
+          <dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram">
+            <dgm:title val="Basic Process"/>
+          </dgm:layoutDef>
+        """.strip().encode("utf-8")),
+    })
+
+    element = _smartart_element(shape, "slide-1-shape-id-7", [10, 20, 600, 240])
+
+    assert element is not None
+    assert element["elementType"] == "smartart"
+    assert element["layoutName"] == "Basic Process"
+    assert [node["text"] for node in element["nodes"]] == ["需求", "交付"]
+    assert element["connections"] == [{
+        "source": "one", "target": "two", "type": "parOf",
+    }]

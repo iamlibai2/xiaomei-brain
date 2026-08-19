@@ -125,9 +125,28 @@ type PresentationCustomGeometry = {
   }>;
 };
 
+type PresentationAnimation = {
+  id: string;
+  targetElementId: string;
+  kind: string;
+  effect: string;
+  transition?: string;
+  trigger?: string;
+  delayMs?: number;
+  durationMs?: number;
+};
+
+type PresentationTransition = {
+  type: string;
+  durationMs?: number;
+  advanceOnClick?: boolean;
+  advanceAfterMs?: number;
+  dir?: string;
+};
+
 type PresentationElement = {
   elementId: string;
-  elementType: "text" | "shape" | "image" | "table" | "chart" | "line" | "formula" | "media";
+  elementType: "text" | "shape" | "image" | "table" | "chart" | "line" | "formula" | "media" | "smartart";
   bounds: [number, number, number, number];
   rotation?: number;
   content?: PresentationTextStyle & { text?: string };
@@ -183,12 +202,18 @@ type PresentationElement = {
   mediaKind?: "audio" | "video";
   posterSrc?: string;
   mimeType?: string;
+  animations?: PresentationAnimation[];
+  layoutName?: string;
+  nodes?: Array<{ id: string; text: string; type?: string; order?: number }>;
+  connections?: Array<{ source: string; target: string; type?: string }>;
 };
 
 type PresentationSlide = {
   index: number;
   background?: PresentationFill;
   elements: PresentationElement[];
+  transition?: PresentationTransition;
+  animations?: PresentationAnimation[];
 };
 
 export type PresentationProject = {
@@ -202,13 +227,81 @@ export type PresentationProject = {
 
 function elementStyle(element: PresentationElement, project: PresentationProject) {
   const [x, y, width, height] = element.bounds;
+  const baseTransform = element.rotation ? `rotate(${element.rotation}deg)` : "";
   return {
     left: `${x / project.size[0] * 100}%`,
     top: `${y / project.size[1] * 100}%`,
     width: `${width / project.size[0] * 100}%`,
     height: `${height / project.size[1] * 100}%`,
-    transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
+    transform: baseTransform || undefined,
+    "--presentation-element-base-transform": baseTransform,
+  } as CSSProperties;
+}
+
+function animationStyle(element: PresentationElement, thumbnail: boolean): CSSProperties {
+  if (thumbnail || !element.animations?.length) return {};
+  const animation = element.animations[0];
+  const effect = `${animation.effect} ${animation.kind}`.toLowerCase();
+  const name = effect.includes("fly") || effect.includes("slide")
+    ? "presentation-enter-slide"
+    : effect.includes("wipe")
+      ? "presentation-enter-wipe"
+      : effect.includes("zoom") || effect.includes("grow")
+        ? "presentation-enter-zoom"
+        : "presentation-enter-fade";
+  return {
+    animationName: name,
+    animationDuration: `${Math.max(80, animation.durationMs || 500)}ms`,
+    animationDelay: `${Math.max(0, animation.delayMs || 0)}ms`,
+    animationTimingFunction: "ease-out",
+    animationFillMode: "both",
   };
+}
+
+function transitionStyle(transition: PresentationTransition | undefined, thumbnail: boolean): CSSProperties {
+  if (thumbnail || !transition) return {};
+  const type = String(transition.type || "fade").toLowerCase();
+  return {
+    animationName: type.includes("push") || type.includes("wipe")
+      ? "presentation-slide-transition-push"
+      : type.includes("zoom")
+        ? "presentation-slide-transition-zoom"
+        : "presentation-slide-transition-fade",
+    animationDuration: `${Math.max(80, transition.durationMs || 500)}ms`,
+    animationTimingFunction: "ease-out",
+    animationFillMode: "both",
+  };
+}
+
+function PresentationSmartArt({ element }: { element: PresentationElement }) {
+  const nodes = element.nodes || [];
+  if (!nodes.length) return <div className="presentation-smartart-empty">SmartArt</div>;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  const rows = Math.max(1, Math.ceil(nodes.length / columns));
+  const positions = new Map(nodes.map((node, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return [node.id, {
+      x: (column + 0.5) * 100 / columns,
+      y: (row + 0.5) * 100 / rows,
+    }];
+  }));
+  return <>
+    <svg className="presentation-smartart-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      {(element.connections || []).map((connection, index) => {
+        const source = positions.get(connection.source);
+        const target = positions.get(connection.target);
+        if (!source || !target) return null;
+        return <line key={`${connection.source}-${connection.target}-${index}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} />;
+      })}
+    </svg>
+    <div
+      className="presentation-smartart-nodes"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+    >
+      {nodes.map((node) => <div className="presentation-smartart-node" key={node.id}>{node.text}</div>)}
+    </div>
+  </>;
 }
 
 function pointsToCanvasWidth(points: number | undefined, project: PresentationProject): string | undefined {
@@ -957,6 +1050,7 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
         width: thumbnail ? "100%" : `min(100%, calc((100vh - 130px) * ${aspect}))`,
         background: "#ffffff",
         ...fillStyle(slide.background, media),
+        ...transitionStyle(slide.transition, thumbnail),
       }}
       onClick={(event) => {
         if (!onSelectSlide || event.target !== event.currentTarget) return;
@@ -965,7 +1059,7 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
       }}
     >
       {slide.elements.map((element) => {
-        const style = elementStyle(element, project);
+        const style = { ...elementStyle(element, project), ...animationStyle(element, thumbnail) };
         const selectableClass = onSelectElement ? " selectable" : "";
         const selectedClass = selectedElementId === element.elementId && !selectedCell ? " selected" : "";
         const select = (event: React.MouseEvent<HTMLElement>) => {
@@ -1075,6 +1169,20 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
               onClick={select}
             >
               <PresentationChart element={element} project={project} />
+            </div>
+          );
+        }
+        if (element.elementType === "smartart") {
+          return (
+            <div
+              key={element.elementId}
+              className={`presentation-slide-element smartart${selectableClass}${selectedClass}`}
+              data-element-id={element.elementId}
+              style={style}
+              onClick={select}
+              title={element.layoutName || undefined}
+            >
+              <PresentationSmartArt element={element} />
             </div>
           );
         }
@@ -1299,7 +1407,8 @@ export function PresentationPreview({ project, compact = false, onAnnotate }: {
           selectionAnchorRef.current = null;
         }}
       >
-        <SlideCanvas
+          <SlideCanvas
+          key={`active-slide-${active.index}`}
           project={project}
           slide={active}
           selectedElementId={selection?.elementId}

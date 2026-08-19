@@ -1184,7 +1184,8 @@
         "chart": "图表",
         "line": "连接线",
         "formula": "公式",
-        "media": "媒体"
+        "media": "媒体",
+        "smartart": "SmartArt"
       },
       "document": "文档预览",
       "documentHint": "选中文字后，可以告诉 Agent 如何修改；原文件不会被覆盖。",

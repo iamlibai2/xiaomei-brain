@@ -1313,6 +1313,97 @@ body.is-resizing-artifact-workspace {
   min-width: 0;
 }
 
+.presentation-slide-element.smartart {
+  isolation: isolate;
+  overflow: visible;
+}
+
+.presentation-smartart-links {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.presentation-smartart-links line {
+  stroke: color-mix(in srgb, var(--ui-brand-primary) 58%, #52606f);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.presentation-smartart-nodes {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  gap: 5%;
+  align-items: center;
+}
+
+.presentation-smartart-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 42%;
+  padding: .8cqw 1cqw;
+  border: .12cqw solid color-mix(in srgb, var(--ui-brand-primary) 48%, transparent);
+  border-radius: .7cqw;
+  background: color-mix(in srgb, var(--ui-bg-primary) 88%, var(--ui-brand-primary));
+  color: var(--ui-text-primary);
+  font-size: 1.45cqw;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.presentation-smartart-empty {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  border: .12cqw dashed var(--ui-border-strong);
+  color: var(--ui-text-muted);
+  font-size: 1.4cqw;
+}
+
+@keyframes presentation-slide-transition-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes presentation-slide-transition-push {
+  from { opacity: .35; transform: translateX(4%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes presentation-slide-transition-zoom {
+  from { opacity: 0; transform: scale(.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes presentation-enter-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes presentation-enter-slide {
+  from { opacity: 0; transform: var(--presentation-element-base-transform) translateY(10%); }
+  to { opacity: 1; transform: var(--presentation-element-base-transform) translateY(0); }
+}
+
+@keyframes presentation-enter-wipe {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@keyframes presentation-enter-zoom {
+  from { opacity: 0; transform: var(--presentation-element-base-transform) scale(.82); }
+  to { opacity: 1; transform: var(--presentation-element-base-transform) scale(1); }
+}
+
 .presentation-media-unavailable {
   color: rgba(255, 255, 255, .7);
   font-size: 1.4cqw;
