@@ -254,7 +254,7 @@ class PresentationWriter:
                     name="XiaomeiSubtitle", size_pt=slide_theme["body_size_pt"],
                     color=slide_theme["text_color"], font=slide_theme["font_family"],
                 )
-        else:
+        elif kind in {"content", "image"}:
             if title:
                 cls._add_text_box(
                     slide, title, 1.4, 0.8, width - 2.8, 2.2,

@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 8
+PROJECT_GENERATOR_VERSION = 11
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -602,6 +602,7 @@ def _chart_elements(
         ]
     except Exception:
         pass
+    chart_type = str(chart.chart_type or "chart").split("(", 1)[0].strip().lower()
     series_items: list[dict[str, Any]] = []
     for index, series in enumerate(chart.series):
         try:
@@ -609,15 +610,30 @@ def _chart_elements(
         except Exception:
             values = []
         series_element = getattr(series, "_element", None)
+        series_color = _chart_series_color(series, index)
+        series_properties = series_element.find(qn("c:spPr")) if series_element is not None else None
+        marker = _chart_marker(series_element)
+        if "scatter" in chart_type and marker is None:
+            marker = {"symbol": "circle", "size": 5.0}
+        series_line = (
+            _chart_inherited_line(
+                series_properties,
+                default_color=series_color,
+                default_width=2.0,
+            )
+            if "line" in chart_type or "scatter" in chart_type or "radar" in chart_type
+            else _xml_line(series_properties)
+        )
         series_items.append({
             "name": str(series.name or f"Series {index + 1}"),
             "values": values,
-            "color": _chart_series_color(series, index),
-            "line": _xml_line(series_element.find(qn("c:spPr"))) if series_element is not None else None,
-            "marker": _chart_marker(series_element),
+            "xValues": _chart_cached_values(series_element, "xVal"),
+            "color": series_color,
+            "line": series_line,
+            "marker": marker,
             "dataLabels": _chart_data_labels(series_element),
         })
-    chart_type = str(chart.chart_type or "chart").split("(", 1)[0].strip().lower()
+    is_scatter = "scatter" in chart_type
     return [{
         "elementId": element_id,
         "elementType": "chart",
@@ -635,9 +651,31 @@ def _chart_elements(
         "gapWidth": _chart_number(chart, "gapWidth"),
         "overlap": _chart_number(chart, "overlap"),
         "roundedCorners": _chart_flag(chart._chartSpace.find(qn("c:roundedCorners"))),
-        "categoryAxis": _chart_axis(chart, "catAx"),
-        "valueAxis": _chart_axis(chart, "valAx"),
+        "categoryAxis": _chart_axis(chart, "valAx", positions={"b", "t"}) if is_scatter else _chart_axis(chart, "catAx"),
+        "valueAxis": _chart_axis(chart, "valAx", positions={"l", "r"}) if is_scatter else _chart_axis(chart, "valAx"),
     }]
+
+
+def _chart_cached_values(series_element: Any, value_name: str) -> list[float | str | None]:
+    """Read cached chart values such as scatter-series X coordinates."""
+    if series_element is None:
+        return []
+    try:
+        from pptx.oxml.ns import qn
+
+        container = series_element.find(qn(f"c:{value_name}"))
+        if container is None:
+            return []
+        points = sorted(
+            container.findall(f".//{qn('c:pt')}"),
+            key=lambda point: int(point.get("idx") or 0),
+        )
+        return [
+            _chart_value(point.find(qn("c:v")).text if point.find(qn("c:v")) is not None else None)
+            for point in points
+        ]
+    except Exception:
+        return []
 
 
 def _chart_marker(series_element: Any) -> dict[str, Any] | None:
@@ -791,12 +829,26 @@ def _chart_title_style(chart: Any) -> dict[str, Any]:
     return {"fontSize": 18, "color": "#253047", "bold": False, "align": "center"}
 
 
-def _chart_axis(chart: Any, axis_name: str) -> dict[str, Any]:
+def _chart_axis(
+    chart: Any,
+    axis_name: str,
+    *,
+    positions: set[str] | None = None,
+) -> dict[str, Any]:
     """Extract native axis visibility, labels, line and major gridline style."""
     try:
         from pptx.oxml.ns import qn
 
-        axis = chart._chartSpace.find(f".//{qn(f'c:{axis_name}')}")
+        axes = chart._chartSpace.findall(f".//{qn(f'c:{axis_name}')}")
+        axis = next(
+            (
+                candidate
+                for candidate in axes
+                if positions is None
+                or _element_value(candidate.find(qn("c:axPos"))) in positions
+            ),
+            None,
+        )
         if axis is None:
             return {"visible": False}
         deleted = axis.find(qn("c:delete"))
@@ -809,7 +861,11 @@ def _chart_axis(chart: Any, axis_name: str) -> dict[str, Any]:
                 label_position is not None and label_position.get("val") == "none"
             ),
             "position": _element_value(axis.find(qn("c:axPos"))),
-            "line": _xml_line(axis.find(qn("c:spPr"))),
+            "line": _chart_inherited_line(
+                axis.find(qn("c:spPr")),
+                default_color="#888888",
+                default_width=0.75,
+            ),
             "labelStyle": _chart_text_properties(axis.find(qn("c:txPr"))),
             "numberFormat": _element_value(axis.find(qn("c:numFmt")), "formatCode"),
         }
@@ -829,13 +885,48 @@ def _chart_axis(chart: Any, axis_name: str) -> dict[str, Any]:
                 pass
         gridlines = axis.find(qn("c:majorGridlines"))
         result["majorGridline"] = (
-            _xml_line(gridlines.find(qn("c:spPr")))
+            _chart_inherited_line(
+                gridlines.find(qn("c:spPr")),
+                default_color="#D9DEE7",
+                default_width=0.5,
+            )
             if gridlines is not None
             else {"type": "none", "color": "transparent", "width": 0}
         )
         return result
     except Exception:
         return {"visible": False}
+
+
+def _chart_inherited_line(
+    properties: Any,
+    *,
+    default_color: str,
+    default_width: float,
+) -> dict[str, Any]:
+    """Resolve chart lines while preserving Office theme inheritance.
+
+    Missing ``c:spPr`` / ``a:ln`` means "use the chart theme default", not
+    "hide the line".  An explicit ``a:noFill`` still means no line.
+    """
+    if properties is None:
+        return {"type": "solid", "color": default_color, "width": default_width}
+    try:
+        line = properties.find(f"{{{A_NS}}}ln")
+        if line is None:
+            return {"type": "solid", "color": default_color, "width": default_width}
+        if line.find(f"{{{A_NS}}}noFill") is not None:
+            return {"type": "none", "color": "transparent", "width": 0}
+        parsed = _xml_line(properties)
+        if parsed.get("type") in {"solid", "dash", "dot"} and parsed.get("color") != "transparent":
+            return parsed
+        width = round(float(line.get("w") or default_width * 12700) / 12700, 2)
+        dash = line.find(f"{{{A_NS}}}prstDash")
+        dash_value = str(dash.get("val")) if dash is not None and dash.get("val") else "solid"
+        line_type = "dash" if "dash" in dash_value else "dot" if "dot" in dash_value else "solid"
+        return {"type": line_type, "color": default_color, "width": width}
+    except Exception:
+        return {"type": "solid", "color": default_color, "width": default_width}
 
 
 def _element_value(element: Any, attribute: str = "val") -> str | None:
@@ -920,19 +1011,21 @@ def _chart_value(value: Any) -> float | str | None:
 
 def _chart_series_color(series: Any, index: int) -> str:
     palette = ("#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB")
-    for format_object in (getattr(series, "format", None),):
-        try:
-            rgb = format_object.fill.fore_color.rgb
-            if rgb is not None:
-                return f"#{rgb}"
-        except Exception:
-            pass
-        try:
-            rgb = format_object.line.color.rgb
-            if rgb is not None:
-                return f"#{rgb}"
-        except Exception:
-            pass
+    try:
+        from pptx.oxml.ns import qn
+
+        series_element = getattr(series, "_element", None)
+        properties = series_element.find(qn("c:spPr")) if series_element is not None else None
+        if properties is not None:
+            fill_color = _xml_color(properties.find(qn("a:solidFill")))
+            if fill_color:
+                return fill_color
+            line = properties.find(qn("a:ln"))
+            line_color = _xml_color(line)
+            if line_color:
+                return line_color
+    except Exception:
+        pass
     return palette[index % len(palette)]
 
 

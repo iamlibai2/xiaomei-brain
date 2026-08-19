@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
+from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Cm
 
@@ -334,6 +334,56 @@ def test_write_document_creates_native_shape_line_table_and_chart(tmp_path):
     content = extracted.sections[0].content
     for element_type in ("shape", "line", "table", "chart"):
         assert f"type={element_type}" in content
+
+
+def test_blank_slide_does_not_render_top_level_title(tmp_path):
+    registry = _presentation_registry()
+    tool = create_write_document_tool(registry)
+    workspace = tmp_path / "workspace"
+    outputs = workspace / "outputs"
+    workspace.mkdir()
+    spec = workspace / "blank-title.json"
+    title = "01 - Agent designed canvas"
+    spec.write_text(json.dumps({
+        "slides": [{
+            "type": "blank",
+            "title": title,
+            "elements": [{
+                "type": "text",
+                "name": "CanvasTitle",
+                "x_cm": 1.2,
+                "y_cm": 0.5,
+                "width_cm": 30,
+                "height_cm": 0.8,
+                "text": title,
+                "font_size_pt": 22,
+                "bold": True,
+            }],
+        }],
+    }), encoding="utf-8")
+
+    with bind_tool_execution(
+        tool_call_id="call-presentation-blank-title",
+        tool_name="write_document",
+        arguments={},
+        artifact_callback=None,
+        workspace_root=str(workspace),
+        output_root=str(outputs),
+    ):
+        result = tool.execute(
+            format="presentation",
+            specification_path="blank-title.json",
+            output_name="blank-title.pptx",
+        )
+
+    assert result.get("success") is True, result
+    slide = Presentation(outputs / "blank-title.pptx").slides[0]
+    assert not any(shape.name == "XiaomeiTitle" for shape in slide.shapes)
+    assert [
+        shape.text
+        for shape in slide.shapes
+        if getattr(shape, "has_text_frame", False) and shape.text == title
+    ] == [title]
 
 
 def test_write_document_revises_presentation_copy_and_preserves_source(tmp_path):
@@ -787,6 +837,42 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     assert updated_chart.has_legend is True
 
 
+def test_presentation_chart_preserves_inherited_axis_and_gridline_defaults(tmp_path):
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "inherited-chart-axis.pptx"
+    data = CategoryChartData()
+    data.categories = ["Q1", "Q2", "Q3"]
+    data.add_series("Sales", [10, 18, 24])
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        data,
+    )
+    deck.save(source)
+
+    preview_dir = tmp_path / ".presentation" / "inherited-chart-axis"
+    build_presentation_project(source, preview_dir)
+    project = json.loads((preview_dir / "project.json").read_text(encoding="utf-8"))
+    chart = next(
+        element
+        for element in project["slides"][0]["elements"]
+        if element["elementType"] == "chart"
+    )
+
+    assert chart["categoryAxis"]["line"] == {
+        "type": "solid", "color": "#888888", "width": 0.75,
+    }
+    assert chart["valueAxis"]["line"] == {
+        "type": "solid", "color": "#888888", "width": 0.75,
+    }
+    assert chart["valueAxis"]["majorGridline"] == {
+        "type": "solid", "color": "#D9DEE7", "width": 0.5,
+    }
+
+
 def test_presentation_preview_preserves_no_fill_and_no_line(tmp_path):
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
@@ -889,6 +975,83 @@ def test_presentation_preview_preserves_line_width_markers_and_labels(tmp_path):
     assert preview_series["dataLabels"]["showValue"] is True
     assert preview_series["dataLabels"]["position"] == "t"
     assert preview_series["dataLabels"]["style"]["fontSize"] == 10.0
+
+
+def test_presentation_preview_preserves_inherited_line_series(tmp_path):
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "inherited-line.pptx"
+    data = CategoryChartData()
+    data.categories = ["Jan", "Feb", "Mar"]
+    data.add_series("Users", [1, 5, 12])
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    slide.shapes.add_chart(
+        XL_CHART_TYPE.LINE,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        data,
+    )
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "inherited-line"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    chart_element = project["slides"][0]["elements"][0]
+    preview_series = chart_element["series"][0]
+
+    assert chart_element["chartType"] == "line"
+    assert preview_series["line"] == {
+        "type": "solid", "color": "#4F6BED", "width": 2.0,
+    }
+    assert preview_series["marker"] == {"symbol": "none", "size": 0}
+
+
+def test_presentation_preview_extracts_scatter_and_radar_charts(tmp_path):
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "scatter-radar.pptx"
+    deck = Presentation()
+
+    scatter_slide = deck.slides.add_slide(deck.slide_layouts[6])
+    scatter_data = XyChartData()
+    scatter_series = scatter_data.add_series("Growth")
+    for x_value, y_value in ((1, 4), (2, 9), (4, 16)):
+        scatter_series.add_data_point(x_value, y_value)
+    scatter_slide.shapes.add_chart(
+        XL_CHART_TYPE.XY_SCATTER,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        scatter_data,
+    )
+
+    radar_slide = deck.slides.add_slide(deck.slide_layouts[6])
+    radar_data = CategoryChartData()
+    radar_data.categories = ["Quality", "Speed", "Cost", "Service"]
+    radar_data.add_series("Current", [82, 68, 74, 91])
+    radar_slide.shapes.add_chart(
+        XL_CHART_TYPE.RADAR,
+        Cm(2), Cm(2), Cm(22), Cm(12),
+        radar_data,
+    )
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "scatter-radar"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    scatter = project["slides"][0]["elements"][0]
+    radar = project["slides"][1]["elements"][0]
+
+    assert scatter["chartType"] == "xy_scatter"
+    assert scatter["series"][0]["xValues"] == [1.0, 2.0, 4.0]
+    assert scatter["series"][0]["values"] == [4.0, 9.0, 16.0]
+    assert scatter["series"][0]["marker"] == {"symbol": "circle", "size": 5.0}
+    assert scatter["series"][0]["line"]["type"] == "none"
+    assert scatter["categoryAxis"]["position"] == "b"
+    assert scatter["valueAxis"]["position"] == "l"
+
+    assert radar["chartType"] == "radar"
+    assert radar["categories"] == ["Quality", "Speed", "Cost", "Service"]
+    assert radar["series"][0]["values"] == [82.0, 68.0, 74.0, 91.0]
+    assert radar["series"][0]["line"]["type"] == "solid"
 
 
 def test_presentation_preview_preserves_rich_text_layout_and_rotation(tmp_path):

@@ -5,10 +5,89 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError, ValidationError
+
 from .base import Tool
 
 
 TOOL_CONTROL_KEY = "_xiaomei_control"
+
+
+_JSON_TYPE_NAMES = {
+    "object": "对象",
+    "array": "数组",
+    "string": "字符串",
+    "integer": "整数",
+    "number": "数字",
+    "boolean": "布尔值",
+    "null": "空值",
+}
+
+
+def _actual_json_type_name(value: Any) -> str:
+    if value is None:
+        return _JSON_TYPE_NAMES["null"]
+    if isinstance(value, bool):
+        return _JSON_TYPE_NAMES["boolean"]
+    if isinstance(value, dict):
+        return _JSON_TYPE_NAMES["object"]
+    if isinstance(value, list):
+        return _JSON_TYPE_NAMES["array"]
+    if isinstance(value, str):
+        return _JSON_TYPE_NAMES["string"]
+    if isinstance(value, int):
+        return _JSON_TYPE_NAMES["integer"]
+    if isinstance(value, float):
+        return _JSON_TYPE_NAMES["number"]
+    return type(value).__name__
+
+
+def _argument_path(error: ValidationError) -> str:
+    parts: list[str] = []
+    for part in error.absolute_path:
+        if isinstance(part, int):
+            if parts:
+                parts[-1] = f"{parts[-1]}[{part}]"
+            else:
+                parts.append(f"[{part}]")
+        else:
+            parts.append(str(part))
+    return ".".join(parts)
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    path = _argument_path(error)
+    if error.validator == "required" and isinstance(error.instance, dict):
+        missing = next(
+            (name for name in error.validator_value if name not in error.instance),
+            "未知参数",
+        )
+        full_path = f"{path}.{missing}" if path else str(missing)
+        return f"缺少必填参数 `{full_path}`"
+    if error.validator == "type":
+        expected = error.validator_value
+        expected_types = expected if isinstance(expected, list) else [expected]
+        readable = "或".join(
+            _JSON_TYPE_NAMES.get(str(item), str(item)) for item in expected_types
+        )
+        label = path or "参数"
+        return f"参数 `{label}` 必须是{readable}，实际收到{_actual_json_type_name(error.instance)}"
+    if error.validator == "enum":
+        choices = "、".join(repr(item) for item in error.validator_value)
+        return f"参数 `{path or '参数'}` 必须是以下值之一：{choices}"
+    return f"参数 `{path or '参数'}` 不符合要求：{error.message}"
+
+
+def validate_tool_arguments(tool: Tool, arguments: dict[str, Any]) -> str:
+    """Validate model-produced arguments before entering a tool function."""
+    try:
+        error = next(Draft7Validator(tool.parameters).iter_errors(arguments), None)
+    except SchemaError:
+        # A malformed schema is a developer problem; preserve existing tool
+        # execution instead of presenting it to the model as its argument error.
+        return ""
+    return _format_validation_error(error) if error is not None else ""
 
 
 def normalize_tool_result(result: Any) -> str:
@@ -121,4 +200,7 @@ class ToolRegistry:
             raise ValueError(f"Tool '{tool_name}' not found")
         if tool_name in self._disabled_names:
             raise ValueError(f"Tool '{tool_name}' is disabled")
+        validation_error = validate_tool_arguments(tool, kwargs)
+        if validation_error:
+            return f"Error: 工具参数错误：{validation_error}"
         return normalize_tool_result(tool.execute(**kwargs))

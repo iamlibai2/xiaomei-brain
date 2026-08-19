@@ -85,6 +85,7 @@ type PresentationChartDataLabels = {
 type PresentationChartSeries = {
   name: string;
   values: Array<number | string | null>;
+  xValues?: Array<number | string | null>;
   color?: string;
   line?: PresentationLine;
   marker?: {
@@ -94,6 +95,11 @@ type PresentationChartSeries = {
     line?: PresentationLine;
   };
   dataLabels?: PresentationChartDataLabels;
+};
+
+type NumericPresentationChartSeries = Omit<PresentationChartSeries, "values" | "xValues"> & {
+  values: number[];
+  xValues?: number[];
 };
 
 type PresentationChartLayout = {
@@ -510,7 +516,7 @@ function CartesianChart({
   element: PresentationElement;
   project: PresentationProject;
   categories: string[];
-  series: Array<Omit<PresentationChartSeries, "values"> & { values: number[] }>;
+  series: NumericPresentationChartSeries[];
   lineChart: boolean;
 }) {
   const categoryAxis = element.categoryAxis;
@@ -708,6 +714,117 @@ function CartesianChart({
   );
 }
 
+function ScatterChart({
+  element,
+  series,
+}: {
+  element: PresentationElement;
+  series: NumericPresentationChartSeries[];
+}) {
+  const xAxis = element.categoryAxis;
+  const yAxis = element.valueAxis;
+  const xValues = series.flatMap((item) => item.xValues || []);
+  const yValues = series.flatMap((item) => item.values);
+  const xScale = chartScale(xValues, xAxis);
+  const yScale = chartScale(yValues, yAxis);
+  const plot = { left: 17, right: 97, top: 5, bottom: 47 };
+  const width = plot.right - plot.left;
+  const height = plot.bottom - plot.top;
+  const x = (value: number) => plot.left + (value - xScale.minimum) / (xScale.maximum - xScale.minimum) * width;
+  const y = (value: number) => plot.bottom - (value - yScale.minimum) / (yScale.maximum - yScale.minimum) * height;
+  const fontSize = Math.max(2.2, Math.min(4.2, 10 / Math.max(1, element.bounds[2]) * 100));
+  return (
+    <svg className="presentation-chart-scatter" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+      {yScale.ticks.map((tick) => (
+        <g key={`y-${tick}`}>
+          {yAxis?.majorGridline?.type !== "none" && (
+            <line x1={plot.left} x2={plot.right} y1={y(tick)} y2={y(tick)} stroke={yAxis?.majorGridline?.color || "#D9DEE7"} strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
+          )}
+          {yAxis?.labelsVisible !== false && <text x={plot.left - 1.8} y={y(tick)} fill={yAxis?.labelStyle?.color || "#697386"} fontSize={fontSize} textAnchor="end" dominantBaseline="middle">{formatAxisValue(tick, yAxis?.numberFormat)}</text>}
+        </g>
+      ))}
+      {xScale.ticks.map((tick) => (
+        <g key={`x-${tick}`}>
+          {xAxis?.labelsVisible !== false && <text x={x(tick)} y="53" fill={xAxis?.labelStyle?.color || "#697386"} fontSize={fontSize} textAnchor="middle">{formatAxisValue(tick, xAxis?.numberFormat)}</text>}
+        </g>
+      ))}
+      {yAxis?.line?.type !== "none" && <line x1={plot.left} x2={plot.left} y1={plot.top} y2={plot.bottom} stroke={yAxis?.line?.color || "#888888"} strokeWidth={Math.max(0.4, yAxis?.line?.width || 1)} vectorEffect="non-scaling-stroke" />}
+      {xAxis?.line?.type !== "none" && <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} stroke={xAxis?.line?.color || "#888888"} strokeWidth={Math.max(0.4, xAxis?.line?.width || 1)} vectorEffect="non-scaling-stroke" />}
+      {series.map((item, seriesIndex) => {
+        const coordinates = item.values.map((value, index) => ({
+          x: x(item.xValues?.[index] ?? index),
+          y: y(value),
+          value,
+        }));
+        const color = item.color || "#4F6BED";
+        return (
+          <g key={`scatter-${seriesIndex}`}>
+            {item.line?.type !== "none" && coordinates.length > 1 && (
+              <polyline points={coordinates.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={item.line?.color || color} strokeWidth={Math.max(0.5, item.line?.width || 2)} strokeDasharray={svgDash(item.line)} vectorEffect="non-scaling-stroke" />
+            )}
+            {coordinates.map((point, index) => (
+              <ChartMarker key={index} x={point.x} y={point.y} marker={item.marker || { symbol: "circle", size: 5 }} color={color} />
+            ))}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function RadarChart({
+  element,
+  categories,
+  series,
+  filled,
+}: {
+  element: PresentationElement;
+  categories: string[];
+  series: NumericPresentationChartSeries[];
+  filled: boolean;
+}) {
+  const center = { x: 50, y: 30 };
+  const radius = 20;
+  const maximum = Math.max(1, element.valueAxis?.maximum || 0, ...series.flatMap((item) => item.values));
+  const point = (index: number, value: number) => {
+    const angle = -Math.PI / 2 + index / Math.max(1, categories.length) * Math.PI * 2;
+    const scaledRadius = Math.max(0, value) / maximum * radius;
+    return {
+      x: center.x + Math.cos(angle) * scaledRadius,
+      y: center.y + Math.sin(angle) * scaledRadius,
+    };
+  };
+  const ring = (level: number) => categories.map((_, index) => {
+    const coordinate = point(index, maximum * level / 5);
+    return `${coordinate.x},${coordinate.y}`;
+  }).join(" ");
+  return (
+    <svg className="presentation-chart-radar" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+      {[1, 2, 3, 4, 5].map((level) => <polygon key={level} points={ring(level)} fill="none" stroke="#D9DEE7" strokeWidth="0.35" vectorEffect="non-scaling-stroke" />)}
+      {categories.map((category, index) => {
+        const edge = point(index, maximum);
+        const label = point(index, maximum * 1.2);
+        return (
+          <g key={`radar-axis-${index}`}>
+            <line x1={center.x} y1={center.y} x2={edge.x} y2={edge.y} stroke="#D9DEE7" strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
+            <text x={label.x} y={label.y} fill={element.categoryAxis?.labelStyle?.color || "#697386"} fontSize="2.8" textAnchor={label.x < 47 ? "end" : label.x > 53 ? "start" : "middle"} dominantBaseline="middle">{category.length > 10 ? `${category.slice(0, 9)}…` : category}</text>
+          </g>
+        );
+      })}
+      {series.map((item, seriesIndex) => {
+        const coordinates = item.values.slice(0, categories.length).map((value, index) => point(index, value));
+        const color = item.line?.color || item.color || "#4F6BED";
+        return (
+          <g key={`radar-${seriesIndex}`}>
+            <polygon points={coordinates.map((coordinate) => `${coordinate.x},${coordinate.y}`).join(" ")} fill={filled ? color : "none"} fillOpacity={filled ? 0.16 : 0} stroke={color} strokeWidth={Math.max(0.5, item.line?.width || 2)} strokeDasharray={svgDash(item.line)} vectorEffect="non-scaling-stroke" />
+            {coordinates.map((coordinate, index) => <ChartMarker key={index} x={coordinate.x} y={coordinate.y} marker={item.marker} color={color} />)}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 function PresentationLegend({
   element,
   series,
@@ -739,16 +856,22 @@ function PresentationLegend({
 function PresentationChart({ element, project }: { element: PresentationElement; project: PresentationProject }) {
   const categories = (element.categories || []).slice(0, 16);
   const series = (element.series || []).slice(0, 8);
+  const chartType = (element.chartType || "").toLowerCase();
+  const isScatter = chartType.includes("scatter");
   const numericSeries = series.map((item) => ({
     ...item,
-    values: categories.map((_, index) => {
-      const value = Number(item.values[index]);
-      return Number.isFinite(value) ? value : 0;
+    values: item.values.slice(0, isScatter ? 32 : categories.length).map((value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
+    }),
+    xValues: (item.xValues || []).slice(0, 32).map((value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
     }),
   }));
-  const chartType = (element.chartType || "").toLowerCase();
   const isPie = chartType.includes("pie") || chartType.includes("doughnut");
-  const isLine = chartType.includes("line") || chartType.includes("scatter");
+  const isRadar = chartType.includes("radar");
+  const isLine = chartType.includes("line");
   const primaryValues = numericSeries[0]?.values || [];
   const total = primaryValues.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
   const piePalette = [series[0]?.color || "#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB"];
@@ -790,6 +913,10 @@ function PresentationChart({ element, project }: { element: PresentationElement;
         <div className="presentation-chart-plot">
           {isPie ? (
             <div className={`presentation-chart-pie${chartType.includes("doughnut") ? " doughnut" : ""}`} style={{ background: pieBackground }} />
+          ) : isScatter ? (
+            <ScatterChart element={element} series={numericSeries} />
+          ) : isRadar ? (
+            <RadarChart element={element} categories={categories} series={numericSeries} filled={chartType.includes("filled")} />
           ) : (
             <CartesianChart
               element={element}

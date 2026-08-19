@@ -59,6 +59,39 @@ def test_tool_registry_serializes_structured_result():
     assert result == '{"faces": [], "scene": "办公室"}'
 
 
+def test_tool_registry_rejects_wrong_argument_type_before_execution():
+    registry = ToolRegistry()
+    executed = False
+
+    @tool(name="deliver", description="Deliver files")
+    def deliver(paths: list[str]) -> str:
+        nonlocal executed
+        executed = True
+        return ",".join(paths)
+
+    registry.register(deliver)
+
+    result = registry.execute("deliver", paths={"item": "report.pptx"})
+
+    assert result == "Error: 工具参数错误：参数 `paths` 必须是数组，实际收到对象"
+    assert executed is False
+
+
+def test_tool_registry_validates_required_and_nested_array_values():
+    registry = ToolRegistry()
+
+    @tool(name="deliver", description="Deliver files")
+    def deliver(paths: list[str]) -> str:
+        return ",".join(paths)
+
+    registry.register(deliver)
+
+    assert registry.execute("deliver") == "Error: 工具参数错误：缺少必填参数 `paths`"
+    assert registry.execute("deliver", paths=["ok.pptx", 3]) == (
+        "Error: 工具参数错误：参数 `paths[1]` 必须是字符串，实际收到整数"
+    )
+
+
 def test_tool_duplicate():
     """Test that duplicate tool names raise error."""
     registry = ToolRegistry()
