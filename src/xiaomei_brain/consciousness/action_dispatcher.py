@@ -340,9 +340,9 @@ class ActionExecutor:
         intent_params = dict(item.metadata.get("intent_params") or {})
         task_list_text = task_text or "（该自主工作意图没有可执行内容）"
 
-        # 构建 system_prompt + 触发消息
-        # WORK 指令放在 system 层（LLM 知道这是系统指令，不是用户说的）
-        # 触发用 assistant 角色（LLM 看到的是"自己"的内心想法，而非用户在说话）
+        # 构建 system_prompt + 本轮执行输入。
+        # 不伪造 assistant 历史，否则 DeepSeek 思考模式会要求该消息同时携带
+        # reasoning_content；自主任务本身应作为新的 user 输入交给隔离 Core。
         work_instructions = WORK_INSTRUCTIONS_PROMPT.format(task_list_text=task_list_text)
         system_prompt = build_simple_context(
             consciousness,
@@ -359,7 +359,7 @@ class ActionExecutor:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "assistant", "content": trigger_msg},
+            {"role": "user", "content": trigger_msg},
         ]
 
         logger.info("[ActionExecutor] WORK intent=%s scope=%s", item.metadata.get("intent_id"), item.metadata.get("scope_type"))

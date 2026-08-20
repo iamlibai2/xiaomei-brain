@@ -257,6 +257,50 @@ def test_autonomous_runtime_artifacts_are_bound_to_owner_session():
     assert calls == [("session-a", "turn-autonomous", "person-a", living)]
 
 
+def test_autonomous_work_uses_user_role_for_fresh_execution(monkeypatch):
+    captured = {}
+
+    def react_nodb(**kwargs):
+        captured.update(kwargs)
+        return ""
+
+    runtime = SimpleNamespace(
+        react_nodb=react_nodb,
+        exp_stream=None,
+        memory_extractor=None,
+    )
+    living = SimpleNamespace(
+        consciousness=SimpleNamespace(self_image=None),
+        drive=None,
+        agent=None,
+        _inner_voice=None,
+    )
+    dispatcher = ActionDispatcher()
+    dispatcher._conscious_living = living
+    executor = ActionExecutor(dispatcher)
+    item = ActionItem(
+        action_type=ActionType.WORK,
+        priority=0.7,
+        content="完成自主报告",
+        reason="用户此前交代的工作",
+        source="intent",
+        cooldown_key="intent_work",
+        metadata={
+            "intent_type": "WORK",
+            "scope_type": "agent",
+            "intent_params": {"format": "docx"},
+        },
+    )
+    monkeypatch.setattr(
+        "xiaomei_brain.consciousness.action_dispatcher.build_simple_context",
+        lambda *_args, **_kwargs: "system context\n",
+    )
+
+    assert executor.execute(item, runtime=runtime) is True
+    assert [message["role"] for message in captured["messages"]] == ["system", "user"]
+    assert "完成自主报告" in captured["messages"][1]["content"]
+
+
 def test_wake_preserves_durable_intents(monkeypatch):
     pending = [{"intent_id": "intent-a", "type": "work"}]
     intent_slot = SimpleNamespace(intent_buffer=pending, urgent_intents={"work"})
