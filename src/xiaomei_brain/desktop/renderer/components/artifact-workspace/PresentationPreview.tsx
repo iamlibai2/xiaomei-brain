@@ -63,6 +63,7 @@ type PresentationChartAxis = {
   visible?: boolean;
   labelsVisible?: boolean;
   position?: string;
+  orientation?: string;
   line?: PresentationLine;
   labelStyle?: PresentationTextStyle;
   majorGridline?: PresentationLine;
@@ -539,12 +540,12 @@ function richTextContent(
   });
 }
 
-function niceStep(range: number, targetTicks = 5): number {
+function niceStep(range: number, targetTicks = 6): number {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const rough = range / Math.max(1, targetTicks - 1);
   const magnitude = 10 ** Math.floor(Math.log10(rough));
   const normalized = rough / magnitude;
-  const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10;
   return factor * magnitude;
 }
 
@@ -639,16 +640,28 @@ function CartesianChart({
   categories,
   series,
   lineChart,
+  areaChart,
+  stacked,
 }: {
   element: PresentationElement;
   project: PresentationProject;
   categories: string[];
   series: NumericPresentationChartSeries[];
   lineChart: boolean;
+  areaChart: boolean;
+  stacked: boolean;
 }) {
   const categoryAxis = element.categoryAxis;
   const valueAxis = element.valueAxis;
-  const values = series.flatMap((item) => item.values);
+  const values = stacked
+    ? categories.flatMap((_, categoryIndex) => {
+      const categoryValues = series.map((item) => item.values[categoryIndex] || 0);
+      return [
+        categoryValues.filter((value) => value >= 0).reduce((sum, value) => sum + value, 0),
+        categoryValues.filter((value) => value < 0).reduce((sum, value) => sum + value, 0),
+      ];
+    })
+    : series.flatMap((item) => item.values);
   const scale = chartScale(values, valueAxis);
   const manualPlot = element.plotArea;
   const fallbackPlot = {
@@ -745,12 +758,23 @@ function CartesianChart({
           vectorEffect="non-scaling-stroke"
         />
       )}
-      {lineChart ? series.map((item, seriesIndex) => {
+      {lineChart || areaChart ? series.map((item, seriesIndex) => {
         const points = item.values.map((value, index) => `${categoryX(index)},${y(value)}`).join(" ");
         const color = item.line?.color || item.color || "#4F6BED";
         const total = item.values.reduce((sum, value) => sum + Math.max(0, value), 0);
+        const baseline = y(Math.max(scale.minimum, Math.min(scale.maximum, 0)));
+        const areaPoints = item.values.length
+          ? `${categoryX(0)},${baseline} ${points} ${categoryX(item.values.length - 1)},${baseline}`
+          : "";
         return (
           <g key={`line-${seriesIndex}`}>
+            {areaChart && areaPoints && (
+              <polygon
+                points={areaPoints}
+                fill={item.color || color}
+                stroke="none"
+              />
+            )}
             <polyline
               points={points}
               fill="none"
@@ -785,6 +809,47 @@ function CartesianChart({
             })}
           </g>
         );
+      }) : stacked ? categories.flatMap((_, categoryIndex) => {
+        let positiveBase = 0;
+        let negativeBase = 0;
+        return series.map((item, seriesIndex) => {
+          const value = item.values[categoryIndex] || 0;
+          const start = value >= 0 ? positiveBase : negativeBase;
+          const end = start + value;
+          if (value >= 0) positiveBase = end;
+          else negativeBase = end;
+          const segmentTop = Math.min(y(start), y(end));
+          const segmentHeight = Math.max(0.4, Math.abs(y(start) - y(end)));
+          const total = item.values.reduce((sum, itemValue) => sum + Math.max(0, itemValue), 0);
+          const label = chartDataLabel(item.dataLabels, item.name, categories[categoryIndex] || "", value, total);
+          const stackedWidth = Math.max(0.5, barGroupWidth * 0.9);
+          const stackedX = categoryX(categoryIndex) - stackedWidth / 2;
+          return (
+            <g key={`stack-${categoryIndex}-${seriesIndex}`}>
+              <rect
+                x={stackedX}
+                y={segmentTop}
+                width={stackedWidth}
+                height={segmentHeight}
+                fill={item.color || "#4F6BED"}
+              />
+              {label && (
+                <text
+                  x={stackedX + stackedWidth / 2}
+                  y={segmentTop + segmentHeight / 2}
+                  fill={item.dataLabels?.style?.color || "#FFFFFF"}
+                  fontFamily={item.dataLabels?.style?.fontFamily}
+                  fontSize={Math.max(2.2, Math.min(4.2, (item.dataLabels?.style?.fontSize || 10) / Math.max(1, element.bounds[2]) * 100))}
+                  fontWeight={item.dataLabels?.style?.bold ? 700 : 400}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                >
+                  {label}
+                </text>
+              )}
+            </g>
+          );
+        });
       }) : categories.flatMap((_, categoryIndex) => series.map((item, seriesIndex) => {
         const value = item.values[categoryIndex] || 0;
         const zeroY = y(Math.max(scale.minimum, Math.min(scale.maximum, 0)));
@@ -837,6 +902,94 @@ function CartesianChart({
           {category.length > 12 ? `${category.slice(0, 11)}…` : category}
         </text>
       ))}
+    </svg>
+  );
+}
+
+function HorizontalBarChart({
+  element,
+  categories,
+  series,
+}: {
+  element: PresentationElement;
+  categories: string[];
+  series: NumericPresentationChartSeries[];
+}) {
+  const categoryAxis = element.categoryAxis;
+  const valueAxis = element.valueAxis;
+  const values = series.flatMap((item) => item.values);
+  const scale = chartScale(values, valueAxis);
+  const plot = {
+    left: categoryAxis?.labelsVisible === false ? 5 : 23,
+    right: 97,
+    top: 4,
+    bottom: valueAxis?.labelsVisible === false ? 56 : 49,
+  };
+  const width = plot.right - plot.left;
+  const height = plot.bottom - plot.top;
+  const x = (value: number) => plot.left + (value - scale.minimum) / (scale.maximum - scale.minimum) * width;
+  const categoryY = (index: number) => {
+    const displayIndex = categoryAxis?.orientation === "minMax"
+      ? categories.length - index - 1
+      : index;
+    return plot.top + (displayIndex + 0.5) / Math.max(1, categories.length) * height;
+  };
+  const zeroX = x(Math.max(scale.minimum, Math.min(scale.maximum, 0)));
+  const gapRatio = Math.max(0.08, Math.min(0.92, 100 / (100 + Math.max(0, element.gapWidth ?? 150))));
+  const groupHeight = height / Math.max(1, categories.length) * gapRatio;
+  const overlapRatio = Math.max(-1, Math.min(1, (element.overlap || 0) / 100));
+  const seriesCount = Math.max(1, series.length);
+  const barHeight = groupHeight / Math.max(1, seriesCount - overlapRatio * (seriesCount - 1));
+  const barStep = barHeight * (1 - overlapRatio);
+  const renderedGroupHeight = barHeight + barStep * (seriesCount - 1);
+  const valueFontSize = Math.max(2.2, Math.min(4.2, (valueAxis?.labelStyle?.fontSize || 10) / Math.max(1, element.bounds[2]) * 100));
+  const categoryFontSize = Math.max(2.2, Math.min(4.2, (categoryAxis?.labelStyle?.fontSize || 10) / Math.max(1, element.bounds[2]) * 100));
+  return (
+    <svg className="presentation-chart-cartesian presentation-chart-horizontal-bar" viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true">
+      {valueAxis?.visible !== false && scale.ticks.map((tick) => (
+        <g key={`tick-${tick}`}>
+          {valueAxis?.majorGridline?.type !== "none" && (
+            <line x1={x(tick)} x2={x(tick)} y1={plot.top} y2={plot.bottom} stroke={valueAxis?.majorGridline?.color || "#D9DEE7"} strokeWidth={Math.max(0.3, (valueAxis?.majorGridline?.width || 0.5) * 0.45)} strokeDasharray={svgDash(valueAxis?.majorGridline)} vectorEffect="non-scaling-stroke" />
+          )}
+          {valueAxis?.labelsVisible !== false && (
+            <text x={x(tick)} y="54" fill={valueAxis?.labelStyle?.color || "#697386"} fontFamily={valueAxis?.labelStyle?.fontFamily} fontSize={valueFontSize} fontWeight={valueAxis?.labelStyle?.bold ? 700 : 400} textAnchor="middle">
+              {formatAxisValue(tick, valueAxis?.numberFormat)}
+            </text>
+          )}
+        </g>
+      ))}
+      {categoryAxis?.visible !== false && categoryAxis?.line?.type !== "none" && (
+        <line x1={plot.left} x2={plot.left} y1={plot.top} y2={plot.bottom} stroke={categoryAxis?.line?.color || "#888888"} strokeWidth={Math.max(0.4, categoryAxis?.line?.width || 1)} strokeDasharray={svgDash(categoryAxis?.line)} vectorEffect="non-scaling-stroke" />
+      )}
+      {valueAxis?.visible !== false && valueAxis?.line?.type !== "none" && (
+        <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} stroke={valueAxis?.line?.color || "#888888"} strokeWidth={Math.max(0.4, valueAxis?.line?.width || 1)} strokeDasharray={svgDash(valueAxis?.line)} vectorEffect="non-scaling-stroke" />
+      )}
+      {categories.map((category, categoryIndex) => (
+        <text key={`category-${categoryIndex}`} x={plot.left - 2} y={categoryY(categoryIndex)} fill={categoryAxis?.labelStyle?.color || "#697386"} fontFamily={categoryAxis?.labelStyle?.fontFamily} fontSize={categoryFontSize} fontWeight={categoryAxis?.labelStyle?.bold ? 700 : 400} textAnchor="end" dominantBaseline="middle">
+          {category.length > 10 ? `${category.slice(0, 9)}…` : category}
+        </text>
+      ))}
+      {series.flatMap((item, seriesIndex) => categories.map((category, categoryIndex) => {
+        const value = item.values[categoryIndex] || 0;
+        const valueX = x(value);
+        const barY = categoryY(categoryIndex) - renderedGroupHeight / 2 + seriesIndex * barStep;
+        const renderedBarHeight = Math.max(0.5, barHeight * 0.9);
+        const barLeft = Math.min(zeroX, valueX);
+        const barWidth = Math.max(0.4, Math.abs(valueX - zeroX));
+        const total = item.values.reduce((sum, itemValue) => sum + Math.max(0, itemValue), 0);
+        const label = chartDataLabel(item.dataLabels, item.name, category, value, total);
+        const labelInside = item.dataLabels?.position === "ctr" || item.dataLabels?.position === "inEnd" || item.dataLabels?.position === "inBase";
+        return (
+          <g key={`bar-${categoryIndex}-${seriesIndex}`}>
+            <rect x={barLeft} y={barY} width={barWidth} height={renderedBarHeight} rx={element.roundedCorners ? Math.min(1.2, renderedBarHeight * 0.18) : 0} fill={item.color || "#4F6BED"} />
+            {label && (
+              <text x={labelInside ? barLeft + barWidth - 1.5 : barLeft + barWidth + 1.5} y={barY + renderedBarHeight / 2} fill={item.dataLabels?.style?.color || (labelInside ? "#FFFFFF" : item.color || "#4F6BED")} fontFamily={item.dataLabels?.style?.fontFamily} fontSize={valueFontSize} fontWeight={item.dataLabels?.style?.bold ? 700 : 400} textAnchor={labelInside ? "end" : "start"} dominantBaseline="middle">
+                {label}
+              </text>
+            )}
+          </g>
+        );
+      }))}
     </svg>
   );
 }
@@ -912,7 +1065,7 @@ function RadarChart({
 }) {
   const center = { x: 50, y: 30 };
   const radius = 20;
-  const maximum = Math.max(1, element.valueAxis?.maximum || 0, ...series.flatMap((item) => item.values));
+  const maximum = chartScale(series.flatMap((item) => item.values), element.valueAxis).maximum;
   const point = (index: number, value: number) => {
     const angle = -Math.PI / 2 + index / Math.max(1, categories.length) * Math.PI * 2;
     const scaledRadius = Math.max(0, value) / maximum * radius;
@@ -999,6 +1152,9 @@ function PresentationChart({ element, project }: { element: PresentationElement;
   const isPie = chartType.includes("pie") || chartType.includes("doughnut");
   const isRadar = chartType.includes("radar");
   const isLine = chartType.includes("line");
+  const isArea = chartType.includes("area");
+  const isHorizontalBar = chartType === "bar" || chartType.startsWith("bar_");
+  const isStacked = chartType.includes("stacked");
   const primaryValues = numericSeries[0]?.values || [];
   const total = primaryValues.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
   const fallbackPiePalette = ["#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB"];
@@ -1094,6 +1250,8 @@ function PresentationChart({ element, project }: { element: PresentationElement;
             <ScatterChart element={element} series={numericSeries} />
           ) : isRadar ? (
             <RadarChart element={element} categories={categories} series={numericSeries} filled={chartType.includes("filled")} />
+          ) : isHorizontalBar ? (
+            <HorizontalBarChart element={element} categories={categories} series={numericSeries} />
           ) : (
             <CartesianChart
               element={element}
@@ -1101,6 +1259,8 @@ function PresentationChart({ element, project }: { element: PresentationElement;
               categories={categories}
               series={numericSeries}
               lineChart={isLine}
+              areaChart={isArea}
+              stacked={isStacked}
             />
           )}
         </div>

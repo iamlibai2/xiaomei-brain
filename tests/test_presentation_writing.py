@@ -994,6 +994,7 @@ def test_presentation_chart_is_previewable_and_remains_native_when_updated(tmp_p
     assert chart_element["series"][0]["values"] == [10.0, 18.0, 24.0]
     assert chart_element["categoryAxis"]["visible"] is True
     assert chart_element["categoryAxis"]["labelsVisible"] is True
+    assert chart_element["categoryAxis"]["orientation"] == "minMax"
     assert chart_element["categoryAxis"]["line"] == {
         "type": "solid", "color": "#888888", "width": 1.0,
     }

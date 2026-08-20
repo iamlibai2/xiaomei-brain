@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 14
+PROJECT_GENERATOR_VERSION = 15
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -1070,6 +1070,9 @@ def _chart_axis(
             "numberFormat": _element_value(axis.find(qn("c:numFmt")), "formatCode"),
         }
         if scaling is not None:
+            orientation = _element_value(scaling.find(qn("c:orientation")))
+            if orientation:
+                result["orientation"] = orientation
             for source_name, target_name in (("min", "minimum"), ("max", "maximum")):
                 value = _element_value(scaling.find(qn(f"c:{source_name}")))
                 if value not in (None, ""):
