@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 
 PROJECT_SCHEMA = "xiaomei.presentation.v1"
-PROJECT_GENERATOR_VERSION = 12
+PROJECT_GENERATOR_VERSION = 14
 CANVAS_WIDTH = 960.0
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -806,6 +806,7 @@ def _chart_elements(
             "values": values,
             "xValues": _chart_cached_values(series_element, "xVal"),
             "color": series_color,
+            "pointColors": _chart_point_colors(series_element, len(values)),
             "line": series_line,
             "marker": marker,
             "dataLabels": _chart_data_labels(series_element),
@@ -828,6 +829,8 @@ def _chart_elements(
         "gapWidth": _chart_number(chart, "gapWidth"),
         "overlap": _chart_number(chart, "overlap"),
         "roundedCorners": _chart_flag(chart._chartSpace.find(qn("c:roundedCorners"))),
+        "holeSize": _chart_number(chart, "holeSize"),
+        "firstSliceAngle": _chart_number(chart, "firstSliceAng"),
         "categoryAxis": _chart_axis(chart, "valAx", positions={"b", "t"}) if is_scatter else _chart_axis(chart, "catAx"),
         "valueAxis": _chart_axis(chart, "valAx", positions={"l", "r"}) if is_scatter else _chart_axis(chart, "valAx"),
     }]
@@ -851,6 +854,26 @@ def _chart_cached_values(series_element: Any, value_name: str) -> list[float | s
             _chart_value(point.find(qn("c:v")).text if point.find(qn("c:v")) is not None else None)
             for point in points
         ]
+    except Exception:
+        return []
+
+
+def _chart_point_colors(series_element: Any, point_count: int) -> list[str]:
+    """Return explicit pie/doughnut point colors in category order."""
+    if series_element is None or point_count <= 0:
+        return []
+    try:
+        from pptx.oxml.ns import qn
+
+        colors = [""] * point_count
+        for point in series_element.findall(qn("c:dPt")):
+            index = _element_value(point.find(qn("c:idx")))
+            if index is None:
+                continue
+            position = int(index)
+            if 0 <= position < point_count:
+                colors[position] = _xml_color(point.find(qn("c:spPr")))
+        return colors
     except Exception:
         return []
 
@@ -1817,14 +1840,24 @@ def _group_child_transform(
 
 def _shape_name(shape: Any) -> str:
     try:
-        name = str(shape.auto_shape_type or "").lower()
+        geometry = shape._element.spPr.find(f"{{{A_NS}}}prstGeom")
+        preset = str(geometry.get("prst") or "") if geometry is not None else ""
     except Exception:
         return "rect"
-    if "ellipse" in name or "oval" in name:
-        return "ellipse"
-    if "round" in name:
-        return "roundRect"
-    return "rect"
+    aliases = {
+        "rect": "rect",
+        "roundRect": "roundRect",
+        "ellipse": "ellipse",
+        "triangle": "triangle",
+        "rtTriangle": "triangle",
+        "diamond": "diamond",
+        "hexagon": "hexagon",
+        "chevron": "chevron",
+        "pentagon": "pentagon",
+        "parallelogram": "parallelogram",
+        "trapezoid": "trapezoid",
+    }
+    return aliases.get(preset, "rect")
 
 
 def _write_json(path: Path, value: Any) -> None:

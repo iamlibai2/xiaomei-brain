@@ -204,6 +204,10 @@ def test_write_document_creates_and_updates_native_scatter_and_radar_charts(tmp_
     result = PresentationWriter().write(specification, source)
 
     assert result["validation"]["chart_count"] == 2
+    assert not any(
+        issue["code"] == "empty_chart"
+        for issue in result["validation"]["issues"]
+    )
     deck = Presentation(source)
     scatter = deck.slides[0].shapes[0].chart
     radar = deck.slides[1].shapes[0].chart
@@ -262,6 +266,131 @@ def test_write_document_creates_and_updates_native_scatter_and_radar_charts(tmp_
     assert updated_scatter["series"][0]["values"] == [5.0, 10.0, 20.0]
     assert updated_radar["series"][0]["name"] == "目标"
     assert updated_radar["series"][0]["values"] == [90.0, 80.0, 70.0, 95.0]
+
+
+def test_presentation_chart_title_uses_theme_color_and_can_be_updated(tmp_path):
+    from xiaomei_brain.plugins.tools.document_presentation.writer import PresentationWriter
+
+    source = tmp_path / "dark-chart.pptx"
+    result = PresentationWriter().write({
+        "theme": {
+            "background_color": "111827",
+            "title_color": "F9FAFB",
+        },
+        "slides": [{
+            "type": "blank",
+            "elements": [{
+                "type": "chart",
+                "chart_type": "scatter",
+                "x_cm": 2,
+                "y_cm": 2,
+                "width_cm": 20,
+                "height_cm": 11,
+                "title": "投入与产出",
+                "series": [{
+                    "name": "项目",
+                    "x_values": [1, 2, 4],
+                    "values": [4, 9, 16],
+                }],
+            }],
+        }],
+    }, source)
+
+    assert result["validation"]["delivery_ready"] is True
+    assert not any(
+        issue["code"] in {"empty_chart", "low_contrast"}
+        for issue in result["validation"]["issues"]
+    )
+    deck = Presentation(source)
+    title_run = deck.slides[0].shapes[0].chart.chart_title.text_frame.paragraphs[0].runs[0]
+    assert str(title_run.font.color.rgb) == "F9FAFB"
+
+    project = json.loads(
+        (tmp_path / ".presentation" / "dark-chart" / "project.json")
+        .read_text(encoding="utf-8")
+    )
+    element_id = project["slides"][0]["elements"][0]["elementId"]
+    updated = tmp_path / "dark-chart-updated.pptx"
+    PresentationWriter().write({
+        "operations": [{
+            "type": "update_chart",
+            "slide": 1,
+            "element_id": element_id,
+            "title_color": "FDE68A",
+        }],
+    }, updated, source_path=source)
+    updated_deck = Presentation(updated)
+    updated_run = updated_deck.slides[0].shapes[0].chart.chart_title.text_frame.paragraphs[0].runs[0]
+    assert str(updated_run.font.color.rgb) == "FDE68A"
+
+
+def test_presentation_doughnut_uses_point_colors_and_exports_preview_geometry(tmp_path):
+    from pptx.oxml.ns import qn
+    from xiaomei_brain.plugins.tools.document_presentation.writer import PresentationWriter
+
+    output = tmp_path / "doughnut.pptx"
+    result = PresentationWriter().write({
+        "slides": [{
+            "type": "blank",
+            "elements": [{
+                "type": "chart",
+                "chart_type": "doughnut",
+                "x_cm": 2,
+                "y_cm": 2,
+                "width_cm": 16,
+                "height_cm": 11,
+                "title": "资源占比",
+                "categories": ["检索", "生成", "推理", "记忆"],
+                "series": [{"name": "占比", "values": [42, 31, 15, 12]}],
+                "series_colors": ["4F6BED", "16A085", "F39C12", "E15B64"],
+                "show_legend": True,
+                "show_percentages": True,
+            }],
+        }],
+    }, output)
+
+    assert result["validation"]["delivery_ready"] is True
+    deck = Presentation(output)
+    chart = deck.slides[0].shapes[0].chart
+    assert chart.plots[0].has_data_labels is True
+    assert chart.plots[0].data_labels.show_percentage is True
+    assert chart.plots[0].data_labels.show_value is False
+    series_element = chart.series[0]._element
+    assert series_element.find(qn("c:spPr")) is None
+    points = series_element.findall(qn("c:dPt"))
+    assert len(points) == 4
+    point_colors = [
+        point.find(f".//{qn('a:srgbClr')}").get("val")
+        for point in points
+    ]
+    assert point_colors == ["4F6BED", "16A085", "F39C12", "E15B64"]
+
+    project = json.loads(
+        (tmp_path / ".presentation" / "doughnut" / "project.json")
+        .read_text(encoding="utf-8")
+    )
+    element = project["slides"][0]["elements"][0]
+    assert element["series"][0]["pointColors"] == [
+        "#4F6BED", "#16A085", "#F39C12", "#E15B64",
+    ]
+    assert element["series"][0]["dataLabels"]["showPercent"] is True
+    assert element["series"][0]["dataLabels"]["showValue"] is False
+    assert element["holeSize"] == 50.0
+    assert element["firstSliceAngle"] == 0.0
+
+    updated = tmp_path / "doughnut-values.pptx"
+    PresentationWriter().write({
+        "operations": [{
+            "type": "update_chart",
+            "slide": 1,
+            "element_id": element["elementId"],
+            "show_percentages": False,
+            "show_values": True,
+        }],
+    }, updated, source_path=output)
+    updated_chart = Presentation(updated).slides[0].shapes[0].chart
+    assert updated_chart.plots[0].data_labels.show_percentage is False
+    assert updated_chart.plots[0].data_labels.show_value is True
 
 
 def test_presentation_validation_rejects_chart_data_length_mismatch(tmp_path):
@@ -1494,6 +1623,38 @@ def test_presentation_preview_extracts_freeform_geometry(tmp_path):
     assert paths[0]["d"].startswith("M ")
     assert " L " in paths[0]["d"]
     assert paths[0]["d"].endswith("Z")
+
+
+def test_presentation_preview_preserves_supported_flowchart_shape_names(tmp_path):
+    from pptx.enum.shapes import MSO_SHAPE
+    from xiaomei_brain.documents.presentation_project import build_presentation_project
+
+    source = tmp_path / "flowchart-shapes.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    shapes = [
+        ("triangle", MSO_SHAPE.ISOSCELES_TRIANGLE),
+        ("diamond", MSO_SHAPE.DIAMOND),
+        ("hexagon", MSO_SHAPE.HEXAGON),
+        ("chevron", MSO_SHAPE.CHEVRON),
+        ("pentagon", MSO_SHAPE.REGULAR_PENTAGON),
+        ("parallelogram", MSO_SHAPE.PARALLELOGRAM),
+        ("trapezoid", MSO_SHAPE.TRAPEZOID),
+    ]
+    for index, (name, shape_type) in enumerate(shapes):
+        shape = slide.shapes.add_shape(
+            shape_type,
+            Cm(1 + index * 3), Cm(2), Cm(2.5), Cm(2.5),
+        )
+        shape.name = name
+    deck.save(source)
+
+    project_dir = tmp_path / ".presentation" / "flowchart-shapes"
+    build_presentation_project(source, project_dir)
+    project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+    shape_names = [item["shapeName"] for item in project["slides"][0]["elements"]]
+
+    assert shape_names == [name for name, _shape_type in shapes]
 
 
 def test_presentation_preview_extracts_native_formula_and_embedded_video(tmp_path):

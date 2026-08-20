@@ -87,6 +87,7 @@ type PresentationChartSeries = {
   values: Array<number | string | null>;
   xValues?: Array<number | string | null>;
   color?: string;
+  pointColors?: string[];
   line?: PresentationLine;
   marker?: {
     symbol?: string;
@@ -195,6 +196,8 @@ type PresentationElement = {
   gapWidth?: number;
   overlap?: number;
   roundedCorners?: boolean;
+  holeSize?: number;
+  firstSliceAngle?: number;
   categoryAxis?: PresentationChartAxis;
   valueAxis?: PresentationChartAxis;
   mathMl?: string;
@@ -399,6 +402,37 @@ function PresentationCustomShape({ element }: { element: PresentationElement }) 
       </svg>
     ))}
   </>;
+}
+
+const PRESET_SHAPE_PATHS: Record<string, string> = {
+  triangle: "M 50 0 L 100 100 L 0 100 Z",
+  diamond: "M 50 0 L 100 50 L 50 100 L 0 50 Z",
+  hexagon: "M 25 0 L 75 0 L 100 50 L 75 100 L 25 100 L 0 50 Z",
+  chevron: "M 0 0 L 65 0 L 100 50 L 65 100 L 0 100 L 35 50 Z",
+  pentagon: "M 50 0 L 100 38 L 81 100 L 19 100 L 0 38 Z",
+  parallelogram: "M 20 0 L 100 0 L 80 100 L 0 100 Z",
+  trapezoid: "M 20 0 L 80 0 L 100 100 L 0 100 Z",
+};
+
+function PresentationPresetShape({ element }: { element: PresentationElement }) {
+  const path = PRESET_SHAPE_PATHS[element.shapeName || ""];
+  if (!path) return null;
+  const fill = element.fill?.type === "solid" ? element.fill.color || "transparent" : "transparent";
+  const stroke = element.line?.color || "transparent";
+  const dash = element.line?.type === "dash" ? "6 4" : element.line?.type === "dot" ? "1 3" : undefined;
+  return (
+    <svg className="presentation-preset-shape" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <path
+        d={path}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={Math.max(0.6, element.line?.width || 1)}
+        strokeDasharray={dash}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
 }
 
 function fillStyle(fill: PresentationFill | undefined, media: Record<string, PresentationMedia>): CSSProperties {
@@ -967,15 +1001,54 @@ function PresentationChart({ element, project }: { element: PresentationElement;
   const isLine = chartType.includes("line");
   const primaryValues = numericSeries[0]?.values || [];
   const total = primaryValues.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
-  const piePalette = [series[0]?.color || "#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB"];
+  const fallbackPiePalette = ["#4F6BED", "#16A085", "#F39C12", "#E15B64", "#7A5AF8", "#3498DB"];
+  const piePalette = primaryValues.map((_, index) => (
+    series[0]?.pointColors?.[index]
+    || fallbackPiePalette[index % fallbackPiePalette.length]
+  ));
   let offset = 0;
-  const pieBackground = primaryValues.length > 0 ? `conic-gradient(${primaryValues.map((value, index) => {
+  const pieBackground = primaryValues.length > 0 ? `conic-gradient(from ${element.firstSliceAngle || 0}deg, ${primaryValues.map((value, index) => {
     const start = offset / total * 100;
     offset += Math.max(0, value);
     const end = offset / total * 100;
     const color = piePalette[index % piePalette.length];
     return `${color} ${start}% ${end}%`;
   }).join(", ")})` : "#e5e7eb";
+  const doughnutHoleRadius = Math.max(5, Math.min(45, (element.holeSize || 50) / 2));
+  let labelOffset = 0;
+  const pieLabels = primaryValues.map((value, index) => {
+    const labels = numericSeries[0]?.dataLabels;
+    const text = chartDataLabel(labels, numericSeries[0]?.name || "", categories[index] || "", value, total);
+    const start = labelOffset / total * 360;
+    labelOffset += Math.max(0, value);
+    const end = labelOffset / total * 360;
+    const angle = ((start + end) / 2 + (element.firstSliceAngle || 0) - 90) * Math.PI / 180;
+    const outside = labels?.position === "outEnd" || labels?.position === "bestFit";
+    const radius = outside
+      ? 47
+      : chartType.includes("doughnut")
+        ? Math.min(42, doughnutHoleRadius + (50 - doughnutHoleRadius) / 2)
+        : 32;
+    return text ? {
+      text,
+      left: 50 + Math.cos(angle) * radius,
+      top: 50 + Math.sin(angle) * radius,
+    } : null;
+  }).filter((item): item is { text: string; left: number; top: number } => item !== null);
+  const pieStyle: CSSProperties = {
+    background: pieBackground,
+    ...(chartType.includes("doughnut") ? {
+      WebkitMaskImage: `radial-gradient(circle, transparent 0 ${doughnutHoleRadius}%, #000 ${doughnutHoleRadius + 0.5}%)`,
+      maskImage: `radial-gradient(circle, transparent 0 ${doughnutHoleRadius}%, #000 ${doughnutHoleRadius + 0.5}%)`,
+    } : {}),
+  };
+  const legendSeries = isPie
+    ? categories.map((name, index) => ({
+      name,
+      values: [],
+      color: piePalette[index % piePalette.length],
+    }))
+    : series;
   const legendPosition = element.legend?.position || "b";
   const legendAtTop = legendPosition === "t" || legendPosition === "tr";
   const legendAtLeft = legendPosition === "l";
@@ -1000,12 +1073,23 @@ function PresentationChart({ element, project }: { element: PresentationElement;
           {element.title}
         </div>
       )}
-      {legendAtTop && <PresentationLegend element={element} series={series} />}
+      {legendAtTop && <PresentationLegend element={element} series={legendSeries} />}
       <div className="presentation-chart-main">
-        {legendAtLeft && <PresentationLegend element={element} series={series} />}
+        {legendAtLeft && <PresentationLegend element={element} series={legendSeries} />}
         <div className="presentation-chart-plot">
           {isPie ? (
-            <div className={`presentation-chart-pie${chartType.includes("doughnut") ? " doughnut" : ""}`} style={{ background: pieBackground }} />
+            <div className="presentation-chart-pie-wrap">
+              <div className={`presentation-chart-pie${chartType.includes("doughnut") ? " doughnut" : ""}`} style={pieStyle} />
+              {pieLabels.map((label, index) => (
+                <span
+                  className="presentation-chart-pie-label"
+                  key={`${label.text}-${index}`}
+                  style={{ left: `${label.left}%`, top: `${label.top}%` }}
+                >
+                  {label.text}
+                </span>
+              ))}
+            </div>
           ) : isScatter ? (
             <ScatterChart element={element} series={numericSeries} />
           ) : isRadar ? (
@@ -1020,9 +1104,9 @@ function PresentationChart({ element, project }: { element: PresentationElement;
             />
           )}
         </div>
-        {legendAtRight && <PresentationLegend element={element} series={series} />}
+        {legendAtRight && <PresentationLegend element={element} series={legendSeries} />}
       </div>
-      {!legendAtTop && !legendAtLeft && !legendAtRight && <PresentationLegend element={element} series={series} />}
+      {!legendAtTop && !legendAtLeft && !legendAtRight && <PresentationLegend element={element} series={legendSeries} />}
     </div>
   );
 }
@@ -1246,15 +1330,16 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
         const borderRadius = element.shapeName === "ellipse" ? "50%" : element.shapeName === "roundRect" ? "8%" : 0;
         const margins = textStyle?.margins || [0, 0, 0, 0];
         const hasCustomGeometry = Boolean(element.customGeometry?.paths?.length);
+        const hasPresetGeometry = Boolean(PRESET_SHAPE_PATHS[element.shapeName || ""]);
         return (
           <div
             key={element.elementId}
-            className={`presentation-slide-element ${element.elementType}${hasCustomGeometry ? " has-custom-geometry" : ""}${selectableClass}${selectedClass}`}
+            className={`presentation-slide-element ${element.elementType}${hasCustomGeometry ? " has-custom-geometry" : ""}${hasPresetGeometry ? " has-preset-geometry" : ""}${selectableClass}${selectedClass}`}
             data-element-id={element.elementId}
             style={{
               ...style,
-              ...(element.elementType === "shape" && !hasCustomGeometry ? fillStyle(element.fill, media) : {}),
-              border: element.elementType === "shape" && !hasCustomGeometry ? `${element.line?.width || 0}px solid ${element.line?.color || "transparent"}` : undefined,
+              ...(element.elementType === "shape" && !hasCustomGeometry && !hasPresetGeometry ? fillStyle(element.fill, media) : {}),
+              border: element.elementType === "shape" && !hasCustomGeometry && !hasPresetGeometry ? `${element.line?.width || 0}px solid ${element.line?.color || "transparent"}` : undefined,
               boxShadow: shadowStyle(element.shadow, project),
               borderRadius,
               color: textStyle?.color || "#253047",
@@ -1270,8 +1355,10 @@ function SlideCanvas({ project, slide, thumbnail = false, selectedElementId, sel
             }}
             onClick={select}
           >
-            {hasCustomGeometry ? <>
-              <PresentationCustomShape element={element} />
+            {hasCustomGeometry || hasPresetGeometry ? <>
+              {hasCustomGeometry
+                ? <PresentationCustomShape element={element} />
+                : <PresentationPresetShape element={element} />}
               <div className="presentation-shape-text">
                 {element.richText?.paragraphs?.length ? richTextContent(element, textStyle, project) : content}
               </div>

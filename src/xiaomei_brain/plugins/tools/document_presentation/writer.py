@@ -1186,6 +1186,125 @@ class PresentationWriter:
         return data
 
     @classmethod
+    def _set_chart_title(
+        cls,
+        chart: Any,
+        title: str,
+        *,
+        color: Any | None = None,
+    ) -> None:
+        """Set a native chart title and an optional explicit text color."""
+        chart.has_title = bool(title)
+        if not title:
+            return
+        chart.chart_title.text_frame.text = title
+        runs = [
+            run
+            for paragraph in chart.chart_title.text_frame.paragraphs
+            for run in paragraph.runs
+        ]
+        for run in runs:
+            if color is not None:
+                run.font.color.rgb = cls._color(color, "chart.title_color")
+
+    @classmethod
+    def _apply_chart_colors(
+        cls,
+        chart: Any,
+        colors: list[Any],
+        *,
+        per_point: bool,
+    ) -> None:
+        if not colors:
+            raise ValueError("series_colors 必须是非空数组")
+        if not per_point:
+            for index, series in enumerate(chart.series):
+                rgb = cls._color(colors[index % len(colors)], f"series_colors[{index}]")
+                try:
+                    series.format.fill.solid()
+                    series.format.fill.fore_color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+                try:
+                    series.format.line.color.rgb = rgb
+                except (AttributeError, ValueError):
+                    pass
+            return
+
+        from pptx.oxml.ns import qn
+        from pptx.oxml.xmlchemy import OxmlElement
+
+        for series in chart.series:
+            series_element = series._element
+            for point in list(series_element.findall(qn("c:dPt"))):
+                series_element.remove(point)
+            properties = series_element.find(qn("c:spPr"))
+            if properties is not None:
+                series_element.remove(properties)
+            point_count = len(series.values)
+            insertion_index = min(3, len(series_element))
+            for index in range(point_count):
+                color = str(
+                    cls._color(
+                        colors[index % len(colors)],
+                        f"series_colors[{index % len(colors)}]",
+                    )
+                )
+                point = OxmlElement("c:dPt")
+                point_index = OxmlElement("c:idx")
+                point_index.set("val", str(index))
+                point.append(point_index)
+                shape_properties = OxmlElement("c:spPr")
+                solid_fill = OxmlElement("a:solidFill")
+                rgb_color = OxmlElement("a:srgbClr")
+                rgb_color.set("val", color)
+                solid_fill.append(rgb_color)
+                shape_properties.append(solid_fill)
+                point.append(shape_properties)
+                series_element.insert(insertion_index + index, point)
+
+    @classmethod
+    def _apply_chart_data_labels(
+        cls,
+        chart: Any,
+        values: dict[str, Any],
+    ) -> bool:
+        """Apply explicitly requested native chart data-label fields."""
+        fields = {
+            "show_values": "show_value",
+            "show_percentages": "show_percentage",
+            "show_category_names": "show_category_name",
+            "show_series_names": "show_series_name",
+        }
+        requested = {
+            field: bool(values[field])
+            for field in fields
+            if field in values
+        }
+        if not requested:
+            return False
+
+        from pptx.enum.chart import XL_CHART_TYPE
+
+        if requested.get("show_percentages") and chart.chart_type not in {
+            XL_CHART_TYPE.PIE,
+            XL_CHART_TYPE.DOUGHNUT,
+        }:
+            raise ValueError("show_percentages 仅适用于 pie 或 doughnut 图表")
+
+        for plot in chart.plots:
+            plot.has_data_labels = True
+            labels = plot.data_labels
+            for field, enabled in requested.items():
+                setattr(labels, fields[field], enabled)
+            label_enabled = any(
+                bool(getattr(labels, attribute))
+                for attribute in fields.values()
+            )
+            plot.has_data_labels = label_enabled
+        return True
+
+    @classmethod
     def _add_chart_element(
         cls,
         slide: Any,
@@ -1239,9 +1358,11 @@ class PresentationWriter:
         shape.name = str(values.get("name") or "XiaomeiChart")
         chart = shape.chart
         title = cls._text(values.get("title"))
-        chart.has_title = bool(title)
-        if title:
-            chart.chart_title.text_frame.text = title
+        cls._set_chart_title(
+            chart,
+            title,
+            color=values.get("title_color", theme["title_color"]),
+        )
         chart.has_legend = bool(values.get("show_legend", True))
         if chart.has_legend:
             positions = {
@@ -1256,23 +1377,14 @@ class PresentationWriter:
             chart.legend.position = positions[position_name]
         colors = values.get("series_colors")
         if colors is not None:
-            if not isinstance(colors, list) or not colors:
+            if not isinstance(colors, list):
                 raise ValueError("series_colors 必须是非空数组")
-            for index, series in enumerate(chart.series):
-                rgb = cls._color(colors[index % len(colors)], f"series_colors[{index}]")
-                try:
-                    series.format.fill.solid()
-                    series.format.fill.fore_color.rgb = rgb
-                except (AttributeError, ValueError):
-                    pass
-                try:
-                    series.format.line.color.rgb = rgb
-                except (AttributeError, ValueError):
-                    pass
-        if values.get("show_values") is True:
-            for plot in chart.plots:
-                plot.has_data_labels = True
-                plot.data_labels.show_value = True
+            cls._apply_chart_colors(
+                chart,
+                colors,
+                per_point=type_name in {"pie", "doughnut"},
+            )
+        cls._apply_chart_data_labels(chart, values)
         return shape
 
     @staticmethod
@@ -1832,9 +1944,20 @@ class PresentationWriter:
         changed = 0
         if "title" in operation:
             title = cls._text(operation.get("title"))
-            chart.has_title = bool(title)
-            if title:
-                chart.chart_title.text_frame.text = title
+            cls._set_chart_title(
+                chart,
+                title,
+                color=operation.get("title_color"),
+            )
+            changed += 1
+        elif "title_color" in operation:
+            if not chart.has_title:
+                raise ValueError("图表没有标题，无法修改标题样式")
+            cls._set_chart_title(
+                chart,
+                cls._text(chart.chart_title.text_frame.text),
+                color=operation.get("title_color"),
+            )
             changed += 1
         categories_supplied = "categories" in operation
         series_supplied = "series" in operation
@@ -1867,22 +1990,20 @@ class PresentationWriter:
         if "show_legend" in operation:
             chart.has_legend = bool(operation["show_legend"])
             changed += 1
+        if cls._apply_chart_data_labels(chart, operation):
+            changed += 1
         colors = operation.get("series_colors")
         if colors is not None:
-            if not isinstance(colors, list) or not colors:
+            if not isinstance(colors, list):
                 raise ValueError("series_colors must be a non-empty array")
-            for index, series in enumerate(chart.series):
-                color = colors[index % len(colors)]
-                rgb = cls._color(color, f"series_colors[{index}]")
-                try:
-                    series.format.fill.solid()
-                    series.format.fill.fore_color.rgb = rgb
-                except (AttributeError, ValueError):
-                    pass
-                try:
-                    series.format.line.color.rgb = rgb
-                except (AttributeError, ValueError):
-                    pass
+            cls._apply_chart_colors(
+                chart,
+                colors,
+                per_point=chart.chart_type in {
+                    XL_CHART_TYPE.PIE,
+                    XL_CHART_TYPE.DOUGHNUT,
+                },
+            )
             changed += 1
         if changed == 0:
             raise ValueError("update_chart did not include any editable fields")

@@ -15,7 +15,7 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
 - `element_type="text"` 或 `shape`：使用 `update_element`；只有明确删除时才使用 `delete_element`。
 - `element_type="table"` 且提供 `row`、`column`：使用 `update_table_cell`，行列号从 1 开始，可修改 `text`、`fill_color`、`text_color`、`font_size_pt`、`bold`。
 - `element_type="image"`：替换图片时使用 `replace_image`，并提供当前消息中的 `attachment_id` 或受控工作区 `workspace_path`；只改大小和位置时使用 `update_element`。
-- `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。分类图修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致；散点图不使用 `categories`，每个系列提供长度相同的 `x_values` 与 `values`。
+- `element_type="chart"`：使用 `update_chart` 修改原生 PowerPoint 图表。可修改 `title`、`title_color`、`categories`、`series`、`show_legend` 和 `series_colors`；不要把原生图表转换成图片。分类图修改数据时必须同时提供 `categories` 与 `series`，每个系列的 `values` 数量必须与分类数量一致；散点图不使用 `categories`，每个系列提供长度相同的 `x_values` 与 `values`。
 - `element_type="line"`：使用 `update_element` 修改连接线。可修改 `line_color`、`line_width_pt`、`line_dash`、`start_arrow`、`end_arrow`、`line_transparency` 和位置；不要把连接线转换成图片或普通矩形。
 
 始终把当前 PPT 附件的真实 ID 作为 `source_attachment_id` 传给 `write_document`。如果工具返回
@@ -46,6 +46,7 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
       "slide": 6,
       "element_id": "slide-6-shape-id-14",
       "title": "季度销售额",
+      "title_color": "F7F9FC",
       "categories": ["Q1", "Q2", "Q3", "Q4"],
       "series": [{"name": "华东", "values": [120, 148, 172, 205]}],
       "show_legend": false,
@@ -198,7 +199,11 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
   `area`、`scatter`、`scatter_lines`、`scatter_lines_no_markers`、`radar`、
   `radar_markers`、`radar_filled`，可设置标题、图例位置、系列颜色和数值标签。
   散点图不提供 `categories`，而是在每个系列中提供长度相同的 `x_values` 和
-  `values`；雷达图仍使用公共 `categories`。
+  `values`；雷达图仍使用公共 `categories`。图表标题默认继承当前幻灯片主题的
+  `title_color`，也可通过图表自己的 `title_color` 单独覆盖；深色页面必须使用
+  高对比标题色。`show_values` 控制原始数值，`show_percentages` 控制饼图或环形图
+  的百分比，`show_category_names` 与 `show_series_names` 分别控制分类名和系列名；
+  标签信息过多时应只保留完成表达所需的字段。
 - `formula`：PowerPoint 原生公式。提供 `expression` 和位置尺寸；表达式支持文字、
   数字以及 `fraction`、`superscript`、`subscript`、`subscript_superscript`、
   `radical`、`nary`、`delimiter`、`sequence` 等结构，可继续在 Office 中编辑；
@@ -240,7 +245,8 @@ Desktop 的 PPT 预览可能提供 `document_annotation kind="presentation"`。�
       "show_legend": true,
       "legend_position": "bottom",
       "series_colors": ["2F6B4F", "C6F24E"],
-      "show_values": true
+      "show_values": true,
+      "show_percentages": false
     }
   ]
 }

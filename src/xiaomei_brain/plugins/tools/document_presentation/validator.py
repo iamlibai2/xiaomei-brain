@@ -146,7 +146,12 @@ def _check_empty_data(page: int, elements: list[dict[str, Any]]) -> list[dict[st
         elif element_type == "chart":
             categories = element.get("categories")
             series = [item for item in element.get("series", []) if isinstance(item, dict)]
-            if not isinstance(categories, list) or not categories or not series:
+            chart_type = str(element.get("chartType") or "").strip().lower()
+            is_scatter = "scatter" in chart_type or chart_type.startswith("xy")
+            if not series or (
+                not is_scatter
+                and (not isinstance(categories, list) or not categories)
+            ):
                 issues.append(_issue(
                     page=page,
                     element_id=element_id,
@@ -158,6 +163,7 @@ def _check_empty_data(page: int, elements: list[dict[str, Any]]) -> list[dict[st
                 continue
             for series_index, item in enumerate(series, start=1):
                 values = item.get("values")
+                x_values = item.get("xValues")
                 if not isinstance(values, list) or not values:
                     issues.append(_issue(
                         page=page,
@@ -167,7 +173,23 @@ def _check_empty_data(page: int, elements: list[dict[str, Any]]) -> list[dict[st
                         reason=f"图表第 {series_index} 个数据系列为空。",
                         suggestion="补充该系列的数据，或删除空系列。",
                     ))
-                elif len(values) != len(categories):
+                elif is_scatter and (
+                    not isinstance(x_values, list)
+                    or not x_values
+                    or len(values) != len(x_values)
+                ):
+                    issues.append(_issue(
+                        page=page,
+                        element_id=element_id,
+                        severity="error",
+                        code="chart_data_length_mismatch",
+                        reason=(
+                            f"散点图第 {series_index} 个系列有 {len(values)} 个 Y 值，"
+                            f"但有 {len(x_values) if isinstance(x_values, list) else 0} 个 X 值。"
+                        ),
+                        suggestion="让散点图每个系列的 x_values 与 values 非空且数量完全一致。",
+                    ))
+                elif not is_scatter and len(values) != len(categories):
                     issues.append(_issue(
                         page=page,
                         element_id=element_id,

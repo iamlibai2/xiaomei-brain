@@ -1204,7 +1204,8 @@ body.is-resizing-artifact-workspace {
 }
 
 .presentation-line-svg,
-.presentation-custom-shape {
+.presentation-custom-shape,
+.presentation-preset-shape {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1212,7 +1213,8 @@ body.is-resizing-artifact-workspace {
   overflow: visible;
 }
 
-.presentation-slide-element.shape.has-custom-geometry {
+.presentation-slide-element.shape.has-custom-geometry,
+.presentation-slide-element.shape.has-preset-geometry {
   border: 0;
   background: transparent;
 }
@@ -1500,15 +1502,33 @@ body.is-resizing-artifact-workspace {
   white-space: nowrap;
 }
 
-.presentation-chart-pie {
-  width: min(70%, 20cqw);
-  aspect-ratio: 1;
-  border-radius: 50%;
-}
+  .presentation-chart-pie-wrap {
+    width: min(70%, 20cqw);
+    aspect-ratio: 1;
+    position: relative;
+    overflow: visible;
+  }
 
-.presentation-chart-pie.doughnut {
-  box-shadow: inset 0 0 0 5.2cqw rgba(255, 255, 255, .96);
-}
+  .presentation-chart-pie {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+  }
+
+  .presentation-chart-pie-label {
+    position: absolute;
+    z-index: 1;
+    transform: translate(-50%, -50%);
+    padding: .12cqw .28cqw;
+    border-radius: .3cqw;
+    background: rgb(255 255 255 / 88%);
+    color: #253047;
+    font-size: clamp(7px, .72cqw, 12px);
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 1px 3px rgb(15 23 42 / 18%);
+  }
 
 .presentation-chart-legend {
   display: flex;
